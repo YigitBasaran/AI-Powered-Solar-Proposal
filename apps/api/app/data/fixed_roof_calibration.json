@@ -1,0 +1,185 @@
+{
+  "id": "case_fixed_roof",
+  "description": "Hipped roof of the fixed case property. Coordinates are SOURCE-MAP pixels on the 1280x1280 z20/scale2 raster - never viewport or fixture-crop pixels. The raster centre is the resolved case coordinate.",
+  "derivation": "Brightness band + morphological opening anchored at a median-selected seed, convex hull, minimum-area rectangle by rotating calipers, then uniform-pitch hip construction (ridge = long - short, hips at 45 deg in plan). Reproduce with scripts/derive_roof_calibration.py.",
+  "source_raster": {
+    "width_px": 1280,
+    "height_px": 1280,
+    "ground_m_per_source_px": 0.06185
+  },
+  "pitch_deg": 25.0,
+  "vertices": [
+    {
+      "id": "v_corner_a",
+      "source_pixel": {
+        "x": 556.03,
+        "y": 597.82
+      }
+    },
+    {
+      "id": "v_corner_b",
+      "source_pixel": {
+        "x": 734.27,
+        "y": 631.24
+      }
+    },
+    {
+      "id": "v_corner_c",
+      "source_pixel": {
+        "x": 712.98,
+        "y": 744.75
+      }
+    },
+    {
+      "id": "v_corner_d",
+      "source_pixel": {
+        "x": 534.75,
+        "y": 711.33
+      }
+    },
+    {
+      "id": "v_ridge_0",
+      "source_pixel": {
+        "x": 602.15,
+        "y": 665.22
+      }
+    },
+    {
+      "id": "v_ridge_1",
+      "source_pixel": {
+        "x": 666.87,
+        "y": 677.35
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "eave_0",
+      "start_vertex_id": "v_corner_a",
+      "end_vertex_id": "v_corner_b",
+      "edge_type": "eave"
+    },
+    {
+      "id": "eave_1",
+      "start_vertex_id": "v_corner_b",
+      "end_vertex_id": "v_corner_c",
+      "edge_type": "eave"
+    },
+    {
+      "id": "eave_2",
+      "start_vertex_id": "v_corner_c",
+      "end_vertex_id": "v_corner_d",
+      "edge_type": "eave"
+    },
+    {
+      "id": "eave_3",
+      "start_vertex_id": "v_corner_d",
+      "end_vertex_id": "v_corner_a",
+      "edge_type": "eave"
+    },
+    {
+      "id": "hip_0",
+      "start_vertex_id": "v_corner_a",
+      "end_vertex_id": "v_ridge_0",
+      "edge_type": "hip"
+    },
+    {
+      "id": "hip_1",
+      "start_vertex_id": "v_corner_d",
+      "end_vertex_id": "v_ridge_0",
+      "edge_type": "hip"
+    },
+    {
+      "id": "hip_2",
+      "start_vertex_id": "v_corner_b",
+      "end_vertex_id": "v_ridge_1",
+      "edge_type": "hip"
+    },
+    {
+      "id": "hip_3",
+      "start_vertex_id": "v_corner_c",
+      "end_vertex_id": "v_ridge_1",
+      "edge_type": "hip"
+    },
+    {
+      "id": "ridge_0",
+      "start_vertex_id": "v_ridge_0",
+      "end_vertex_id": "v_ridge_1",
+      "edge_type": "ridge"
+    }
+  ],
+  "facets": [
+    {
+      "id": "facet_n",
+      "label": "North facet",
+      "vertex_ids": [
+        "v_corner_a",
+        "v_corner_b",
+        "v_ridge_1",
+        "v_ridge_0"
+      ],
+      "eave_edge_id": "eave_0",
+      "eave_vertex_ids": [
+        "v_corner_a",
+        "v_corner_b"
+      ],
+      "approx_compass_azimuth_deg": 10.62,
+      "shape": "trapezoid"
+    },
+    {
+      "id": "facet_s",
+      "label": "South facet",
+      "vertex_ids": [
+        "v_corner_c",
+        "v_corner_d",
+        "v_ridge_0",
+        "v_ridge_1"
+      ],
+      "eave_edge_id": "eave_2",
+      "eave_vertex_ids": [
+        "v_corner_c",
+        "v_corner_d"
+      ],
+      "approx_compass_azimuth_deg": 190.62,
+      "shape": "trapezoid"
+    },
+    {
+      "id": "facet_w",
+      "label": "West facet",
+      "vertex_ids": [
+        "v_corner_d",
+        "v_corner_a",
+        "v_ridge_0"
+      ],
+      "eave_edge_id": "eave_3",
+      "eave_vertex_ids": [
+        "v_corner_d",
+        "v_corner_a"
+      ],
+      "approx_compass_azimuth_deg": 280.62,
+      "shape": "triangle"
+    },
+    {
+      "id": "facet_e",
+      "label": "East facet",
+      "vertex_ids": [
+        "v_corner_b",
+        "v_corner_c",
+        "v_ridge_1"
+      ],
+      "eave_edge_id": "eave_1",
+      "eave_vertex_ids": [
+        "v_corner_b",
+        "v_corner_c"
+      ],
+      "approx_compass_azimuth_deg": 100.62,
+      "shape": "triangle"
+    }
+  ],
+  "measured": {
+    "footprint_long_m": 11.216,
+    "footprint_short_m": 7.143,
+    "footprint_area_m2": 80.11,
+    "ridge_m": 4.073
+  }
+}

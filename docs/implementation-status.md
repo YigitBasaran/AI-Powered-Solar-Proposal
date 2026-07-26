@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated: end of Phase 0._
+_Last updated: Phase 1 backend complete, roof calibration derived._
 
 ---
 
@@ -13,9 +13,9 @@ _Last updated: end of Phase 0._
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Source audit, coordinate verification, fixture provenance, licensing | ✅ |
-| 1 | Foundation — monorepo, Docker Compose, CI, tooling | 🔨 |
+| 1 | Foundation — API, config, DB, tooling (web + Docker outstanding) | 🔨 |
 | 2 | Deterministic workflow core — state machine, steps, rules parser | ⬜ |
-| 3 | Geometry engine + roof calibration tool | ⬜ |
+| 3 | Geometry engine ✅ + calibration data ✅ + calibration UI ⬜ | 🔨 |
 | 4 | Panel placement optimiser | ⬜ |
 | 5 | PVGIS + FX integrations | ⬜ |
 | 6 | Financial service | ⬜ |
@@ -63,6 +63,51 @@ _Last updated: end of Phase 0._
 
 ---
 
+## Phase 1 — backend foundation (web app and Docker still outstanding)
+
+**Delivered**
+
+- `apps/api` package with Python 3.12 venv; FastAPI 0.140, Pydantic 2.13, SQLAlchemy 2.0.51, Shapely 2.1.2, httpx, Alembic, aiosqlite.
+- Typed settings (`app/core/config.py`). The raw and resolved case coordinates are separate fields, and there is deliberately **no** USD/EUR rate setting, so a parity assumption cannot be configured into existence.
+- `SatelliteImageConfig` derives ground resolution from Web Mercator and the verified zoom/scale alone — **0.0618500 m per source pixel**, never from image dimensions.
+- Domain models for the whole pipeline (roof, panels, yield, FX, finance, proposal, chat intents).
+- **Pure geometry engine** (`app/domain/geometry.py`) with three explicitly separated coordinate spaces and assumption **A-GEO-1** enforced by tests.
+- SQLAlchemy tables, async session management, structured error envelope, health endpoints reporting every operating mode explicitly.
+
+**Verified:** 63/63 geometry tests pass; Ruff clean; API boots, initialises the database and serves `/health/live`, `/health/ready`, `/health/case-location`.
+
+**Outstanding in this phase:** Next.js app, Docker Compose (with the optional Ollama profile), Makefile/PowerShell scripts, GitHub Actions workflow.
+
+---
+
+## Phase 3 — geometry engine and calibration data complete
+
+The geometry engine and the committed calibration are done; the `/dev/roof-calibration` UI is not yet built.
+
+**Calibration result** — `apps/api/app/data/fixed_roof_calibration.json`, in source-map pixels:
+
+| Quantity | Value |
+|---|---|
+| Footprint | 11.216 m × 7.143 m = **80.11 m²** |
+| Ridge | 4.073 m |
+| Vertices / edges / facets | 6 / 9 (4 eave, 4 hip, 1 ridge) / 4 |
+| Facet azimuths | N 10.6° · E 100.6° · S 190.6° · W 280.6° |
+
+Topology matches the brief's reference overlay exactly: four outer eaves, one central ridge, four hips, two trapezoids and two triangles. Visual confirmation: [`images/roof-calibration-derivation.png`](images/roof-calibration-derivation.png).
+
+**Two segmentation problems worth recording**
+
+1. The raster centre *is* the resolved case coordinate and *does* land on the target roof — but squarely on a roof vent 45 grey levels darker than the roof plane. Seeding there grew a 400-pixel blob of vent. The seed is now the pixel nearest the median of a surrounding disc.
+2. Neighbouring houses share roof material and are linked by same-brightness boundary walls, so a plain flood fill bridged into them and returned a quarter of the street. A morphological opening snaps those bridges before the component is taken.
+
+Parameters are chosen by **stability, not taste**: sweeping tolerance and erosion depth, 16 of 25 combinations agree to within 6%, so the fit is a property of the image rather than of the settings.
+
+**A coordinate-space bug the debug overlay caught.** Segmentation points are window-relative and were being passed through as source-map pixels, offsetting the entire calibration by the 410 px window origin. The numbers looked entirely plausible — correct dimensions, correct aspect ratio, correct facet azimuths — and only rendering the overlay on the imagery exposed it. This is precisely the failure mode the three-coordinate-space discipline exists to prevent.
+
+**Capacity forecast** (updated with measured geometry): sloped area at 25° ≈ **88.4 m²**. Estimated north-trapezoid capacity ≈ 9 landscape panels. So 3.6 kWp (9 panels) should fit on the best facet alone, 6.0 kWp (15) needs multi-facet packing, and 9.6 kWp (24 panels = 48 m², 54 % of the sloped roof) is expected to trigger the honest capacity-warning path.
+
+---
+
 ## Requirement traceability matrix
 
 | # | Requirement | Backend | Endpoint | Frontend | Tests | Status |
@@ -71,19 +116,19 @@ _Last updated: end of Phase 0._
 | 2 | Local LLM, structured output | `integrations/ollama.py` | via chat | AI status badge | — | ⬜ |
 | 3 | Location input step | `services/location.py` | via chat | chat step | — | ⬜ |
 | 4 | Fixed property resolution | location resolver | via chat | chat step | — | ⬜ |
-| 5 | Coordinate sign verified | `CaseLocationSettings` | — | — | — | ✅ |
+| 5 | Coordinate sign verified | `CaseLocationSettings` | `GET /health/case-location` | — | ✅ | ✅ |
 | 6 | 1,150 kWh consumption | consumption state | via chat | chat step | — | ⬜ |
 | 7 | Exactly three system sizes | whitelist | via chat | size cards | — | ⬜ |
 | 8 | Google Static Maps | `integrations/google_maps.py` | `GET /maps/satellite` | Konva bg | — | ⬜ |
 | 9 | Fixture mode, no key | fixture loader | `GET /maps/satellite` | fixture badge | — | 🔨 |
-| 10 | Four facets | calibration data | `GET /roof/fixed-model` | facet layer | — | ⬜ |
-| 11 | All outer eave edges | roof model | `GET /roof/fixed-model` | edge layer | — | ⬜ |
-| 12 | Ridge + hip edges | roof model | `GET /roof/fixed-model` | edge layer | — | ⬜ |
+| 10 | Four facets | calibration data ✅ | `GET /roof/fixed-model` | facet layer | — | 🔨 |
+| 11 | All outer eave edges | calibration data ✅ | `GET /roof/fixed-model` | edge layer | — | 🔨 |
+| 12 | Ridge + hip edges | calibration data ✅ | `GET /roof/fixed-model` | edge layer | — | 🔨 |
 | 13 | Metric edge measurements | `domain/geometry.py` | `GET /roof/fixed-model` | measurement layer | — | ⬜ |
-| 14 | Pixel-to-metre (Web Mercator) | `domain/geometry.py` | — | — | — | ⬜ |
+| 14 | Pixel-to-metre (Web Mercator) | `domain/geometry.py` | — | — | ✅ 12 tests | ✅ |
 | 15 | 25° pitch | roof model | — | facet labels | — | ⬜ |
-| 16 | Projected + sloped area | `domain/geometry.py` | — | facet table | — | ⬜ |
-| 17 | Facet azimuth + PVGIS aspect | `domain/geometry.py` | — | facet table | — | ⬜ |
+| 16 | Projected + sloped area | `domain/geometry.py` | — | facet table | ✅ 9 tests | 🔨 |
+| 17 | Facet azimuth + PVGIS aspect | `domain/geometry.py` | — | facet table | ✅ 9 tests | 🔨 |
 | 18 | Automatic panel placement | `services/layout.py` | `POST /projects/{id}/layout` | panel layer | — | ⬜ |
 | 19 | Physical 1×2 m panel size | surface coordinates | — | panel layer | — | ⬜ |
 | 20 | Containment + no overlap | Shapely validation | — | — | — | ⬜ |

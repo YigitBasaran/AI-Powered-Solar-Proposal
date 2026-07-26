@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "solarvis-api"
+version = "0.1.0"
+description = "solarVis AI — deterministic solar proposal backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0.36",
+    "alembic>=1.14",
+    "aiosqlite>=0.20",
+    "greenlet>=3.1",
+    "httpx>=0.28",
+    "shapely>=2.0.6",
+    "numpy>=1.26",
+    "jinja2>=3.1",
+    "python-multipart>=0.0.20",
+    "pillow>=10.3",
+]
+
+[project.optional-dependencies]
+pdf = ["playwright>=1.49"]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "respx>=0.21",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-requests",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error::DeprecationWarning:app.*"]
+markers = [
+    "live: hits real external APIs; deselect with -m 'not live'",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "C4", "RUF"]
+ignore = ["B008"]  # FastAPI Depends() in defaults is idiomatic
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+warn_unused_ignores = true
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["shapely.*", "respx.*"]
+ignore_missing_imports = true

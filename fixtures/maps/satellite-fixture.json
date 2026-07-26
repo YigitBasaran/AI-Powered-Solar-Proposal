@@ -1,0 +1,37 @@
+{
+  "description": "Satellite fixture rendered on the EXACT Google Static Maps zoom-20/scale-2 grid.",
+  "center": {
+    "latitude": -34.04658242871865,
+    "longitude": 18.46491476666948
+  },
+  "zoom": 20,
+  "requested_width_px": 640,
+  "requested_height_px": 640,
+  "scale": 2,
+  "source_width_px": 1280,
+  "source_height_px": 1280,
+  "map_type": "satellite",
+  "mercator_m_per_source_px": 0.0746455,
+  "ground_m_per_source_px": 0.06185,
+  "ground_span_m": 79.168,
+  "bbox_epsg3857": [
+    2055457.136,
+    -4035106.398,
+    2055552.683,
+    -4035010.851
+  ],
+  "provenance": {
+    "imagery_source": "Esri World Imagery (ArcGIS Online MapServer export)",
+    "attribution": "Imagery \u00a9 Esri, Maxar, Earthstar Geographics, and the GIS User Community",
+    "why": "No Google Maps API key available. Rendered on the identical Web Mercator bbox that Google Static Maps z20/scale2/640x640 covers, so calibration performed on this fixture is valid unchanged for live Google imagery.",
+    "usage_scope": "Case-study submission only. Not cleared for unrestricted public redistribution."
+  },
+  "fixture_image_transform": {
+    "scale_x": 1.0,
+    "scale_y": 1.0,
+    "offset_x": 0.0,
+    "offset_y": 0.0,
+    "provenance": "Identity: fixture was rendered directly on the source-map grid (same centre, same bbox, same 1280x1280 raster).",
+    "verified": true
+  }
+}

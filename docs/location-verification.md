@@ -1,0 +1,166 @@
+# Location Verification
+
+Required by the case brief: the fixed coordinate must be verified against the authoritative source before the map configuration is locked, and the resolution must be evidenced rather than guessed.
+
+**Status: RESOLVED — sign correction applied, verified by three independent sources.**
+
+---
+
+## 1. The coordinate as written
+
+The case brief (Notion page, retrieved 2026-07-26) states:
+
+```
+For this case, we use a fixed location with a 4-facet (hipped) roof:
+
+Fixed location:
+
+34.04658242871865, 18.46491476666948
+```
+
+The brief itself writes the latitude **without a minus sign**. This is not a transcription error introduced downstream — the authoritative source carries it.
+
+## 2. Why it cannot be used as written
+
+`+34.04658242871865, 18.46491476666948` falls in the **open Mediterranean Sea**, roughly 300 km north of the Libyan coast.
+
+```
+GET https://nominatim.openstreetmap.org/reverse?lat=34.04658242871865&lon=18.46491476666948&format=jsonv2
+→ {"error":"Unable to geocode"}
+```
+
+There is no land, no building and no roof. Every downstream measurement — edge lengths, facet areas, azimuths, panel positions — would be fiction.
+
+## 3. The resolved coordinate
+
+```
+-34.04658242871865, 18.46491476666948
+```
+
+### Evidence A — reverse geocoding returns a real address
+
+```
+GET https://nominatim.openstreetmap.org/reverse?lat=-34.04658242871865&lon=18.46491476666948&format=jsonv2
+→ "Galway Road, Cape Town Ward 73, Cape Town, City of Cape Town,
+   Western Cape, 7945, South Africa"
+```
+
+### Evidence B — PVGIS resolves it as land
+
+`GET https://re.jrc.ec.europa.eu/api/v5_3/PVcalc?lat=-34.04658&lon=18.46491&...` returns HTTP 200 with `elevation = 17.0 m` and radiation database `PVGIS-SARAH3`. PVGIS returns an error for sea locations outside its land grid.
+
+### Evidence C — the imagery matches the brief's reference photographs
+
+Independent imagery (Esri World Imagery) rendered on the exact Web Mercator bbox for this coordinate shows a **housing estate of identical hipped-roof houses**, a railway line to the east, and a parking area to the north-east. This matches:
+
+- the brief's reference photograph (`fixtures/reference/case-roof-photo.png`) — same house type, same dense row layout;
+- OpenStreetMap features within 60 m — public-transport shelters, public toilets, a 55 m platform canopy (consistent with the adjacent railway station);
+- Nominatim's `amenity=parking` classification at the exact point.
+
+The house at the image centre is a hipped roof measuring approximately **10.4 m × 6.7 m**, rotated **≈9.7°** clockwise from image-horizontal. The brief's overlay reference (`fixtures/reference/case-roof-overlay.png`) shows the same roof at a rotation of **≈9.8°**, independently corroborating that the two images depict the same building.
+
+### Conclusion
+
+The missing minus sign is a defect in the case brief. The application stores **both** values: the raw coordinate exactly as the brief wrote it, and the resolved coordinate actually used. Nothing is silently modified.
+
+```python
+CaseLocationSettings(
+    raw_case_latitude   =  34.04658242871865,   # as printed in the brief
+    raw_case_longitude  =  18.46491476666948,
+    resolved_latitude   = -34.04658242871865,   # used by the application
+    resolved_longitude  =  18.46491476666948,
+    resolution_note     = "Brief omits the minus sign; +34.0466 is open sea "
+                          "(Nominatim: unable to geocode). -34.0466 resolves to "
+                          "Galway Road, Cape Town, ZA; PVGIS confirms land at 17 m; "
+                          "imagery matches the brief's reference photographs.",
+    source_verified     = True,
+)
+```
+
+---
+
+## 4. Consequence: southern hemisphere
+
+The site is at latitude **−34°**, so solar optimality is **inverted** relative to the northern-hemisphere assumptions the brief is written with. Measured live at the resolved coordinate (6 kWp, 25° tilt, 14 % loss, crystSi, building-mounted):
+
+| Facet orientation | PVGIS `aspect` | Annual production | Specific yield |
+|---|---|---|---|
+| **North-facing** | `180` | **10,122.31 kWh** | ≈1,687 kWh/kWp |
+| South-facing | `0` | 6,646.46 kWh | ≈1,108 kWh/kWp |
+
+North-facing produces **≈52 % more** than south-facing here. The panel allocator must therefore prefer north-facing facets. No "optimal aspect" is hardcoded anywhere — ranking comes from a per-facet 1 kWp PVGIS probe, so the correct answer emerges from data rather than assumption.
+
+Favourably, the reference roof's **largest facet (the north trapezoid, azimuth ≈8.5°) is also its best-producing one**.
+
+---
+
+## 5. Map configuration
+
+| Parameter | Value |
+|---|---|
+| Centre | `-34.04658242871865, 18.46491476666948` |
+| Zoom | `20` |
+| Requested size | `640x640` (logical) |
+| Scale | `2` |
+| Map type | `satellite` |
+| **Actual source-image dimensions** | **`1280 × 1280`** |
+| Mercator m per source px | `0.0746455` |
+| **Ground m per source px** | **`0.0618500`** |
+| Ground span of raster | `79.168 m` |
+| EPSG:3857 bbox | `2055457.136, -4035106.398, 2055552.683, -4035010.851` |
+
+Ground resolution is derived from Web Mercator and the verified `zoom`/`scale` **only**:
+
+```
+metersPerLogicalPixel     = cos(|lat|) × 2πR / (256 × 2^zoom)
+metersPerSourceImagePixel = metersPerLogicalPixel / scale
+                          = 0.0618500 m
+```
+
+### The fixture must not be used as a scale source
+
+`MAPS_MODE=fixture` is the default (no API key required). The committed fixture is rendered on the **identical Web Mercator bbox** that Google Static Maps `z20 / scale=2 / 640x640` covers, at the identical `1280 × 1280` raster size. Therefore `FixtureImageTransform` is the **identity**, `verified = true`, and calibration performed against the fixture remains valid unchanged when `MAPS_MODE=live` swaps in real Google imagery.
+
+The brief's own reference images are **topology references only** and are deliberately *not* used as the map substrate:
+
+| File | Size | Role |
+|---|---|---|
+| `fixtures/maps/satellite-fixture.png` | 1280 × 1280 | Map substrate. Exact z20/scale2 grid. Scale authoritative. |
+| `fixtures/reference/case-roof-photo.png` | 730 × 684 | Reference only. Cropped screenshot. |
+| `fixtures/reference/case-roof-overlay.png` | 1112 × 1098 | Reference only. Expected facet topology. |
+
+> **Scale warning.** The brief's reference images are cropped, resized screenshots. Measurement puts them at roughly **3.4× the magnification** of the z20/scale2 grid. Treating their pixels as source-map pixels would inflate every length by ≈3.4× and every area by ≈11.6× while still looking entirely plausible. Their dimensions carry no scale information and are never used to derive metres-per-pixel.
+
+---
+
+## 6. Expected roof confirmed visible
+
+The brief's overlay reference confirms the expected topology, and it is present in the fixture at the raster centre:
+
+- 4 outer eave edges forming the roof boundary
+- 1 central ridge edge
+- 4 hip edges running from each outer corner to a ridge endpoint
+- 4 facets: 2 trapezoids (north, south) + 2 triangles (east, west)
+- Uniform pitch of 25° across all facets
+
+Approximate as-measured geometry (precise values come from committed calibration):
+
+| Quantity | Approx. value |
+|---|---|
+| Footprint | 10.4 m × 6.7 m ≈ 69.6 m² |
+| Ridge length | ≈3.7 m |
+| Total sloped area @ 25° | ≈76.8 m² |
+| North / south trapezoid | ≈23.6 m² projected, ≈26.0 m² sloped each |
+| East / west triangle | ≈11.2 m² projected, ≈12.4 m² sloped each |
+
+### Capacity implication, stated up front
+
+At 2 m² per panel, the three required system sizes need:
+
+| System | Panels | Panel area | vs 76.8 m² sloped roof |
+|---|---|---|---|
+| 3.6 kWp | 9 | 18 m² | 23 % — comfortable |
+| 6.0 kWp | 15 | 30 m² | 39 % — feasible, needs multi-facet packing |
+| 9.6 kWp | 24 | 48 m² | 63 % — **very likely infeasible** |
+
+Packing 48 m² of rigid 1×2 m rectangles into trapezoids and triangles totalling 76.8 m², with gaps and setbacks, is not achievable at 63 % utilisation. The 9.6 kWp scenario is therefore expected to return an **honest capacity warning** with the maximum feasible count, and to drive PVGIS and the financial model from the *feasible* capacity. This is required behaviour under the brief, not a defect.

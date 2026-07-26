@@ -1,0 +1,12 @@
+{
+  "description": "Authoritative case-study reference images from the solarVis Notion brief.",
+  "source_url": "https://zany-pea-6a6.notion.site/solarVis-Software-Engineer-Case-Study-AI-Powered-Solar-Proposal-Flow-3a56acaf9e3a804cbe0bde59d62f4bcd",
+  "retrieved": "2026-07-26",
+  "files": {
+    "case-roof-photo.png": "Google Maps screenshot, red pin on the target house.",
+    "case-roof-overlay.png": "Expected roof reconstruction: 4 eaves, 1 ridge, 4 hips, 4 facets."
+  },
+  "IMPORTANT_scale_warning": "These are cropped, resized screenshots. Their pixel dimensions carry NO reliable scale information and MUST NOT be used to derive metres-per-pixel. Measured magnification is ~3.4x relative to the z20/scale2 grid. They are topology references only.",
+  "attribution": "Map data \u00a9 Google. Reproduced from the case-study brief.",
+  "usage_scope": "Case-study submission only. Not cleared for unrestricted public redistribution."
+}

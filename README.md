@@ -19,6 +19,12 @@ docker compose up --build
 
 - App → <http://localhost:3000>
 - API docs → <http://localhost:8000/docs>
+- Calibration tool → <http://localhost:3000/dev/roof-calibration>
+
+Verified: both images build, the API reports healthy, and a complete proposal
+(15 panels, live PVGIS, live ECB rate, a 104 KB PDF rendered by Chromium
+inside the container) runs end to end. Evidence in
+[`docs/implementation-status.md`](docs/implementation-status.md).
 
 Then type any coordinate, `1,150 kWh`, and `the middle option`.
 
@@ -172,8 +178,11 @@ Model output is forced through a JSON schema, Pydantic-validated, then re-checke
 ## Testing
 
 ```bash
-cd apps/api && ./.venv/Scripts/python -m pytest -q      # 342 tests
-cd apps/web && npm run typecheck && npm run test && npm run build
+cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 431 tests
+cd apps/api && ./.venv/Scripts/python -m ruff check app tests
+cd apps/api && ./.venv/Scripts/python -m mypy app                  # strict
+cd apps/web && npm run typecheck && npm run test && npm run build  # 38 tests
+cd apps/web && npm run test:e2e                                    # 10 tests
 ```
 
 Live-marked tests hit real APIs and are deselected by default: `pytest -m live`.
@@ -200,7 +209,16 @@ Integration tests run fully offline against a throwaway database in fixture mode
 | Document | What it covers |
 |---|---|
 | [`docs/location-verification.md`](docs/location-verification.md) | The coordinate defect, the evidence, and the locked map configuration |
-| [`docs/implementation-status.md`](docs/implementation-status.md) | Live build log and the requirement-traceability matrix |
+| [`docs/architecture.md`](docs/architecture.md) | Layers, invariants, ports, request flow |
+| [`docs/geometry.md`](docs/geometry.md) | Coordinate spaces, pixel-to-metre, **A-GEO-1**, azimuth |
+| [`docs/panel-placement.md`](docs/panel-placement.md) | Surface coordinates, tiling, the allocation DP |
+| [`docs/exchange-rates.md`](docs/exchange-rates.md) | Why the conversion exists and why parity is unreachable |
+| [`docs/local-ai.md`](docs/local-ai.md) | What the model may and may not do, and how it is constrained |
+| [`docs/api.md`](docs/api.md) | Every endpoint, the error envelope, security posture |
+| [`docs/testing.md`](docs/testing.md) | What is tested, what deliberately is not, what broke |
+| [`docs/assumptions.md`](docs/assumptions.md) | Every assumption and what it costs if wrong |
+| [`docs/known-limitations.md`](docs/known-limitations.md) | What this does not do and what is unverified |
+| [`docs/implementation-status.md`](docs/implementation-status.md) | Build log and the requirement-traceability matrix |
 | [`docs/case-questions.md`](docs/case-questions.md) | The brief's two questions |
 | [`LICENSE-NOTICE.md`](LICENSE-NOTICE.md) | Third-party asset provenance, attribution and usage scope |
 

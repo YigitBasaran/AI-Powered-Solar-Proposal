@@ -53,6 +53,20 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    # The application passes its own connection when stamping a freshly
+    # created database; reuse it rather than opening a second one.
+    supplied = config.attributes.get("connection")
+    if supplied is not None:
+        context.configure(
+            connection=supplied,
+            target_metadata=target_metadata,
+            render_as_batch=True,
+            compare_type=True,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     section = config.get_section(config.config_ini_section, {})
     section["sqlalchemy.url"] = sync_database_url()
 

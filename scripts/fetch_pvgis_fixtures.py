@@ -79,7 +79,9 @@ def fetch(aspect: float, peakpower: float = 1.0) -> dict[str, Any]:
     last: Exception | None = None
     for attempt, delay in enumerate((0.5, 1.0, 2.0)):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "solarvis-case-study/1.0"})
+            req = urllib.request.Request(
+                url, headers={"User-Agent": "solarvis-case-study/1.0"}
+            )
             with urllib.request.urlopen(req, timeout=30) as resp:
                 payload: dict[str, Any] = json.loads(resp.read())
             return payload
@@ -130,7 +132,9 @@ def main() -> int:
         print(f"{e_y:8.2f} kWh/kWp")
 
         if aspect in aspects.values():
-            path = OUT_DIR / f"pvcalc-aspect{aspect:+.2f}.json".replace("+", "p").replace("-", "m")
+            path = OUT_DIR / f"pvcalc-aspect{aspect:+.2f}.json".replace(
+                "+", "p"
+            ).replace("-", "m")
             path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
     table["radiation_database"] = radiation_db

@@ -187,3 +187,50 @@ def test_exchange_rate_cache_has_a_lookup_index(from_migrations) -> None:
     assert any(
         {"base_currency", "quote_currency", "provider"} <= set(columns) for _, columns in indexes
     )
+
+
+# ---------------------------------------------------------------------------
+# create_all and Alembic must not fight over the same database
+# ---------------------------------------------------------------------------
+
+
+def test_a_database_built_by_the_app_is_stamped_at_head(tmp_path, monkeypatch) -> None:
+    """`create_all` alone leaves `alembic_version` empty.
+
+    An operator then runs `alembic upgrade head`, Alembic sees no revision
+    applied, tries to CREATE TABLE over the existing tables and fails. This is
+    exactly what happened in the container. `init_db` stamps the version so the
+    upgrade is a clean no-op on a database the application built.
+    """
+    import asyncio
+
+    import app.db.session as session_module
+    from app.core.config import get_settings
+
+    database = tmp_path / "stamped.db"
+    monkeypatch.setenv("DATABASE_URL", f"sqlite+aiosqlite:///{database.as_posix()}")
+    get_settings.cache_clear()
+    session_module._engine = None
+    session_module._sessionmaker = None
+
+    try:
+        asyncio.run(session_module.init_db())
+
+        engine = create_engine(f"sqlite:///{database.as_posix()}")
+        try:
+            inspector = inspect(engine)
+            assert "alembic_version" in inspector.get_table_names()
+            with engine.connect() as connection:
+                version = connection.exec_driver_sql(
+                    "SELECT version_num FROM alembic_version"
+                ).scalar_one()
+            assert version, "the database must carry a revision"
+        finally:
+            engine.dispose()
+
+        # The upgrade an operator would run must now do nothing, not explode.
+        command.upgrade(_alembic_config(f"sqlite:///{database.as_posix()}"), "head")
+    finally:
+        session_module._engine = None
+        session_module._sessionmaker = None
+        get_settings.cache_clear()

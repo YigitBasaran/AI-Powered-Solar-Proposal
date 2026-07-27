@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>solarVis — Solar Feasibility Proposal</title>
+<style>
+  @page { size: A4; margin: 16mm 14mm 18mm 14mm; }
+
+  :root {
+    --surface: #fcfcfb;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --rule: #c3c2b7;
+    --series: #2a78d6;
+    --navy: #0f2742;
+    --warn-bg: #fdf3e7;
+    --warn-ink: #8a5210;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color: var(--ink);
+    background: #fff;
+    font-size: 10.5px;
+    line-height: 1.45;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Keep a block and its heading together across a page break. */
+  section { break-inside: avoid; margin-bottom: 16px; }
+  h1, h2, h3 { break-after: avoid; margin: 0; }
+  table { break-inside: auto; }
+  tr { break-inside: avoid; }
+
+  .masthead {
+    background: var(--navy); color: #fff;
+    padding: 18px 20px; border-radius: 6px; margin-bottom: 18px;
+  }
+  .masthead h1 { font-size: 20px; letter-spacing: -0.2px; }
+  .masthead .sub { color: #b9c6d6; font-size: 11px; margin-top: 4px; }
+  .masthead .meta { color: #8ea3bd; font-size: 9.5px; margin-top: 10px; }
+
+  h2 {
+    font-size: 12.5px; letter-spacing: -0.1px;
+    padding-bottom: 5px; border-bottom: 1px solid var(--rule);
+    margin-bottom: 10px;
+  }
+  h3 { font-size: 10.5px; color: var(--ink-2); margin: 10px 0 4px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .kpi {
+    border: 1px solid var(--grid); border-radius: 5px;
+    padding: 9px 10px; background: var(--surface);
+  }
+  .kpi .label {
+    font-size: 8.5px; text-transform: uppercase; letter-spacing: .5px;
+    color: var(--muted);
+  }
+  .kpi .value { font-size: 16px; font-weight: 650; margin-top: 3px; }
+  .kpi .note { font-size: 8.5px; color: var(--muted); margin-top: 2px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 9.5px; }
+  th {
+    text-align: left; font-weight: 600; color: var(--ink-2);
+    border-bottom: 1px solid var(--rule); padding: 5px 6px;
+  }
+  td { padding: 4.5px 6px; border-bottom: 1px solid var(--grid); }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tbody tr:last-child td { border-bottom: none; }
+  tfoot td { font-weight: 650; border-top: 1px solid var(--rule); }
+
+  .two-col { display: grid; grid-template-columns: 1fr 200px; gap: 16px; align-items: start; }
+  .layout-image { width: 100%; border: 1px solid var(--grid); border-radius: 5px; }
+  .caption { font-size: 8.5px; color: var(--muted); margin-top: 4px; }
+
+  .callout {
+    background: var(--warn-bg); border-left: 3px solid #d98324;
+    color: var(--warn-ink); padding: 9px 11px; border-radius: 3px;
+    font-size: 9.5px; margin-bottom: 12px;
+  }
+  .source-note {
+    font-size: 8.5px; color: var(--muted);
+    border: 1px dashed var(--grid); border-radius: 4px;
+    padding: 7px 9px; margin-top: 8px;
+  }
+  .assumptions { columns: 2; column-gap: 22px; font-size: 9px; color: var(--ink-2); }
+  .assumptions li { margin-bottom: 2.5px; break-inside: avoid; }
+  .disclaimer {
+    font-size: 8.5px; color: var(--muted);
+    border-top: 1px solid var(--grid); padding-top: 8px; margin-top: 4px;
+  }
+  .page-break { break-before: page; }
+</style>
+</head>
+<body>
+
+<div class="masthead">
+  <h1>Solar Feasibility Proposal</h1>
+  <div class="sub">
+    {{ layout.feasibleSystemSizeKwp }} kWp &middot; {{ layout.placedPanelCount }} panels
+    &middot; {{ "%.0f"|format(energy.totalAnnualProductionKwh) }} kWh per year
+  </div>
+  <div class="meta">
+    Prepared by solarVis AI &middot; {{ created_at }} &middot; Reference {{ share_token[:12] }}
+  </div>
+</div>
+
+{% if capacity_warning %}
+<div class="callout"><strong>Capacity note.</strong> {{ capacity_warning }}</div>
+{% endif %}
+
+{% if ai_summary %}
+<section>
+  <h2>Summary</h2>
+  <p style="margin:0">{{ ai_summary }}</p>
+</section>
+{% endif %}
+
+<section>
+  <h2>Headline results</h2>
+  <div class="kpis">
+    <div class="kpi">
+      <div class="label">System size</div>
+      <div class="value">{{ layout.feasibleSystemSizeKwp }} kWp</div>
+      <div class="note">{{ layout.placedPanelCount }} of {{ layout.requestedPanelCount }} panels requested</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Annual production</div>
+      <div class="value">{{ "{:,.0f}".format(energy.totalAnnualProductionKwh) }} kWh</div>
+      <div class="note">{{ "%.1f"|format(financial.coveragePercent) }}% of your usage</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Annual saving</div>
+      <div class="value">&euro;{{ "{:,.0f}".format(financial.annualSavingsEur|float) }}</div>
+      <div class="note">at &euro;{{ financial.electricityPriceEurPerKwh }}/kWh</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Payback</div>
+      <div class="value">
+        {%- if financial.simplePaybackYears -%}
+          {{ "%.1f"|format(financial.simplePaybackYears) }} yr
+        {%- else -%}&mdash;{%- endif -%}
+      </div>
+      <div class="note">20-year net &euro;{{ "{:,.0f}".format(financial.twentyYearNetBenefitEur|float) }}</div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>Project inputs</h2>
+  <table>
+    <tbody>
+      <tr><td>Location as entered</td><td class="num">{{ meta.rawLocationInput or "—" }}</td></tr>
+      <tr><td>Location analysed</td><td class="num">{{ "%.6f"|format(meta.location.latitude) }}, {{ "%.6f"|format(meta.location.longitude) }}</td></tr>
+      <tr><td>Monthly consumption</td><td class="num">{{ "{:,.0f}".format(meta.monthlyConsumptionKwh) }} kWh</td></tr>
+      <tr><td>Annual consumption</td><td class="num">{{ "{:,.0f}".format(meta.annualConsumptionKwh) }} kWh</td></tr>
+      <tr><td>Electricity unit price</td><td class="num">&euro;{{ financial.electricityPriceEurPerKwh }} / kWh</td></tr>
+      <tr><td>Requested system size</td><td class="num">{{ layout.requestedSystemSizeKwp }} kWp ({{ layout.requestedPanelCount }} panels)</td></tr>
+      <tr><td>Feasible system size</td><td class="num">{{ layout.feasibleSystemSizeKwp }} kWp ({{ layout.placedPanelCount }} panels)</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Roof reconstruction</h2>
+  <div class="two-col">
+    <div>
+      {% if layout_image %}
+        <img class="layout-image" src="{{ layout_image }}" alt="Satellite view with roof reconstruction and panel layout"/>
+        <div class="caption">{{ map_attribution }}</div>
+      {% elif roof_plan_svg %}
+        <div style="border:1px solid var(--grid);border-radius:5px;padding:6px">
+          {{ roof_plan_svg|safe }}
+        </div>
+        <div class="caption">
+          Plan view of the reconstructed roof and panel layout, drawn to scale
+          from the measured geometry.
+        </div>
+      {% endif %}
+      <table style="margin-top:10px">
+        <thead>
+          <tr>
+            <th>Facet</th><th class="num">Azimuth</th><th class="num">Pitch</th>
+            <th class="num">Plan area</th><th class="num">Sloped area</th><th class="num">Panels</th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for facet in roof.facets %}
+          <tr>
+            <td>{{ facet.label }}</td>
+            <td class="num">{{ "%.1f"|format(facet.compassAzimuthDeg) }}&deg;</td>
+            <td class="num">{{ "%.0f"|format(roof.pitchDeg) }}&deg;</td>
+            <td class="num">{{ "%.2f"|format(facet.projectedAreaM2) }} m&sup2;</td>
+            <td class="num">{{ "%.2f"|format(facet.slopedAreaM2) }} m&sup2;</td>
+            <td class="num">{{ panels_by_facet.get(facet.id, 0) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3">Total</td>
+            <td class="num">{{ "%.2f"|format(roof.totalProjectedAreaM2) }} m&sup2;</td>
+            <td class="num">{{ "%.2f"|format(roof.totalSlopedAreaM2) }} m&sup2;</td>
+            <td class="num">{{ layout.placedPanelCount }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+    <div>
+      <h3>Orientation</h3>
+      {{ compass_svg|safe }}
+      <div class="caption">
+        Ray length and weight show relative yield. This site is in the southern
+        hemisphere, so north-facing roof faces produce most.
+      </div>
+    </div>
+  </div>
+
+  <h3>Edge measurements</h3>
+  <table>
+    <thead>
+      <tr><th>Edge</th><th>Type</th><th class="num">Plan length</th><th class="num">True length</th></tr>
+    </thead>
+    <tbody>
+    {% for edge in roof.edges %}
+      <tr>
+        <td>{{ edge.id }}</td>
+        <td>{{ edge.type }}</td>
+        <td class="num">{{ "%.3f"|format(edge.projectedLengthM) }} m</td>
+        <td class="num">{% if edge.true3dLengthM %}{{ "%.3f"|format(edge.true3dLengthM) }} m{% else %}&mdash;{% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <div class="source-note">
+    Lengths are measured on the source satellite raster at
+    {{ "%.6f"|format(roof.groundMetresPerSourcePixel) }} m per pixel, derived from
+    the verified Web Mercator zoom and scale. Hip lengths use true 3-D endpoint
+    geometry; they are deliberately not the plan length divided by cos(pitch),
+    which applies only to an edge running straight up the slope.
+  </div>
+</section>
+
+<section class="page-break">
+  <h2>Energy production</h2>
+  {{ monthly_svg|safe }}
+  <div class="caption">Modelled monthly production across all occupied roof facets.</div>
+
+  <table style="margin-top:12px">
+    <thead>
+      <tr>
+        <th>Facet</th><th class="num">Panels</th><th class="num">Capacity</th>
+        <th class="num">PVGIS aspect</th><th class="num">Specific yield</th>
+        <th class="num">Annual production</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for facet in energy.facets %}
+      <tr>
+        <td>{{ facet_labels.get(facet.facetId, facet.facetId) }}</td>
+        <td class="num">{{ facet.panelCount }}</td>
+        <td class="num">{{ "%.1f"|format(facet.installedPowerKwp) }} kWp</td>
+        <td class="num">{{ "%.1f"|format(facet.pvgisAspectDeg) }}&deg;</td>
+        <td class="num">{{ "{:,.0f}".format(facet.specificYieldKwhPerKwp) }} kWh/kWp</td>
+        <td class="num">{{ "{:,.0f}".format(facet.annualProductionKwh) }} kWh</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td>Total</td>
+        <td class="num">{{ layout.placedPanelCount }}</td>
+        <td class="num">{{ "%.1f"|format(energy.installedPowerKwp) }} kWp</td>
+        <td class="num"></td><td class="num"></td>
+        <td class="num">{{ "{:,.0f}".format(energy.totalAnnualProductionKwh) }} kWh</td>
+      </tr>
+    </tfoot>
+  </table>
+
+  <div class="source-note">
+    Source: PVGIS 5.3 ({{ energy.radiationDatabase or "JRC" }}), European Commission
+    Joint Research Centre. One request per occupied facet, using that facet's own
+    pitch and azimuth. Data mode: <strong>{{ energy.dataSource }}</strong>.
+  </div>
+</section>
+
+<section>
+  <h2>Financial analysis</h2>
+  <table>
+    <tbody>
+      <tr><td>Annual production</td><td class="num">{{ "{:,.0f}".format(financial.annualProductionKwh) }} kWh</td></tr>
+      <tr><td>Annual consumption</td><td class="num">{{ "{:,.0f}".format(financial.annualConsumptionKwh) }} kWh</td></tr>
+      <tr><td>Energy covered (capped at consumption)</td><td class="num">{{ "{:,.0f}".format(financial.coveredEnergyKwh) }} kWh</td></tr>
+      <tr><td>Consumption coverage</td><td class="num">{{ "%.1f"|format(financial.coveragePercent) }}%</td></tr>
+      <tr><td>Annual saving</td><td class="num">&euro;{{ financial.annualSavingsEur }}</td></tr>
+      <tr><td>Capital cost as quoted</td><td class="num">${{ financial.originalCapex.amount }} {{ financial.originalCapex.currency }}</td></tr>
+      <tr><td>USD/EUR reference rate applied</td><td class="num">{{ exchangeRate.rate }}</td></tr>
+      <tr><td>Rate date</td><td class="num">{{ exchangeRate.rateDate }}</td></tr>
+      <tr><td>Rate provider</td><td class="num">{{ exchangeRate.dataProvider }} via {{ exchangeRate.sourceApi }}</td></tr>
+      <tr><td>Capital cost used in this analysis</td><td class="num">&euro;{{ financial.convertedCapex.amount }} {{ financial.convertedCapex.currency }}</td></tr>
+      <tr><td>Simple payback</td><td class="num">{% if financial.simplePaybackYears %}{{ "%.2f"|format(financial.simplePaybackYears) }} years{% else %}Not reached{% endif %}</td></tr>
+      <tr><td>Net benefit over 20 years</td><td class="num">&euro;{{ financial.twentyYearNetBenefitEur }}</td></tr>
+    </tbody>
+  </table>
+
+  <div class="source-note">
+    Reference rate source: <strong>{{ fx_source_label }}</strong>.
+    The capital cost is quoted in US dollars while savings accrue in euro, so the
+    two are never compared directly. This rate was fixed when the proposal was
+    created and is stored with it: reopening this proposal later will not
+    recalculate these figures at a newer rate.
+  </div>
+</section>
+
+<section>
+  <h2>Twenty-year cash flow</h2>
+  {{ cashflow_svg|safe }}
+  <div class="caption">
+    Cumulative position. Below the line the system is still repaying its capital
+    cost; above it, it is returning value.
+  </div>
+
+  <table style="margin-top:10px">
+    <thead>
+      <tr><th class="num">Year</th><th class="num">Saving</th><th class="num">Cumulative</th>
+          <th class="num">Year</th><th class="num">Saving</th><th class="num">Cumulative</th></tr>
+    </thead>
+    <tbody>
+    {% for left, right in cash_flow_pairs %}
+      <tr>
+        <td class="num">{{ left.year }}</td>
+        <td class="num">&euro;{{ left.annualSavingsEur }}</td>
+        <td class="num">&euro;{{ left.cumulativeCashFlowEur }}</td>
+        {% if right %}
+        <td class="num">{{ right.year }}</td>
+        <td class="num">&euro;{{ right.annualSavingsEur }}</td>
+        <td class="num">&euro;{{ right.cumulativeCashFlowEur }}</td>
+        {% else %}<td></td><td></td><td></td>{% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Assumptions and limitations</h2>
+  <ul class="assumptions">
+    <li>Fixed case property; geocoding is out of scope, so any entered location resolves to it.</li>
+    <li>The brief prints the latitude without a minus sign, which falls in open sea. The southern-hemisphere reading is used; both values are on record.</li>
+    <li>Uniform roof pitch of {{ "%.0f"|format(roof.pitchDeg) }}&deg; across all four facets.</li>
+    <li>Panels are {{ panel_spec }}, flush-mounted in the plane of the roof.</li>
+    <li>PVGIS system loss {{ pvgis_loss }}%, {{ pvgis_technology }}, {{ pvgis_mounting }}-mounted.</li>
+    <li>Electricity price held flat at &euro;{{ financial.electricityPriceEurPerKwh }}/kWh.</li>
+    <li>Savings are capped at consumption: no export compensation is assumed.</li>
+    <li>No module degradation, inflation, maintenance cost, financing cost or tax effect.</li>
+    <li>No shading analysis and no detection of chimneys, vents or other obstructions.</li>
+    <li>Roof-edge setback {{ setback }} m; inter-panel gap {{ gap }} m.</li>
+    <li>Imagery date is unknown and may predate recent changes to the property.</li>
+    {% if data_mode_notes %}{% for note in data_mode_notes %}<li><strong>{{ note }}</strong></li>{% endfor %}{% endif %}
+  </ul>
+  <div class="disclaimer">
+    This is a feasibility estimate produced from satellite imagery and modelled
+    irradiation data, not a site survey or a binding quotation. Production and
+    financial outcomes will vary with weather, shading, equipment, tariff changes
+    and installation detail. A physical survey should precede any purchase.
+  </div>
+</section>
+
+</body>
+</html>

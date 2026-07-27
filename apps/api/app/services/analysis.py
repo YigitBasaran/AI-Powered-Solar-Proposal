@@ -196,7 +196,18 @@ def serialise_analysis(result: AnalysisResult) -> dict[str, object]:
     rate = result.exchange_rate
 
     return {
-        "roof": roof_summary(result.roof),
+        "roof": {
+            **roof_summary(result.roof),
+            "facetGeometry": [
+                {
+                    "id": f.id,
+                    "sourcePixelPolygon": [
+                        {"x": round(p.x, 2), "y": round(p.y, 2)} for p in f.source_pixel_polygon
+                    ],
+                }
+                for f in result.roof.facets
+            ],
+        },
         "layout": {
             "requestedSystemSizeKwp": result.layout.requested_system_size_kwp,
             "requestedPanelCount": result.layout.requested_panel_count,

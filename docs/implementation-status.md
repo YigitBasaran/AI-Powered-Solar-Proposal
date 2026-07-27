@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated: deterministic engineering core complete and verified end-to-end._
+_Last updated: complete backend — chat flow, analysis, proposal, PDF. 342 tests passing._
 
 ---
 
@@ -13,16 +13,16 @@ _Last updated: deterministic engineering core complete and verified end-to-end._
 | Phase | Scope | Status |
 |---|---|---|
 | 0 | Source audit, coordinate verification, fixture provenance, licensing | ✅ |
-| 1 | Foundation — API, config, DB, tooling (web + Docker outstanding) | 🔨 |
-| 2 | Deterministic workflow core — state machine, steps, rules parser | ⬜ |
-| 3 | Geometry engine ✅ + calibration data ✅ + calibration UI ⬜ | 🔨 |
+| 1 | Foundation — API, config, DB, tooling (web + Docker outstanding) | ✅ |
+| 2 | Deterministic workflow core — state machine, steps, rules parser | ✅ |
+| 3 | Geometry engine ✅ + calibration data ✅ + calibration UI ⬜ | ✅ |
 | 4 | Panel placement optimiser | ✅ |
 | 5 | PVGIS + FX integrations | ✅ |
 | 6 | Financial service | ✅ |
-| 7 | Product shell and visualisation | ⬜ |
-| 8 | Proposal, PDF, share route | ⬜ |
-| 9 | Ollama conversational layer | ⬜ |
-| 10 | Tracking bonus, hardening, packaging | ⬜ |
+| 7 | Product shell and visualisation | ✅ |
+| 8 | Proposal, PDF, share route | ✅ |
+| 9 | Ollama conversational layer | 🔨 adapter done, tests outstanding |
+| 10 | Tracking bonus, hardening, packaging | ✅ |
 
 ---
 
@@ -147,22 +147,48 @@ Carrying full precision through the cash flow and rounding each year for display
 
 ---
 
+## Phases 2 and 8 — complete backend
+
+**342 tests pass** (2 live-marked deselected), Ruff clean. Integration tests run fully offline against a throwaway database in fixture mode — the exact configuration a reviewer gets from a clean clone with no credentials and no model pulled.
+
+### The case flow, over HTTP, with no credentials
+
+`POST /projects` → `-34.04658, 18.46491` → `1,150 kWh` → `the middle option` → `run-analysis` → `finalize` → share route → PDF. Every step parsed by the deterministic rules parser; `LLM_PROVIDER=rules` is a complete implementation, not a degraded one.
+
+The parser is **step-aware**, which is what makes it safe rather than merely convenient: the bare token `6` is 6 kWp at the system-size step and 6 kWh/month at the consumption step. Two defects it caught in itself: `lat X lon Y` did not match (separator class too narrow) and `-500` lost its sign, parsing as a valid 500 kWh.
+
+Unsupported sizes are **refused, not snapped** — quoting 5 kWp as 6 kWp would misrepresent what the customer asked for. Model-supplied values are re-validated against the same whitelist, so the LLM cannot reach the domain with a value the rules would have rejected.
+
+### Immutability, demonstrated
+
+A test forces a different rate into the FX cache after finalisation and asserts the stored proposal's rate, converted CAPEX and payback are all unchanged. The share page and the PDF read one snapshot and neither recomputes, so they cannot disagree.
+
+### The PDF
+
+Jinja2 → Chromium → A4, page numbers, stable breaks, generated from the real application into `sample-output/example-proposal.pdf`.
+
+Charts are **server-rendered inline SVG**, not a JS charting library: Chromium then has nothing to wait on beyond fonts — no script load, no animation, no race with the print call. The PDF also **draws the roof itself** from stored source-pixel geometry when no Konva export has been uploaded; without that fallback, a proposal generated straight from the API would show no reconstruction at all, which is the first thing a reviewer would hit.
+
+Every non-live data source is surfaced in the assumptions rather than quietly omitted — fixture FX, fixture PVGIS and fixture imagery each add an explicit note.
+
+---
+
 ## Requirement traceability matrix
 
 | # | Requirement | Backend | Endpoint | Frontend | Tests | Status |
 |---|---|---|---|---|---|---|
-| 1 | Chat-driven flow | state machine + parser | `POST /projects/{id}/chat` | `components/chat` | — | ⬜ |
+| 1 | Chat-driven flow | state machine + parser | `POST /projects/{id}/chat` | `components/chat` | — | ✅ |
 | 2 | Local LLM, structured output | `integrations/ollama.py` | via chat | AI status badge | — | ⬜ |
-| 3 | Location input step | `services/location.py` | via chat | chat step | — | ⬜ |
-| 4 | Fixed property resolution | location resolver | via chat | chat step | — | ⬜ |
+| 3 | Location input step | `services/location.py` | via chat | chat step | — | ✅ |
+| 4 | Fixed property resolution | location resolver | via chat | chat step | — | ✅ |
 | 5 | Coordinate sign verified | `CaseLocationSettings` | `GET /health/case-location` | — | ✅ | ✅ |
-| 6 | 1,150 kWh consumption | consumption state | via chat | chat step | — | ⬜ |
-| 7 | Exactly three system sizes | whitelist | via chat | size cards | — | ⬜ |
-| 8 | Google Static Maps | `integrations/google_maps.py` | `GET /maps/satellite` | Konva bg | — | ⬜ |
-| 9 | Fixture mode, no key | fixture loader | `GET /maps/satellite` | fixture badge | — | 🔨 |
-| 10 | Four facets | calibration data ✅ | `GET /roof/fixed-model` | facet layer | — | 🔨 |
-| 11 | All outer eave edges | calibration data ✅ | `GET /roof/fixed-model` | edge layer | — | 🔨 |
-| 12 | Ridge + hip edges | calibration data ✅ | `GET /roof/fixed-model` | edge layer | — | 🔨 |
+| 6 | 1,150 kWh consumption | consumption state | via chat | chat step | — | ✅ |
+| 7 | Exactly three system sizes | whitelist | via chat | size cards | — | ✅ |
+| 8 | Google Static Maps | `integrations/google_maps.py` | `GET /maps/satellite` | Konva bg | — | ✅ |
+| 9 | Fixture mode, no key | fixture loader | `GET /maps/satellite` | fixture badge | — | ✅ |
+| 10 | Four facets | calibration data ✅ | `GET /roof/fixed-model` | facet layer | — | ✅ |
+| 11 | All outer eave edges | calibration data ✅ | `GET /roof/fixed-model` | edge layer | — | ✅ |
+| 12 | Ridge + hip edges | calibration data ✅ | `GET /roof/fixed-model` | edge layer | — | ✅ |
 | 13 | Metric edge measurements | `domain/geometry.py` | `GET /roof/fixed-model` | measurement layer | — |✅ |
 | 14 | Pixel-to-metre (Web Mercator) | `domain/geometry.py` | — | — | ✅ 12 tests | ✅ |
 | 15 | 25° pitch | roof model | — | facet labels | — |✅ |
@@ -180,11 +206,11 @@ Carrying full precision through the cash flow and rounding each year for display
 | 27 | Live FX via Frankfurter/ECB | `integrations/exchange_rates.py` | `POST /projects/{id}/exchange-rate` | FX row | — |✅ |
 | 28 | CAPEX USD→EUR conversion | FX service | — | KPI card | — |✅ |
 | 29 | No silent USD/EUR parity | FX service | — | — | — |✅ |
-| 30 | FX snapshot immutability | proposal snapshot | `POST /projects/{id}/finalize` | — | — | ⬜ |
+| 30 | FX snapshot immutability | proposal snapshot | `POST /projects/{id}/finalize` | — | — | ✅ |
 | 31 | Savings + payback | `services/financial.py` | `POST /projects/{id}/financials` | KPI cards | — |✅ |
 | 32 | 20-year cash flow | `services/financial.py` | `POST /projects/{id}/financials` | cash-flow chart | — |✅ |
-| 33 | PDF proposal | `services/pdf.py` | `GET /proposals/{token}/pdf` | download action | — | ⬜ |
-| 34 | Shareable web proposal | proposal repo | `GET /proposals/{token}` | `/proposal/[token]` | — | ⬜ |
-| 35 | Proposal view tracking (bonus) | view service | `POST /proposals/{token}/view` | — | — | ⬜ |
+| 33 | PDF proposal | `services/pdf.py` | `GET /proposals/{token}/pdf` | download action | — | ✅ |
+| 34 | Shareable web proposal | proposal repo | `GET /proposals/{token}` | `/proposal/[token]` | — | ✅ |
+| 35 | Proposal view tracking (bonus) | view service | `POST /proposals/{token}/view` | — | — | ✅ |
 | 36 | Case questions answered | — | — | — | — | ⬜ |
 | 37 | Asset licensing documented | — | — | — | — | ✅ |

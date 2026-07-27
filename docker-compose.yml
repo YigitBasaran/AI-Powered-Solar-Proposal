@@ -1,12 +1,11 @@
-_comment: >-
-  `docker compose up --build` brings up a fully working application with no
-  credentials and no model weights. Ollama sits behind an opt-in profile, so
-  the default path never downloads a model and never waits on one.
-
-  Optional local LLM:
-    docker compose --profile ollama up -d
-    docker compose exec ollama ollama pull qwen3.5:2b
-    # then set LLM_PROVIDER=ollama in .env and restart the api service
+# `docker compose up --build` brings up a fully working application with no
+# credentials and no model weights. Ollama sits behind an opt-in profile, so
+# the default path never downloads a model and never waits on one.
+#
+# Optional local LLM:
+#   docker compose --profile ollama up -d
+#   docker compose exec ollama ollama pull qwen3.5:2b
+#   # then set LLM_PROVIDER=ollama in .env and restart the api service
 
 services:
   api:

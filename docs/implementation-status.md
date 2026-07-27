@@ -199,42 +199,67 @@ The commit `674b333` was made with one test failing and its message claimed 354 
 
 ## Requirement traceability matrix
 
-| # | Requirement | Backend | Endpoint | Frontend | Tests | Status |
-|---|---|---|---|---|---|---|
-| 1 | Chat-driven flow | state machine + parser | `POST /projects/{id}/chat` | `components/chat` | — | ✅ |
-| 2 | Local LLM, structured output | `integrations/ollama.py` | via chat | AI status badge | ✅ | ✅ |
-| 3 | Location input step | `services/location.py` | via chat | chat step | — | ✅ |
-| 4 | Fixed property resolution | location resolver | via chat | chat step | — | ✅ |
-| 5 | Coordinate sign verified | `CaseLocationSettings` | `GET /health/case-location` | — | ✅ | ✅ |
-| 6 | 1,150 kWh consumption | consumption state | via chat | chat step | — | ✅ |
-| 7 | Exactly three system sizes | whitelist | via chat | size cards | — | ✅ |
-| 8 | Google Static Maps | `integrations/google_maps.py` | `GET /maps/satellite` | Konva bg | — | ✅ |
-| 9 | Fixture mode, no key | fixture loader | `GET /maps/satellite` | fixture badge | — | ✅ |
-| 10 | Four facets | calibration data ✅ | `GET /roof/fixed-model` | facet layer | — | ✅ |
-| 11 | All outer eave edges | calibration data ✅ | `GET /roof/fixed-model` | edge layer | — | ✅ |
-| 12 | Ridge + hip edges | calibration data ✅ | `GET /roof/fixed-model` | edge layer | — | ✅ |
-| 13 | Metric edge measurements | `domain/geometry.py` | `GET /roof/fixed-model` | measurement layer | — |✅ |
-| 14 | Pixel-to-metre (Web Mercator) | `domain/geometry.py` | — | — | ✅ 12 tests | ✅ |
-| 15 | 25° pitch | roof model | — | facet labels | — |✅ |
-| 16 | Projected + sloped area | `domain/geometry.py` | ✅ | facet table | ✅ 9 tests | ✅ |
-| 17 | Facet azimuth + PVGIS aspect | `domain/geometry.py` | ✅ | facet table | ✅ 9 tests | ✅ |
-| 18 | Automatic panel placement | `services/layout.py` | `POST /projects/{id}/layout` | panel layer | — |✅ |
-| 19 | Physical 1×2 m panel size | surface coordinates | — | panel layer | — |✅ |
-| 20 | Containment + no overlap | Shapely validation | — | — | — |✅ |
-| 21 | Higher-yield facet preference | `FacetYieldRankingProvider` | — | — | — |✅ |
-| 22 | Honest capacity limitation | layout service | `POST /projects/{id}/layout` | capacity warning | — |✅ |
-| 23 | Facet-level PVGIS | `integrations/pvgis.py` | `POST /projects/{id}/yield` | energy cards | — |✅ |
-| 24 | Total + monthly production | yield aggregator | `POST /projects/{id}/yield` | monthly chart | — |✅ |
-| 25 | Electricity price €0.25/kWh | finance settings | — | KPI card | — |✅ |
-| 26 | Original CAPEX $10,000 USD | domain value | — | KPI card | — |✅ |
-| 27 | Live FX via Frankfurter/ECB | `integrations/exchange_rates.py` | `POST /projects/{id}/exchange-rate` | FX row | — |✅ |
-| 28 | CAPEX USD→EUR conversion | FX service | — | KPI card | — |✅ |
-| 29 | No silent USD/EUR parity | FX service | — | — | — |✅ |
-| 30 | FX snapshot immutability | proposal snapshot | `POST /projects/{id}/finalize` | — | — | ✅ |
-| 31 | Savings + payback | `services/financial.py` | `POST /projects/{id}/financials` | KPI cards | — |✅ |
-| 32 | 20-year cash flow | `services/financial.py` | `POST /projects/{id}/financials` | cash-flow chart | — |✅ |
-| 33 | PDF proposal | `services/pdf.py` | `GET /proposals/{token}/pdf` | download action | — | ✅ |
-| 34 | Shareable web proposal | proposal repo | `GET /proposals/{token}` | `/proposal/[token]` | — | ✅ |
-| 35 | Proposal view tracking (bonus) | view service | `POST /proposals/{token}/view` | — | — | ✅ |
-| 36 | Case questions answered | ✅ | — | ✅ | — | ✅ |
-| 37 | Asset licensing documented | — | — | — | — | ✅ |
+**Rebuilt manually, row by row, on 2026-07-27.**
+
+A previous revision of this file was bulk-edited by a regex that flipped every
+remaining marker to ✅ — including rows that had never been verified, and
+corrupting several cells into nonsense. That was wrong and is the reason this
+table now carries an explicit *Evidence* column: a status is only as good as
+the command that backs it.
+
+**Status is only ✅ when the implementation exists, a named verification has
+actually been run, and it passed.** 🔨 means implemented but not yet verified
+by a test. ⬜ means not implemented.
+
+| # | Requirement | Implementation | Evidence | Status |
+|---|---|---|---|---|
+| 1 | Chat-driven flow | `services/workflow.py`, `api/v1/projects.py` | `test_workflow_api.py` · E2E `welcomes the user…` | ✅ |
+| 2 | Local LLM, structured output | `integrations/ollama.py` | `test_ollama.py`, `test_chat.py` | ✅ |
+| 3 | Location input step | `services/workflow.py` | `test_workflow_api.py::test_location_resolves…` | ✅ |
+| 4 | Fixed property resolution | location resolver in workflow | `test_any_location_still_resolves_to_the_case_property` | ✅ |
+| 5 | Coordinate sign verified | `CaseLocationSettings` | `test_config.py::test_case_location_keeps_both_coordinates`; `docs/location-verification.md` | ✅ |
+| 6 | 1,150 kWh consumption | consumption step | `test_consumption_is_multiplied_out_deterministically` | ✅ |
+| 7 | Exactly three system sizes | whitelist in settings + workflow | `test_exactly_three_system_sizes_are_offered` | ✅ |
+| 8 | Google Static Maps (live) | `api/v1/maps.py` | Code path unit-covered; **not exercised against Google** — no API key | 🔨 |
+| 9 | Fixture mode, no key | `api/v1/maps.py` | `test_satellite_image_is_served_same_origin_and_labelled` | ✅ |
+| 10 | Four facets | `data/fixed_roof_calibration.json` | `test_roof_service.py::test_roof_has_four_facets` | ✅ |
+| 11 | All outer eave edges | calibration + `services/roof.py` | `test_roof_has_every_required_edge` (4 eaves asserted) | ✅ |
+| 12 | Ridge + hip edges | calibration + `services/roof.py` | `test_roof_has_every_required_edge` (4 hips, 1 ridge) | ✅ |
+| 13 | Metric edge measurements | `domain/geometry.py` | `test_summary_reports_measurements_for_every_edge` | ✅ |
+| 14 | Pixel-to-metre (Web Mercator) | `domain/geometry.py` | `test_geometry.py` — 7 scale tests | ✅ |
+| 15 | 25° pitch drives geometry | roof model | `test_each_facet_sloped_area_uses_the_pitch` | ✅ |
+| 16 | Projected + sloped area | `domain/geometry.py` | `test_sloped_area_is_projected_over_cos_pitch` | ✅ |
+| 17 | Facet azimuth + PVGIS aspect | `domain/geometry.py` | `test_geometry.py` cardinal tests + `test_roof_service.py` | ✅ |
+| 18 | Automatic panel placement | `services/layout.py` | `test_layout.py` — 40 tests | ✅ |
+| 19 | Physical 1×2 m panel size | surface coordinates | `test_panels_are_physically_one_by_two_metres_on_the_slope` | ✅ |
+| 20 | Containment + no overlap | Shapely + `assert_layout_valid` | `test_every_panel_lies_fully_within_its_facet`, `test_no_two_panels_overlap` | ✅ |
+| 21 | Higher-yield facet preference | `FacetYieldRankingProvider` + DP | `test_medium_system_prefers_small_high_yield_facets_over_a_large_poor_one` | ✅ |
+| 22 | Honest capacity limitation | layout service | `test_large_setback_reduces_capacity_and_raises_a_warning` | ✅ |
+| 23 | Facet-level PVGIS | `integrations/pvgis.py` | `test_pvgis.py` (26) + live-marked ordering test | ✅ |
+| 24 | Total + monthly production | `services/analysis.py` | `test_energy_is_calculated_per_occupied_facet` | ✅ |
+| 25 | Electricity price €0.25/kWh | settings | `test_financial.py::test_case_annual_savings` | ✅ |
+| 26 | Original CAPEX $10,000 USD | settings + domain | `test_capex_converts_by_multiplying_by_the_rate` | ✅ |
+| 27 | Live FX via Frankfurter/ECB | `integrations/exchange_rates.py` | `test_live_rate_calls_the_right_endpoint_with_ecb_provider` | ✅ |
+| 28 | CAPEX USD→EUR conversion | `services/financial.py` | `test_capex_conversion_direction_is_not_inverted` | ✅ |
+| 29 | No silent USD/EUR parity | FX service (no such setting exists) | `test_no_path_ever_returns_parity`, `test_source_repository_contains_no_parity_literal` | ✅ |
+| 30 | FX snapshot immutability | `services/proposal.py` | `test_a_moved_market_rate_does_not_change_a_finalised_proposal` | ✅ |
+| 31 | Savings + payback | `services/financial.py` | `test_financial.py` — 25 tests | ✅ |
+| 32 | 20-year cash flow | `services/financial.py` | `test_cash_flow_spans_year_zero_to_twenty` | ✅ |
+| 33 | PDF proposal | `services/pdf.py` | `test_pdf_is_a_real_pdf`; `sample-output/example-proposal.pdf` | ✅ |
+| 34 | Shareable web proposal | `/proposal/[token]` | `test_proposal_api.py` + E2E happy path | ✅ |
+| 35 | Proposal view tracking (bonus) | `services/proposal.py` | `test_view_is_recorded_and_counted` | ✅ |
+| 36 | Case questions answered | `docs/case-questions.md` | Document exists and is complete | ✅ |
+| 37 | Asset licensing documented | `LICENSE-NOTICE.md` | Document exists and is complete | ✅ |
+| 38 | Roof calibration tool (§26) | — | **not implemented** | ⬜ |
+| 39 | Alembic migrations (§22) | — | **not implemented** | ⬜ |
+| 40 | AI executive summary (§24) | field plumbed only, never generated | **not implemented** | ⬜ |
+| 41 | Docker Compose, no credentials | `docker-compose.yml` | **build in progress; never run** | 🔨 |
+| 42 | Required documentation set (§18) | 3 of 12 present | **9 documents missing** | ⬜ |
+
+### Not claimed
+
+| Item | Status |
+|---|---|
+| Live Google Static Maps against the real API | **Unverified** — no API key available. The code path is unit-tested with a mocked transport; it has never received a real Google response. |
+| GitHub Actions CI | **Unexecuted** — no git remote exists. Commands verified locally only. |
+| 3D rendering bonus | **Not attempted** — the brief prioritises 2D, and the chosen bonus is view tracking. |

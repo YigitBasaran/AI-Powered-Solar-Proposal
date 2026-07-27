@@ -90,7 +90,7 @@ The site is at latitude **−34°**, so solar optimality is **inverted** relativ
 
 North-facing produces **≈52 % more** than south-facing here. The panel allocator must therefore prefer north-facing facets. No "optimal aspect" is hardcoded anywhere — ranking comes from a per-facet 1 kWp PVGIS probe, so the correct answer emerges from data rather than assumption.
 
-Favourably, the reference roof's **largest facet (the north trapezoid, azimuth ≈8.5°) is also its best-producing one**.
+Favourably, the reference roof's **largest facet (the north trapezoid, calibrated azimuth 10.6°) is also its best-producing one** — 1,678.7 kWh/kWp against south's 1,119.8.
 
 ---
 
@@ -143,15 +143,18 @@ The brief's overlay reference confirms the expected topology, and it is present 
 - 4 facets: 2 trapezoids (north, south) + 2 triangles (east, west)
 - Uniform pitch of 25° across all facets
 
-Approximate as-measured geometry (precise values come from committed calibration):
+Calibrated geometry (`apps/api/app/data/fixed_roof_calibration.json`):
 
-| Quantity | Approx. value |
+| Quantity | Value |
 |---|---|
-| Footprint | 10.4 m × 6.7 m ≈ 69.6 m² |
-| Ridge length | ≈3.7 m |
-| Total sloped area @ 25° | ≈76.8 m² |
-| North / south trapezoid | ≈23.6 m² projected, ≈26.0 m² sloped each |
-| East / west triangle | ≈11.2 m² projected, ≈12.4 m² sloped each |
+| Footprint | 11.216 m × 7.143 m = 80.11 m² |
+| Ridge length | 4.073 m |
+| Eaves | 11.216 m ×2, 7.143 m ×2 |
+| Hips | 5.051 m in plan, **5.319 m true** (not 5.573 m — see A-GEO-1) |
+| Total sloped area @ 25° | 88.40 m² |
+| North / south trapezoid | 27.30 m² projected, 30.12 m² sloped each |
+| East / west triangle | 12.76 m² projected, 14.08 m² sloped each |
+| Facet azimuths | N 10.6° · E 100.6° · S 190.6° · W 280.6° |
 
 ### Capacity, as measured
 

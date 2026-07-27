@@ -6,12 +6,22 @@ figures it was created with, whatever the market has done since.
 
 from __future__ import annotations
 
+import importlib.util
 import re
 from decimal import Decimal
 
 import pytest
 
 CASE_COORD = "-34.04658242871865, 18.46491476666948"
+
+# PDF rendering lives behind the optional `pdf` extra. When it is not
+# installed the right behaviour is to skip - a missing optional dependency is
+# not a failing application.
+playwright_installed = importlib.util.find_spec("playwright") is not None
+needs_playwright = pytest.mark.skipif(
+    not playwright_installed,
+    reason="PDF rendering needs the optional 'pdf' extra: pip install -e '.[pdf]'",
+)
 
 
 def finalised(client, size_reply: str = "the middle option") -> dict:
@@ -155,6 +165,8 @@ def test_stored_rate_metadata_travels_with_the_proposal(client, proposal) -> Non
 
 @pytest.fixture(scope="module")
 def pdf_bytes(client, proposal) -> bytes:
+    if not playwright_installed:
+        pytest.skip("PDF rendering needs the optional 'pdf' extra")
     response = client.get(f"/api/v1/proposals/{proposal['shareToken']}/pdf")
     assert response.status_code == 200
     return response.content
@@ -165,6 +177,7 @@ def test_pdf_is_a_real_pdf(pdf_bytes) -> None:
     assert len(pdf_bytes) > 20_000
 
 
+@needs_playwright
 def test_pdf_is_served_as_a_download(client, proposal) -> None:
     response = client.get(f"/api/v1/proposals/{proposal['shareToken']}/pdf")
     assert response.headers["content-type"] == "application/pdf"

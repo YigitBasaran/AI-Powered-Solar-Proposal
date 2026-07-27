@@ -55,7 +55,9 @@ $PY -m venv .venv
 VENV_PY=".venv/bin/python"
 [ -x "$VENV_PY" ] || VENV_PY=".venv/Scripts/python.exe"
 "$VENV_PY" -m pip install -q --upgrade pip
-"$VENV_PY" -m pip install -q -e ".[dev]"
+"$VENV_PY" -m pip install -q -e ".[dev,pdf]"
+# Chromium is what turns the PDF tests from skipped into actually exercised.
+"$VENV_PY" -m playwright install chromium >/dev/null 2>&1 ||   echo "  note: chromium install failed; PDF tests will skip"
 
 echo "== API: tests (offline, fixture mode) =="
 "$VENV_PY" -m pytest -q -m "not live"

@@ -1,0 +1,72 @@
+_comment: >-
+  `docker compose up --build` brings up a fully working application with no
+  credentials and no model weights. Ollama sits behind an opt-in profile, so
+  the default path never downloads a model and never waits on one.
+
+  Optional local LLM:
+    docker compose --profile ollama up -d
+    docker compose exec ollama ollama pull qwen3.5:2b
+    # then set LLM_PROVIDER=ollama in .env and restart the api service
+
+services:
+  api:
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
+    container_name: solarvis-api
+    env_file:
+      - .env
+    environment:
+      # Inside the compose network the web app reaches the API by service name.
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3000}
+      DATABASE_URL: sqlite+aiosqlite:////data/solarvis.db
+      FIXTURES_DIR_OVERRIDE: /fixtures
+      OLLAMA_BASE_URL: http://ollama:11434
+    ports:
+      - "8000:8000"
+    volumes:
+      # Fixtures are read-only to the container: it must never rewrite the
+      # committed reference data.
+      - ./fixtures:/fixtures:ro
+      - solarvis-data:/data
+      - solarvis-storage:/app/storage
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+      args:
+        API_BASE_URL: http://api:8000
+    container_name: solarvis-web
+    environment:
+      API_BASE_URL: http://api:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # Opt-in only. Nothing above depends on it, so the default stack starts
+  # without pulling a 2.7 GB model.
+  ollama:
+    image: ollama/ollama:latest
+    container_name: solarvis-ollama
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  solarvis-data:
+  solarvis-storage:
+  ollama-models:

@@ -22,8 +22,21 @@ from pathlib import Path
 from pydantic import BaseModel, Field, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
 API_ROOT = Path(__file__).resolve().parents[2]
+
+
+def _default_repo_root() -> Path:
+    """Repo root when running from a checkout.
+
+    In the container the package sits at ``/app/app`` and there is no
+    equivalent ancestor, so this is only a default - ``FIXTURES_DIR`` is the
+    supported way to point at the data explicitly.
+    """
+    resolved = Path(__file__).resolve()
+    return resolved.parents[4] if len(resolved.parents) > 4 else API_ROOT
+
+
+REPO_ROOT = _default_repo_root()
 
 EARTH_RADIUS_M = 6_378_137.0
 WEB_MERCATOR_TILE_SIZE_PX = 256
@@ -214,6 +227,10 @@ class Settings(BaseSettings):
 
     allowed_system_sizes_kwp: tuple[float, ...] = (3.6, 6.0, 9.6)
 
+    # Explicit rather than inferred from the source-file depth, because the
+    # container layout has no repo root above the package.
+    fixtures_dir_override: str = ""
+
     @field_validator("google_maps_size")
     @classmethod
     def _validate_size(cls, v: str) -> str:
@@ -264,6 +281,8 @@ class Settings(BaseSettings):
 
     @property
     def fixtures_dir(self) -> Path:
+        if self.fixtures_dir_override:
+            return Path(self.fixtures_dir_override)
         return REPO_ROOT / "fixtures"
 
     @property

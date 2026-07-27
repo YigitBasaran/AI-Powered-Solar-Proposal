@@ -82,13 +82,26 @@ do
 done
 
 echo "== must NOT be present =="
-for forbidden in ".env" "node_modules" ".venv" "*.db" "*.gguf"; do
-  if unzip -l "$archive" | grep -qE "$name/.*${forbidden//./\\.}"; then
-    echo "  FAIL: archive contains $forbidden" >&2
+# Anchored patterns. A loose match on "\.env" also matches .env.example, which
+# is a required file - the check has to distinguish them.
+listing=$(unzip -Z1 "$archive")
+check_absent() {
+  local label="$1" pattern="$2"
+  if printf '%s\n' "$listing" | grep -qE "$pattern"; then
+    echo "  FAIL: archive contains $label" >&2
+    printf '%s\n' "$listing" | grep -E "$pattern" | head -5 | sed 's/^/    /' >&2
     exit 1
   fi
-  echo "  ok   no $forbidden"
-done
+  echo "  ok   no $label"
+}
+
+check_absent ".env"          '(^|/)\.env$'
+check_absent "node_modules"  '(^|/)node_modules/'
+check_absent "virtualenvs"   '(^|/)\.venv/'
+check_absent "databases"     '\.(db|sqlite3?)$'
+check_absent "model weights" '\.gguf$'
+check_absent "next build"    '(^|/)\.next/'
+check_absent "python cache"  '(^|/)__pycache__/'
 
 echo
 echo "Archive ready. Verify it from a clean extraction with:"

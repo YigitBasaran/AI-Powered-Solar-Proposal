@@ -18,8 +18,9 @@ import math
 from enum import StrEnum
 from functools import lru_cache
 from pathlib import Path
+from typing import Any
 
-from pydantic import BaseModel, Field, computed_field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 API_ROOT = Path(__file__).resolve().parents[2]
@@ -230,6 +231,33 @@ class Settings(BaseSettings):
     # Explicit rather than inferred from the source-file depth, because the
     # container layout has no repo root above the package.
     fixtures_dir_override: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _blank_means_unset(cls, data: Any) -> Any:
+        """Treat an empty value in `.env` as "not configured".
+
+        `.env.example` ships blank placeholders for optional settings —
+        `SMTP_PORT=`, `GOOGLE_MAPS_API_KEY=` — because that is how a template
+        communicates "fill this in if you need it". Copying it to `.env` is the
+        first step of the quick start, so an empty numeric field must fall back
+        to its default rather than fail validation and take the whole app down.
+
+        Blanks are preserved for genuine string settings, where "" is a
+        meaningful value (an unset API key really is the empty string).
+        """
+        if not isinstance(data, dict):
+            return data
+
+        fields = cls.model_fields
+        cleaned: dict[str, Any] = {}
+        for key, value in data.items():
+            if isinstance(value, str) and value.strip() == "":
+                field = fields.get(key) or fields.get(str(key).lower())
+                if field is not None and field.annotation is not str:
+                    continue  # drop it, so the declared default applies
+            cleaned[key] = value
+        return cleaned
 
     @field_validator("google_maps_size")
     @classmethod

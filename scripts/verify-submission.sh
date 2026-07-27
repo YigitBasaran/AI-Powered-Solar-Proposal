@@ -26,12 +26,32 @@ done
 
 cp .env.example .env
 
-PY=${PYTHON:-python3}
-command -v "$PY" >/dev/null 2>&1 || PY=python
+# Probe by *executing* each candidate, not by name resolution. On Windows the
+# Microsoft Store ships a `python3` stub that resolves on PATH and then refuses
+# to run, so `command -v` reports success for an interpreter that does not work.
+pick_python() {
+  local candidate
+  for candidate in "${PYTHON:-}" "py -3.12" python3.12 python3 python; do
+    [ -n "$candidate" ] || continue
+    if $candidate -c "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 12) else 1)" \
+        >/dev/null 2>&1; then
+      echo "$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+PY="$(pick_python)" || {
+  echo "  FAIL: no working Python 3.12+ found." >&2
+  echo "        Set PYTHON=/path/to/python and retry." >&2
+  exit 1
+}
+echo "  using interpreter: $PY"
 
 echo "== API: install =="
 cd apps/api
-"$PY" -m venv .venv
+$PY -m venv .venv
 VENV_PY=".venv/bin/python"
 [ -x "$VENV_PY" ] || VENV_PY=".venv/Scripts/python.exe"
 "$VENV_PY" -m pip install -q --upgrade pip

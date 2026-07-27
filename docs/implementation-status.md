@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated: complete backend — chat flow, analysis, proposal, PDF. 342 tests passing._
+_Last updated: all phases complete. 355 API tests + 20 web tests + 10 E2E passing; archive verified from a clean extraction._
 
 ---
 
@@ -21,7 +21,7 @@ _Last updated: complete backend — chat flow, analysis, proposal, PDF. 342 test
 | 6 | Financial service | ✅ |
 | 7 | Product shell and visualisation | ✅ |
 | 8 | Proposal, PDF, share route | ✅ |
-| 9 | Ollama conversational layer | 🔨 adapter done, tests outstanding |
+| 9 | Ollama conversational layer | ✅ |
 | 10 | Tracking bonus, hardening, packaging | ✅ |
 
 ---
@@ -173,12 +173,36 @@ Every non-live data source is surfaced in the assumptions rather than quietly om
 
 ---
 
+## Phases 7 and 10 — product shell, packaging, verification
+
+**355 API tests · 20 web unit tests · 10 Playwright E2E tests.** Ruff clean, TypeScript strict clean, production build passes, archive verified from a clean extraction.
+
+### Two defects that only a clean extraction could find
+
+Both were invisible in the development tree and would have hit a reviewer on their first command.
+
+1. **`.env.example` did not load.** `SMTP_PORT=` (blank) failed integer validation, so `Settings` raised on construction. Copying that file to `.env` is the first line of the quick start, and `docker compose` reads the same file — so the documented setup path was broken while everything worked locally, because there was no `.env` in the tree at all and defaults applied. Fixed as a class of bug: a blank value now means "not configured" and falls back to the default, while blanks are preserved for genuine string settings where `""` is meaningful.
+
+2. **The fixtures path was inferred from source-file depth.** `parents[4]` has no equivalent when the package sits at `/app/app` in the container. Now an explicit setting rather than a guess about layout.
+
+A third, smaller one: the verifier probed for Python with `command -v python3`, which succeeds against the Windows Store stub that then refuses to run. It now probes by executing each candidate.
+
+### Honest record
+
+The commit `674b333` was made with one test failing and its message claimed 354 passing when the real result was 353 passed / 1 failed. Corrected in the following commit. The test was wrong, not the code — it grepped the whole of `.env.example` for `CASE_USD_EUR`, which appears there in a comment explaining why no such setting exists.
+
+### Packaging
+
+`git archive` builds the submission, so `.gitignore` is the single definition of what ships and there is no second exclude list to drift. Pre-flight refuses a tracked `.env`, greps for key patterns, and fails if the sample PDF is missing. `verify-submission.sh` extracts to a throwaway directory and follows the README from scratch.
+
+---
+
 ## Requirement traceability matrix
 
 | # | Requirement | Backend | Endpoint | Frontend | Tests | Status |
 |---|---|---|---|---|---|---|
 | 1 | Chat-driven flow | state machine + parser | `POST /projects/{id}/chat` | `components/chat` | — | ✅ |
-| 2 | Local LLM, structured output | `integrations/ollama.py` | via chat | AI status badge | — | ⬜ |
+| 2 | Local LLM, structured output | `integrations/ollama.py` | via chat | AI status badge | ✅ | ✅ |
 | 3 | Location input step | `services/location.py` | via chat | chat step | — | ✅ |
 | 4 | Fixed property resolution | location resolver | via chat | chat step | — | ✅ |
 | 5 | Coordinate sign verified | `CaseLocationSettings` | `GET /health/case-location` | — | ✅ | ✅ |
@@ -192,8 +216,8 @@ Every non-live data source is surfaced in the assumptions rather than quietly om
 | 13 | Metric edge measurements | `domain/geometry.py` | `GET /roof/fixed-model` | measurement layer | — |✅ |
 | 14 | Pixel-to-metre (Web Mercator) | `domain/geometry.py` | — | — | ✅ 12 tests | ✅ |
 | 15 | 25° pitch | roof model | — | facet labels | — |✅ |
-| 16 | Projected + sloped area | `domain/geometry.py` | — | facet table | ✅ 9 tests | 🔨 |
-| 17 | Facet azimuth + PVGIS aspect | `domain/geometry.py` | — | facet table | ✅ 9 tests | 🔨 |
+| 16 | Projected + sloped area | `domain/geometry.py` | ✅ | facet table | ✅ 9 tests | ✅ |
+| 17 | Facet azimuth + PVGIS aspect | `domain/geometry.py` | ✅ | facet table | ✅ 9 tests | ✅ |
 | 18 | Automatic panel placement | `services/layout.py` | `POST /projects/{id}/layout` | panel layer | — |✅ |
 | 19 | Physical 1×2 m panel size | surface coordinates | — | panel layer | — |✅ |
 | 20 | Containment + no overlap | Shapely validation | — | — | — |✅ |
@@ -212,5 +236,5 @@ Every non-live data source is surfaced in the assumptions rather than quietly om
 | 33 | PDF proposal | `services/pdf.py` | `GET /proposals/{token}/pdf` | download action | — | ✅ |
 | 34 | Shareable web proposal | proposal repo | `GET /proposals/{token}` | `/proposal/[token]` | — | ✅ |
 | 35 | Proposal view tracking (bonus) | view service | `POST /proposals/{token}/view` | — | — | ✅ |
-| 36 | Case questions answered | — | — | — | — | ⬜ |
+| 36 | Case questions answered | ✅ | — | ✅ | — | ✅ |
 | 37 | Asset licensing documented | — | — | — | — | ✅ |

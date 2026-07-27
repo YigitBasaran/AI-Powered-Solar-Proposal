@@ -1,0 +1,10 @@
+{
+  "date": "2026-07-24",
+  "base": "USD",
+  "quote": "EUR",
+  "rate": 0.87897,
+  "sourceApi": "Frankfurter",
+  "dataProvider": "ECB",
+  "fixture": true,
+  "note": "Captured verbatim from GET https://api.frankfurter.dev/v2/rate/USD/EUR?providers=ECB on 2026-07-26. This is development fixture data and is always labelled as such in the UI, the proposal snapshot and the PDF assumptions. It is never presented as a live rate, and USD/EUR parity is never substituted for it."
+}

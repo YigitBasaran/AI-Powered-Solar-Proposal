@@ -214,13 +214,13 @@ by a test. ⬜ means not implemented.
 | # | Requirement | Implementation | Evidence | Status |
 |---|---|---|---|---|
 | 1 | Chat-driven flow | `services/workflow.py`, `api/v1/projects.py` | `test_workflow_api.py` · E2E `welcomes the user…` | ✅ |
-| 2 | Local LLM, structured output | `integrations/ollama.py` | `test_ollama.py`, `test_chat.py` | ✅ |
+| 2 | Local LLM, structured output | `integrations/ollama.py` | `test_ollama.py` (17) + `test_chat.py` (22) | ✅ |
 | 3 | Location input step | `services/workflow.py` | `test_workflow_api.py::test_location_resolves…` | ✅ |
 | 4 | Fixed property resolution | location resolver in workflow | `test_any_location_still_resolves_to_the_case_property` | ✅ |
 | 5 | Coordinate sign verified | `CaseLocationSettings` | `test_config.py::test_case_location_keeps_both_coordinates`; `docs/location-verification.md` | ✅ |
 | 6 | 1,150 kWh consumption | consumption step | `test_consumption_is_multiplied_out_deterministically` | ✅ |
 | 7 | Exactly three system sizes | whitelist in settings + workflow | `test_exactly_three_system_sizes_are_offered` | ✅ |
-| 8 | Google Static Maps (live) | `api/v1/maps.py` | Code path unit-covered; **not exercised against Google** — no API key | 🔨 |
+| 8 | Google Static Maps (live) | `api/v1/maps.py` | `test_maps.py` (14): request matches the documented contract, key never reaches the client, bad responses rejected. **Never exercised against Google itself** — no API key. See *Not claimed*. | 🔨 |
 | 9 | Fixture mode, no key | `api/v1/maps.py` | `test_satellite_image_is_served_same_origin_and_labelled` | ✅ |
 | 10 | Four facets | `data/fixed_roof_calibration.json` | `test_roof_service.py::test_roof_has_four_facets` | ✅ |
 | 11 | All outer eave edges | calibration + `services/roof.py` | `test_roof_has_every_required_edge` (4 eaves asserted) | ✅ |
@@ -250,11 +250,29 @@ by a test. ⬜ means not implemented.
 | 35 | Proposal view tracking (bonus) | `services/proposal.py` | `test_view_is_recorded_and_counted` | ✅ |
 | 36 | Case questions answered | `docs/case-questions.md` | Document exists and is complete | ✅ |
 | 37 | Asset licensing documented | `LICENSE-NOTICE.md` | Document exists and is complete | ✅ |
-| 38 | Roof calibration tool (§26) | — | **not implemented** | ⬜ |
-| 39 | Alembic migrations (§22) | — | **not implemented** | ⬜ |
-| 40 | AI executive summary (§24) | field plumbed only, never generated | **not implemented** | ⬜ |
-| 41 | Docker Compose, no credentials | `docker-compose.yml` | **build in progress; never run** | 🔨 |
-| 42 | Required documentation set (§18) | 3 of 12 present | **9 documents missing** | ⬜ |
+| 38 | Roof calibration tool (§26) | `/dev/roof-calibration` | `calibration.test.ts` (18); route returns 200 in the container | ✅ |
+| 39 | Alembic migrations (§22) | `migrations/`, `alembic.ini` | `test_schema_parity.py` (16); `alembic current` → `1c779d205bda (head)` in the container | ✅ |
+| 40 | AI executive summary (§24) | `services/summary.py` | `test_summary.py` (21); prose with an invented number is discarded | ✅ |
+| 41 | Docker Compose, no credentials | `docker-compose.yml` | `docker compose up --build` → healthy; full proposal + 104 KB PDF in-container; 10/10 E2E against it | ✅ |
+| 42 | Required documentation set (§18) | `docs/` | All 12 present | ✅ |
+
+### Verified operating modes
+
+Every one of these completes a full proposal and serves a working share page.
+Each fallback is **labelled**, never silently substituted.
+
+| Mode | PVGIS source | FX source |
+|---|---|---|
+| All fixtures, rules only | `fixture` | `fixture` |
+| `LLM_PROVIDER=disabled` | `fixture` | `fixture` |
+| Ollama configured but unreachable | `fixture` | `fixture` (parser falls back to rules) |
+| PVGIS live unreachable | `live_fallback_fixture` | `fixture` |
+| FX live unreachable | `fixture` | `live_fallback_fixture` |
+| Both live unreachable | `live_fallback_fixture` | `live_fallback_fixture` |
+
+**PDF ↔ share page:** annual savings, both CAPEX figures, the 20-year net, the
+FX rate and its date all appear identically in both, and the payback value is
+object-identical. One snapshot, no recomputation.
 
 ### Not claimed
 

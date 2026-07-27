@@ -62,10 +62,25 @@ def test_blank_is_preserved_for_genuine_string_settings(tmp_path: Path) -> None:
 
 
 def test_env_example_declares_no_hardcoded_exchange_rate() -> None:
-    """Parity must not be configurable into existence."""
-    text = ENV_EXAMPLE.read_text(encoding="utf-8").upper()
-    for forbidden in ("USD_EUR_RATE", "CASE_USD_EUR", "FX_RATE="):
-        assert forbidden not in text
+    """Parity must not be configurable into existence.
+
+    Only actual settings are inspected. The template *mentions*
+    `CASE_USD_EUR_RATE` in a comment, explaining why no such setting exists —
+    that prose is the point, not a violation of it.
+    """
+    keys = {
+        line.split("=", 1)[0].strip().upper()
+        for line in ENV_EXAMPLE.read_text(encoding="utf-8").splitlines()
+        if "=" in line and not line.strip().startswith("#")
+    }
+    for forbidden in ("CASE_USD_EUR_RATE", "USD_EUR_RATE", "FX_RATE", "EXCHANGE_RATE"):
+        assert forbidden not in keys
+
+
+def test_settings_expose_no_hardcoded_exchange_rate_field() -> None:
+    fields = set(Settings.model_fields)
+    for forbidden in ("case_usd_eur_rate", "usd_eur_rate", "fx_rate", "exchange_rate"):
+        assert forbidden not in fields
 
 
 # ---------------------------------------------------------------------------

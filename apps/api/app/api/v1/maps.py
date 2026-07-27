@@ -9,6 +9,7 @@ PNG without tainting.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 import httpx
 from fastapi import APIRouter, Depends, Response
@@ -25,7 +26,7 @@ MIN_IMAGE_BYTES = 2048
 
 
 @router.get("/config")
-async def satellite_config(settings: Settings = Depends(get_settings)) -> dict:
+async def satellite_config(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """Everything the client needs to place overlays, and nothing it must guess.
 
     Ground resolution is published here so the frontend never derives scale
@@ -84,7 +85,7 @@ async def satellite(settings: Settings = Depends(get_settings)) -> Response:
             details={"hint": "Set the key, or use MAPS_MODE=fixture."},
         )
 
-    params = {
+    params: dict[str, str | int] = {
         "center": f"{cfg.center_latitude},{cfg.center_longitude}",
         "zoom": cfg.zoom,
         "size": f"{cfg.requested_width_px}x{cfg.requested_height_px}",

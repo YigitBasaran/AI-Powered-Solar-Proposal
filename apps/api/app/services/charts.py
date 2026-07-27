@@ -12,8 +12,10 @@ recessive, and all text wears ink tokens rather than the series colour.
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from html import escape
+from typing import Any
 
 # Light-surface tokens. The PDF always prints on white, so only one mode is
 # needed here; the web proposal themes separately.
@@ -37,12 +39,12 @@ def _nice_ceiling(value: float) -> float:
     """Round an axis maximum up to a readable step."""
     if value <= 0:
         return 1.0
-    magnitude = 10 ** (len(str(int(value))) - 1)
+    magnitude: float = float(10 ** (len(str(int(value))) - 1))
     for factor in (1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0, 7.5, 10.0):
-        candidate = magnitude * factor
+        candidate = float(magnitude * factor)
         if candidate >= value:
             return candidate
-    return magnitude * 10
+    return float(magnitude * 10)
 
 
 def monthly_production_chart(
@@ -107,7 +109,7 @@ def monthly_production_chart(
 
 
 def cash_flow_chart(
-    cash_flow: list[dict[str, object]],
+    cash_flow: Sequence[Mapping[str, Any]],
     *,
     payback_years: float | None,
     width: int = 720,
@@ -120,7 +122,7 @@ def cash_flow_chart(
     pair, and the crossing is direct-labelled. The line itself stays one colour.
     """
     values = [float(Decimal(str(row["cumulativeCashFlowEur"]))) for row in cash_flow]
-    years = [int(row["year"]) for row in cash_flow]  # type: ignore[arg-type]
+    years = [int(row["year"]) for row in cash_flow]
     if not values:
         raise ValueError("cash flow is empty")
 
@@ -226,7 +228,7 @@ def cash_flow_chart(
     return "".join(parts)
 
 
-def facet_orientation_diagram(facets: list[dict[str, object]], *, size: int = 190) -> str:
+def facet_orientation_diagram(facets: Sequence[Mapping[str, Any]], *, size: int = 190) -> str:
     """A compass rose showing where each facet points and how much it yields.
 
     Included because "north facet, aspect -169 degrees" is not something a
@@ -280,8 +282,8 @@ def facet_orientation_diagram(facets: list[dict[str, object]], *, size: int = 19
 
 
 def roof_plan_svg(
-    roof: dict[str, object],
-    layout: dict[str, object],
+    roof: Mapping[str, Any],
+    layout: Mapping[str, Any],
     *,
     width: int = 420,
 ) -> str:
@@ -291,13 +293,10 @@ def roof_plan_svg(
     PDF would depend on the frontend having uploaded an image, and a proposal
     generated straight from the API would show no roof at all.
     """
-    facets = roof.get("facetGeometry") or roof.get("facets") or []
-    polygons = [f.get("sourcePixelPolygon") for f in facets]  # type: ignore[union-attr]
-    panels = [
-        p["sourcePixelPolygon"]
-        for facet in layout.get("facets", [])  # type: ignore[union-attr]
-        for p in facet.get("panels", [])
-    ]
+    facets: Sequence[Mapping[str, Any]] = roof.get("facetGeometry") or roof.get("facets") or []
+    polygons = [f.get("sourcePixelPolygon") for f in facets]
+    layout_facets: Sequence[Mapping[str, Any]] = layout.get("facets", [])
+    panels = [p["sourcePixelPolygon"] for facet in layout_facets for p in facet.get("panels", [])]
 
     points = [pt for poly in polygons if poly for pt in poly]
     if not points:

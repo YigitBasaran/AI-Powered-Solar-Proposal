@@ -184,7 +184,8 @@ class PvgisClient:
                 best = (delta, path)
         if best is None:
             return None
-        return json.loads(best[1].read_text(encoding="utf-8"))
+        loaded: dict[str, Any] = json.loads(best[1].read_text(encoding="utf-8"))
+        return loaded
 
     def _from_fixture(
         self, *, aspect_deg: float, peak_power_kwp: float, source: DataSource

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter, Depends
 
 from app.core.config import Settings, get_settings
@@ -11,7 +13,7 @@ router = APIRouter(prefix="/roof", tags=["roof"])
 
 
 @router.get("/fixed-model")
-async def fixed_model(settings: Settings = Depends(get_settings)) -> dict:
+async def fixed_model(settings: Settings = Depends(get_settings)) -> dict[str, Any]:
     """Full roof geometry in source-map pixels plus derived measurements.
 
     Source pixels are published, not viewport coordinates: the client applies

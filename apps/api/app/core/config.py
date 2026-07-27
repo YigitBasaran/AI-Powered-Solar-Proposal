@@ -142,7 +142,7 @@ def meters_per_source_pixel(latitude_deg: float, zoom: int, scale: int) -> float
         * circumference
         / (WEB_MERCATOR_TILE_SIZE_PX * (2**zoom))
     )
-    return logical / scale
+    return float(logical / scale)
 
 
 class Settings(BaseSettings):

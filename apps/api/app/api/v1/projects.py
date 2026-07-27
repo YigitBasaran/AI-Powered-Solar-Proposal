@@ -8,6 +8,7 @@ workflow rules live in `services/workflow.py` and all analysis in
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, Body, Depends
 from pydantic import BaseModel, Field
@@ -35,7 +36,7 @@ class CreateProjectResponse(BaseModel):
     projectId: str
     currentStep: str
     assistantMessage: str
-    progress: list[dict]
+    progress: list[dict[str, Any]]
 
 
 class ChatRequest(BaseModel):
@@ -48,7 +49,7 @@ class ChatResponse(BaseModel):
     assistantMessage: str
     accepted: bool
     parserSource: str
-    progress: list[dict]
+    progress: list[dict[str, Any]]
     readyForAnalysis: bool
 
 
@@ -63,9 +64,9 @@ class ProjectResponse(BaseModel):
     selectedSystemSizeKwp: float | None
     requestedPanelCount: int | None
     analysisStatus: str
-    progress: list[dict]
-    messages: list[dict]
-    analysis: dict | None
+    progress: list[dict[str, Any]]
+    messages: list[dict[str, Any]]
+    analysis: dict[str, Any] | None
 
 
 async def _load(session: AsyncSession, project_id: str) -> Project:
@@ -201,7 +202,7 @@ async def run_project_analysis(
     project_id: str,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict[str, Any]:
     """Roof, layout, PVGIS, FX and financials in one deterministic pass."""
     project = await _load(session, project_id)
 

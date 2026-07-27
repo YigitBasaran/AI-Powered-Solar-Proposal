@@ -8,6 +8,7 @@ services and the tests without dragging in a database or an HTTP client.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
 from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
@@ -53,7 +54,7 @@ class Point2D(BaseModel):
     x: float
     y: float
 
-    def __iter__(self):  # type: ignore[override]
+    def __iter__(self) -> Iterator[float]:  # type: ignore[override]
         yield self.x
         yield self.y
 
@@ -398,7 +399,11 @@ class ParsedChatMessage(BaseModel):
 
     monthly_consumption_kwh: float | None = Field(default=None, gt=0, le=1_000_000)
 
-    system_size_kwp: Literal[3.6, 6.0, 9.6] | None = None
+    # PEP 586 does not admit float literals, so mypy flags this - but the
+    # runtime behaviour is exactly what is wanted: Pydantic enforces the
+    # whitelist, and the generated JSON schema constrains the model's output to
+    # these three values. Widening it to `float` would lose both.
+    system_size_kwp: Literal[3.6, 6.0, 9.6] | None = None  # type: ignore[valid-type]
 
     confidence: float = Field(ge=0, le=1)
 

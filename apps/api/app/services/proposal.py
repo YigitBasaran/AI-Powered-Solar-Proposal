@@ -52,6 +52,29 @@ def _require(snapshot: dict[str, Any], *path: str) -> Any:
     return node
 
 
+def validate_ready(project: Project) -> dict[str, Any]:
+    """Refuse to treat a half-finished analysis as final.
+
+    Extracted so the route can check readiness *before* doing anything else -
+    generating an executive summary from a missing analysis would raise an
+    unhelpful 500 where the caller deserves a clear 409.
+    """
+    snapshot = project.analysis_json
+    if not snapshot:
+        raise ProposalIncompleteError("This project has no completed analysis.")
+
+    _require(snapshot, "layout")
+    energy = _require(snapshot, "energy")
+    financial = _require(snapshot, "financial")
+    _require(snapshot, "exchangeRate")
+
+    if not energy.get("facets"):
+        raise ProposalIncompleteError("The analysis has no facet-level energy results.")
+    if len(financial.get("cashFlow", [])) != 21:
+        raise ProposalIncompleteError("The analysis has an incomplete cash flow.")
+    return snapshot
+
+
 async def finalise_proposal(
     session: AsyncSession,
     project: Project,
@@ -62,19 +85,11 @@ async def finalise_proposal(
     """Persist an immutable proposal from a completed analysis."""
     settings = settings or get_settings()
 
-    snapshot = project.analysis_json
-    if not snapshot:
-        raise ProposalIncompleteError("This project has no completed analysis.")
-
-    # Refuse to store a half-finished proposal as though it were final.
-    layout = _require(snapshot, "layout")
-    energy = _require(snapshot, "energy")
-    financial = _require(snapshot, "financial")
-    fx = _require(snapshot, "exchangeRate")
-    if not energy.get("facets"):
-        raise ProposalIncompleteError("The analysis has no facet-level energy results.")
-    if len(financial.get("cashFlow", [])) != 21:
-        raise ProposalIncompleteError("The analysis has an incomplete cash flow.")
+    snapshot = validate_ready(project)
+    layout = snapshot["layout"]
+    energy = snapshot["energy"]
+    financial = snapshot["financial"]
+    fx = snapshot["exchangeRate"]
 
     token = generate_share_token()
     proposal = Proposal(
@@ -207,5 +222,6 @@ __all__ = [
     "load_by_token",
     "public_payload",
     "record_view",
+    "validate_ready",
     "view_stats",
 ]

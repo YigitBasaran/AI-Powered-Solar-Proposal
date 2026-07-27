@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from app.db.session import get_session
 from app.models.tables import Project
 from app.services import proposal as proposal_service
 from app.services.pdf import build_context, render_html, render_pdf
+from app.services.summary import generate_summary
 
 logger = logging.getLogger("solarvis.proposals")
 
@@ -48,17 +50,28 @@ async def finalize(
     project_id: str,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict[str, Any]:
     project = (
         await session.execute(select(Project).where(Project.id == project_id))
     ).scalar_one_or_none()
     if project is None:
         raise NotFoundError(f"Project {project_id} does not exist.")
 
-    proposal = await proposal_service.finalise_proposal(session, project, settings=settings)
+    # Readiness first: generating a summary from a missing analysis would raise
+    # an unhelpful 500 where the caller deserves a clear 409.
+    snapshot = proposal_service.validate_ready(project)
+
+    # Prose is generated from the analysis that is about to be frozen, and is
+    # validated against those exact values before it is stored.
+    summary, summary_source = await generate_summary(snapshot, settings)
+
+    proposal = await proposal_service.finalise_proposal(
+        session, project, settings=settings, ai_summary=summary
+    )
 
     return {
         "proposalId": proposal.id,
+        "summarySource": summary_source,
         "shareToken": proposal.share_token,
         "shareUrl": f"{settings.web_base_url}/proposal/{proposal.share_token}",
         "pdfUrl": f"/api/v1/proposals/{proposal.share_token}/pdf",
@@ -72,7 +85,7 @@ async def upload_layout_snapshot(
     file: UploadFile = File(...),
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict[str, Any]:
     """Store the exported Konva stage for the most recent proposal."""
     content = await file.read()
     if len(content) > MAX_SNAPSHOT_BYTES:
@@ -109,7 +122,7 @@ async def upload_layout_snapshot(
 async def get_proposal(
     share_token: str,
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict[str, Any]:
     token = _validate_token(share_token)
     proposal = await proposal_service.load_by_token(session, token)
     stats = await proposal_service.view_stats(session, proposal)
@@ -122,7 +135,7 @@ async def record_proposal_view(
     request: Request,
     session: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
-) -> dict:
+) -> dict[str, Any]:
     token = _validate_token(share_token)
     proposal = await proposal_service.load_by_token(session, token)
 

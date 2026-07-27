@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, date, datetime
+from typing import Any
 
 from sqlalchemy import (
     JSON,
@@ -49,7 +50,7 @@ class Project(Base):
     selected_system_size_kwp: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
-    analysis_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    analysis_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(
@@ -77,7 +78,7 @@ class ChatMessage(Base):
 
     step: Mapped[str | None] = mapped_column(String(32), nullable=True)
     parser_source: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    payload_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    payload_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
@@ -119,7 +120,7 @@ class Proposal(Base):
 
     payback_years: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    proposal_data_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    proposal_data_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     layout_snapshot_path: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -152,7 +153,7 @@ class ExchangeRateCache(Base):
     rate_date: Mapped[date] = mapped_column(Date, nullable=False)
 
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    raw_response_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    raw_response_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
 
 class PvgisCache(Base):
@@ -161,7 +162,7 @@ class PvgisCache(Base):
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
     cache_key: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
 
-    response_json: Mapped[dict] = mapped_column(JSON, nullable=False)
+    response_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
 

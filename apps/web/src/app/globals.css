@@ -1,0 +1,101 @@
+@import "tailwindcss";
+
+/*
+ * Design tokens.
+ *
+ * Product surfaces use a restrained solar-tech palette: deep navy for
+ * structure, amber for energy, a single green for positive financial deltas.
+ * Chart colours are kept separate and come from a validated data-visualisation
+ * palette, so a series colour never drifts into being UI chrome and vice versa.
+ */
+@theme {
+  --color-navy-950: #071626;
+  --color-navy-900: #0f2742;
+  --color-navy-800: #16385c;
+  --color-navy-700: #1f4a77;
+  --color-navy-600: #2b6098;
+
+  --color-slate-ink: #0b0b0b;
+  --color-slate-body: #52514e;
+  --color-slate-muted: #898781;
+  --color-slate-line: #e1e0d9;
+  --color-slate-rule: #c3c2b7;
+
+  --color-shell: #f6f7f9;
+  --color-surface: #ffffff;
+  --color-surface-2: #fcfcfb;
+
+  --color-solar-500: #eda100;
+  --color-solar-600: #c98500;
+  --color-solar-100: #fdf3e0;
+
+  --color-good-600: #0ca30c;
+  --color-good-700: #006300;
+
+  /* Data-visualisation slots (validated palette, light surface). */
+  --color-series-1: #2a78d6;
+  --color-series-1-soft: #cde2fb;
+  --color-series-2: #eb6834;
+  --color-negative: #d03b3b;
+  --color-negative-soft: #f7d5d5;
+  --color-grid: #e1e0d9;
+  --color-axis: #c3c2b7;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--color-shell);
+  color: var(--color-slate-ink);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers that sit in columns must align; standalone figures should not be
+   forced into tabular widths. */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-rise {
+  animation: rise 180ms ease-out both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-rise {
+    animation: none;
+  }
+}
+
+/* Scrollbars inside the chat and tables, kept unobtrusive. */
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #d7d6cf;
+  border-radius: 999px;
+}
+.scroll-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+}

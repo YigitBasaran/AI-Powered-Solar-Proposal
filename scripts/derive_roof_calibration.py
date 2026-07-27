@@ -130,9 +130,7 @@ def segment_roof(
     sub: np.ndarray, seed: tuple[int, int], *, tolerance: float, opening: int
 ) -> np.ndarray:
     """Brightness band, then a morphological opening anchored at the seed."""
-    reference = float(
-        np.median(sub[seed[0] - 3 : seed[0] + 4, seed[1] - 3 : seed[1] + 4])
-    )
+    reference = float(np.median(sub[seed[0] - 3 : seed[0] + 4, seed[1] - 3 : seed[1] + 4]))
     band = np.abs(sub - reference) <= tolerance
 
     mask = band
@@ -436,9 +434,7 @@ def main() -> int:
             # Everything downstream - calibration, geometry, panel layout - is
             # defined in source pixels, so the window origin must not leak past
             # this line.
-            pts: list[Pt] = [
-                (float(x + x0), float(y + y0)) for x, y in zip(xs, ys, strict=True)
-            ]
+            pts: list[Pt] = [(float(x + x0), float(y + y0)) for x, y in zip(xs, ys, strict=True)]
             try:
                 corners, sa, sb = min_area_rect(convex_hull(pts))
             except RuntimeError:
@@ -447,8 +443,7 @@ def main() -> int:
             area = long_px * short_px * m_per_px * m_per_px
             aspect = long_px / short_px if short_px else 0.0
             plausible = (
-                MIN_FOOTPRINT_M2 <= area <= MAX_FOOTPRINT_M2
-                and MIN_ASPECT <= aspect <= MAX_ASPECT
+                MIN_FOOTPRINT_M2 <= area <= MAX_FOOTPRINT_M2 and MIN_ASPECT <= aspect <= MAX_ASPECT
             )
             if args.verbose:
                 print(
@@ -468,10 +463,7 @@ def main() -> int:
     area, corners, tol, opening = min(candidates, key=lambda c: abs(c[0] - median_area))
     spread = (max(areas) - min(areas)) / median_area
 
-    print(
-        f"plateau            : {len(candidates)}/25 combos plausible, "
-        f"spread {spread * 100:.1f}%"
-    )
+    print(f"plateau            : {len(candidates)}/25 combos plausible, spread {spread * 100:.1f}%")
     print(f"chosen             : tolerance={tol} opening={opening} (median of plateau)")
 
     topo = build_hip_topology(corners)
@@ -485,18 +477,13 @@ def main() -> int:
     print(f"ridge              : {meas['ridge_m']} m")  # type: ignore[index]
     print("facets             :")
     for f in calib["facets"]:  # type: ignore[union-attr]
-        print(
-            f"   {f['id']:<9} az={f['approx_compass_azimuth_deg']:>6.1f}  {f['shape']}"
-        )
+        print(f"   {f['id']:<9} az={f['approx_compass_azimuth_deg']:>6.1f}  {f['shape']}")
 
     if args.debug_image:
         DEBUG_OUT.parent.mkdir(parents=True, exist_ok=True)
         prev = img.copy()
         d = ImageDraw.Draw(prev)
-        vp = {
-            v["id"]: (v["source_pixel"]["x"], v["source_pixel"]["y"])
-            for v in calib["vertices"]
-        }  # type: ignore[union-attr,index]
+        vp = {v["id"]: (v["source_pixel"]["x"], v["source_pixel"]["y"]) for v in calib["vertices"]}  # type: ignore[union-attr,index]
         colours = {
             "eave": (255, 255, 255),
             "hip": (110, 215, 255),

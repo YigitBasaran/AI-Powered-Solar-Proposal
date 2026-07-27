@@ -1,0 +1,271 @@
+"""Build the measured roof model from committed calibration data.
+
+The calibration file stores only what a human (or the derivation script) can
+actually observe: vertex positions in source-map pixels, edge classifications
+and facet membership. Everything derived - lengths, areas, azimuths, PVGIS
+aspects, vertex heights - is computed here from that raw input plus the
+verified raster configuration, so a change to either shows up everywhere at
+once rather than drifting out of a stale duplicate.
+"""
+
+from __future__ import annotations
+
+import json
+import math
+from functools import lru_cache
+from pathlib import Path
+from typing import Any
+
+from app.core.config import Settings, get_settings
+from app.core.errors import RoofCalibrationMissingError
+from app.domain.geometry import (
+    SurfaceFrame,
+    build_surface_frame,
+    compass_azimuth_to_pvgis_aspect,
+    facet_compass_azimuth,
+    polygon_area_m2,
+    projected_length_m,
+    sloped_area_m2,
+    source_pixel_to_metric,
+    true_3d_length_m,
+)
+from app.domain.models import (
+    Point2D,
+    RoofEdge,
+    RoofEdgeType,
+    RoofFacet,
+    RoofModel,
+    RoofVertex,
+    cos_pitch,
+)
+
+CALIBRATION_PATH = Path(__file__).resolve().parents[1] / "data" / "fixed_roof_calibration.json"
+
+
+def _load_calibration(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise RoofCalibrationMissingError(
+            f"Calibration file not found at {path}. "
+            "Run scripts/derive_roof_calibration.py --write to generate it."
+        )
+    try:
+        data: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise RoofCalibrationMissingError(f"Calibration file is not valid JSON: {exc}") from exc
+
+    for key in ("vertices", "edges", "facets", "pitch_deg"):
+        if key not in data:
+            raise RoofCalibrationMissingError(f"Calibration file is missing {key!r}")
+    return data
+
+
+def _ridge_height_m(short_side_m: float, pitch_deg: float) -> float:
+    """Height of the ridge above the eave line for a uniform-pitch hip roof.
+
+    The slope rises over half the short side, so ``rise = (short/2) * tan(pitch)``.
+    Knowing this lets hip edges be measured with the true 3D formula instead of
+    the pitch shortcut, which does not apply to them (A-GEO-1).
+    """
+    return (short_side_m / 2.0) * math.tan(math.radians(pitch_deg))
+
+
+def build_roof_model(
+    settings: Settings | None = None, *, calibration_path: Path | None = None
+) -> RoofModel:
+    settings = settings or get_settings()
+    data = _load_calibration(calibration_path or CALIBRATION_PATH)
+
+    cfg = settings.satellite_image_config
+    m_per_px = cfg.ground_m_per_source_px
+    src_w, src_h = cfg.source_width_px, cfg.source_height_px
+
+    calibrated = data.get("source_raster", {})
+    if calibrated and int(calibrated.get("width_px", src_w)) != src_w:
+        raise RoofCalibrationMissingError(
+            "Calibration was made against a different source raster width "
+            f"({calibrated.get('width_px')} vs {src_w}). Re-derive it: the "
+            "calibration and the raster configuration must agree."
+        )
+
+    pitch = float(data["pitch_deg"])
+
+    # --- vertices ---------------------------------------------------------
+    pixels: dict[str, Point2D] = {}
+    metrics: dict[str, Point2D] = {}
+    for v in data["vertices"]:
+        p = Point2D(x=float(v["source_pixel"]["x"]), y=float(v["source_pixel"]["y"]))
+        pixels[v["id"]] = p
+        metrics[v["id"]] = source_pixel_to_metric(
+            p, source_width_px=src_w, source_height_px=src_h, ground_m_per_source_px=m_per_px
+        )
+
+    # --- vertex heights ---------------------------------------------------
+    # Eave corners sit on the eave plane (0.0); ridge vertices sit one rise up.
+    ridge_ids = {
+        vid
+        for e in data["edges"]
+        if e["edge_type"] == RoofEdgeType.RIDGE.value
+        for vid in (e["start_vertex_id"], e["end_vertex_id"])
+    }
+    short_side_m = float(data.get("measured", {}).get("footprint_short_m", 0.0))
+    if short_side_m <= 0:
+        eaves = [e for e in data["edges"] if e["edge_type"] == RoofEdgeType.EAVE.value]
+        lengths = [
+            projected_length_m(
+                metrics[e["start_vertex_id"]],
+                metrics[e["end_vertex_id"]],
+                ground_m_per_source_px=1.0,
+            )
+            for e in eaves
+        ]
+        short_side_m = min(lengths) if lengths else 0.0
+    rise = _ridge_height_m(short_side_m, pitch)
+
+    heights = {vid: (rise if vid in ridge_ids else 0.0) for vid in pixels}
+
+    vertices = [
+        RoofVertex(
+            id=vid,
+            source_pixel=pixels[vid],
+            projected_metric=metrics[vid],
+            height_m=heights[vid],
+        )
+        for vid in pixels
+    ]
+
+    # --- edges ------------------------------------------------------------
+    edges: list[RoofEdge] = []
+    for e in data["edges"]:
+        a, b = e["start_vertex_id"], e["end_vertex_id"]
+        edge_type = RoofEdgeType(e["edge_type"])
+        # Metric coordinates are already in metres, so the pixel scale is 1.
+        projected = projected_length_m(metrics[a], metrics[b], ground_m_per_source_px=1.0)
+        # True length uses endpoint heights. Deliberately NOT projected/cos(pitch):
+        # a hip runs diagonally across the slope, not along it.
+        true_len = true_3d_length_m(
+            metrics[a], metrics[b], height_a_m=heights[a], height_b_m=heights[b]
+        )
+        edges.append(
+            RoofEdge(
+                id=e["id"],
+                start_vertex_id=a,
+                end_vertex_id=b,
+                edge_type=edge_type,
+                projected_length_m=projected,
+                true_3d_length_m=true_len,
+            )
+        )
+
+    edge_by_id = {e.id: e for e in edges}
+
+    # --- facets -----------------------------------------------------------
+    facets: list[RoofFacet] = []
+    for f in data["facets"]:
+        vids: list[str] = list(f["vertex_ids"])
+        metric_poly = [metrics[v] for v in vids]
+        pixel_poly = [pixels[v] for v in vids]
+
+        eave_edge_id = f["eave_edge_id"]
+        if eave_edge_id not in edge_by_id:
+            raise RoofCalibrationMissingError(
+                f"Facet {f['id']!r} references unknown eave edge {eave_edge_id!r}"
+            )
+        eave = edge_by_id[eave_edge_id]
+        eave_a, eave_b = metrics[eave.start_vertex_id], metrics[eave.end_vertex_id]
+
+        azimuth = facet_compass_azimuth(
+            eave_start=eave_a, eave_end=eave_b, facet_polygon=metric_poly
+        )
+        projected_area = polygon_area_m2(metric_poly)
+
+        facets.append(
+            RoofFacet(
+                id=f["id"],
+                label=f["label"],
+                vertex_ids=vids,
+                source_pixel_polygon=pixel_poly,
+                projected_metric_polygon=metric_poly,
+                eave_edge_id=eave_edge_id,
+                pitch_deg=pitch,
+                compass_azimuth_deg=azimuth,
+                pvgis_aspect_deg=compass_azimuth_to_pvgis_aspect(azimuth),
+                projected_area_m2=projected_area,
+                sloped_area_m2=sloped_area_m2(projected_area, pitch),
+            )
+        )
+
+    total_projected = sum(f.projected_area_m2 for f in facets)
+
+    return RoofModel(
+        id=data.get("id", "case_fixed_roof"),
+        vertices=vertices,
+        edges=edges,
+        facets=facets,
+        pitch_deg=pitch,
+        ground_m_per_source_px=m_per_px,
+        source_width_px=src_w,
+        source_height_px=src_h,
+        total_projected_area_m2=total_projected,
+        total_sloped_area_m2=sloped_area_m2(total_projected, pitch),
+    )
+
+
+def facet_surface_frame(roof: RoofModel, facet: RoofFacet) -> SurfaceFrame:
+    """Surface frame for a facet, built from its assigned eave."""
+    eave = roof.edge(facet.eave_edge_id)
+    start = roof.vertex(eave.start_vertex_id).projected_metric
+    end = roof.vertex(eave.end_vertex_id).projected_metric
+    if start is None or end is None:
+        raise RoofCalibrationMissingError("facet eave is missing metric coordinates")
+    return build_surface_frame(
+        eave_start=start,
+        eave_end=end,
+        facet_polygon=facet.projected_metric_polygon,
+        pitch_deg=facet.pitch_deg,
+    )
+
+
+def facet_surface_polygon(roof: RoofModel, facet: RoofFacet) -> list[Point2D]:
+    """Facet outline in its own surface coordinates (metres on the slope)."""
+    return facet_surface_frame(roof, facet).polygon_to_surface(facet.projected_metric_polygon)
+
+
+@lru_cache(maxsize=1)
+def get_roof_model() -> RoofModel:
+    """Cached roof model. The calibration is static for the case property."""
+    return build_roof_model()
+
+
+def roof_summary(roof: RoofModel) -> dict[str, Any]:
+    """Compact, display-ready summary."""
+    return {
+        "id": roof.id,
+        "pitchDeg": roof.pitch_deg,
+        "groundMetresPerSourcePixel": round(roof.ground_m_per_source_px, 7),
+        "totalProjectedAreaM2": round(roof.total_projected_area_m2, 2),
+        "totalSlopedAreaM2": round(roof.total_sloped_area_m2, 2),
+        "cosPitch": round(cos_pitch(roof.pitch_deg), 6),
+        "facets": [
+            {
+                "id": f.id,
+                "label": f.label,
+                "shape": "trapezoid" if len(f.vertex_ids) == 4 else "triangle",
+                "compassAzimuthDeg": round(f.compass_azimuth_deg, 2),
+                "pvgisAspectDeg": round(f.pvgis_aspect_deg, 2),
+                "projectedAreaM2": round(f.projected_area_m2, 2),
+                "slopedAreaM2": round(f.sloped_area_m2, 2),
+            }
+            for f in roof.facets
+        ],
+        "edges": [
+            {
+                "id": e.id,
+                "type": e.edge_type.value,
+                "projectedLengthM": round(e.projected_length_m, 3),
+                "true3dLengthM": round(e.true_3d_length_m, 3)
+                if e.true_3d_length_m is not None
+                else None,
+            }
+            for e in roof.edges
+        ],
+    }

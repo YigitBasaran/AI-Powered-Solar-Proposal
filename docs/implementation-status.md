@@ -104,7 +104,7 @@ Parameters are chosen by **stability, not taste**: sweeping tolerance and erosio
 
 **A coordinate-space bug the debug overlay caught.** Segmentation points are window-relative and were being passed through as source-map pixels, offsetting the entire calibration by the 410 px window origin. The numbers looked entirely plausible — correct dimensions, correct aspect ratio, correct facet azimuths — and only rendering the overlay on the imagery exposed it. This is precisely the failure mode the three-coordinate-space discipline exists to prevent.
 
-**Capacity forecast** (updated with measured geometry): sloped area at 25° ≈ **88.4 m²**. Estimated north-trapezoid capacity ≈ 9 landscape panels. So 3.6 kWp (9 panels) should fit on the best facet alone, 6.0 kWp (15) needs multi-facet packing, and 9.6 kWp (24 panels = 48 m², 54 % of the sloped roof) is expected to trigger the honest capacity-warning path.
+**Capacity, measured.** The earlier forecast that 9.6 kWp would be infeasible was **wrong**. The calibrated roof holds exactly 24 panels — north 9, south 9, west 3, east 3 — so all three case sizes are satisfiable. See [`location-verification.md`](location-verification.md) §6.
 
 ---
 

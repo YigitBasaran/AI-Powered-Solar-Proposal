@@ -153,14 +153,26 @@ Approximate as-measured geometry (precise values come from committed calibration
 | North / south trapezoid | ≈23.6 m² projected, ≈26.0 m² sloped each |
 | East / west triangle | ≈11.2 m² projected, ≈12.4 m² sloped each |
 
-### Capacity implication, stated up front
+### Capacity, as measured
 
-At 2 m² per panel, the three required system sizes need:
+Earlier in this build I forecast from rough hand-measurements that 9.6 kWp would be infeasible. **That forecast was wrong.** With the calibrated geometry and the real packing algorithm, the roof holds exactly 24 panels:
 
-| System | Panels | Panel area | vs 76.8 m² sloped roof |
+| Facet | Sloped area | Panels (landscape) |
+|---|---|---|
+| North trapezoid | 30.1 m² | 9 |
+| South trapezoid | 30.1 m² | 9 |
+| West triangle | 14.1 m² | 3 |
+| East triangle | 14.1 m² | 3 |
+| **Total** | **88.4 m²** | **24** |
+
+So all three case system sizes are physically satisfiable, with 9.6 kWp consuming every available slot:
+
+| System | Panels | Placed | Allocation |
 |---|---|---|---|
-| 3.6 kWp | 9 | 18 m² | 23 % — comfortable |
-| 6.0 kWp | 15 | 30 m² | 39 % — feasible, needs multi-facet packing |
-| 9.6 kWp | 24 | 48 m² | 63 % — **very likely infeasible** |
+| 3.6 kWp | 9 | 9 | North only |
+| 6.0 kWp | 15 | 15 | North 9 + West 3 + East 3 |
+| 9.6 kWp | 24 | 24 | All four facets |
 
-Packing 48 m² of rigid 1×2 m rectangles into trapezoids and triangles totalling 76.8 m², with gaps and setbacks, is not achievable at 63 % utilisation. The 9.6 kWp scenario is therefore expected to return an **honest capacity warning** with the maximum feasible count, and to drive PVGIS and the financial model from the *feasible* capacity. This is required behaviour under the brief, not a defect.
+The 6 kWp allocation is the one that demonstrates the optimiser is genuinely production-driven. North and south are the same size and hold 9 panels each, so an allocator ranking facets by area would place the remaining 6 panels on south. The correct answer is to fill both small triangles instead and leave south empty, because at this southern-hemisphere site west (1,515 kWh/kWp) and east (1,367) out-produce south (1,120).
+
+The honest capacity-warning path is still implemented and tested — it triggers under a realistic 1 m safety setback, which does make 24 panels impossible.

@@ -101,7 +101,7 @@ One file, one writer. Correct for this workload; a real deployment would want Po
 
 - `make` is not available on Windows by default. The Makefile ships for parity; `scripts/setup.ps1` and the npm scripts are the real entry points.
 - `python3` resolves to a non-functional Microsoft Store stub on many Windows machines. `verify-submission.sh` probes interpreters **by executing them** rather than by name for this reason.
-- The API image is large (~3.5 GB) because it carries Chromium for PDF rendering.
+- The API image carries Chromium for PDF rendering, so it is larger than a plain API image would be (662 MB). An earlier revision built on the Playwright base image and reached 3.75 GB; installing from pyproject onto python:3.12-slim removed most of that.
 
 ---
 

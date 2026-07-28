@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import EmailMode, Settings, get_settings
 from app.core.errors import NotFoundError, ValidationError
-from app.db.session import get_session
+from app.db.session import commit_before_response, get_session
 from app.models.tables import Project
 from app.services import proposal as proposal_service
 from app.services.pdf import build_context, render_html, render_pdf
@@ -75,6 +75,9 @@ async def finalize(
     proposal = await proposal_service.finalise_proposal(
         session, project, settings=settings, ai_summary=summary
     )
+    # The share link is handed out in this response; the row it points at has
+    # to exist before the customer can follow it.
+    await commit_before_response(session)
 
     return _finalize_payload(proposal, settings, summary_source=summary_source)
 
@@ -122,6 +125,7 @@ async def upload_layout_snapshot(
     destination.write_bytes(content)
     proposal.layout_snapshot_path = str(destination)
     await session.flush()
+    await commit_before_response(session)
 
     return {"stored": True, "bytes": len(content)}
 
@@ -159,6 +163,8 @@ async def record_proposal_view(
         referrer=request.headers.get("referer"),
         client_ip=request.client.host if request.client else None,
     )
+    # The returned count must be readable by the next request that asks.
+    await commit_before_response(session)
 
     # Notification must never be able to break the customer's page view.
     try:

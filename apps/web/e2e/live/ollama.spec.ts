@@ -1,6 +1,6 @@
 import { expect, test } from "../fixtures/proposal";
 import { SKIP, probeOllama } from "../fixtures/environment";
-import { CASE_INPUTS, EXPECTED_FX } from "../fixtures/expected-values";
+import { CASE_INPUTS } from "../fixtures/expected-values";
 
 /**
  * Tier C — Ollama, opt-in.
@@ -21,6 +21,13 @@ import { CASE_INPUTS, EXPECTED_FX } from "../fixtures/expected-values";
 const MODEL = process.env.OLLAMA_MODEL ?? "qwen3.5:2b";
 
 test.describe("@live Ollama parser", () => {
+  // A 2.3 B model on CPU takes tens of seconds per call, and a reasoning model
+  // thinks before it answers. The default 20 s action timeout would record
+  // "slow hardware" as "broken integration". These bounds are generous on
+  // purpose; the assertion that matters is what comes back, not how fast.
+  test.use({ actionTimeout: 180_000 });
+  test.describe.configure({ timeout: 600_000 });
+
   test("the configured model is installed and reachable", async ({ stack }) => {
     test.skip(stack.llm !== "ollama", SKIP.notLive("LLM", stack.llm));
     const probe = await probeOllama();
@@ -31,24 +38,62 @@ test.describe("@live Ollama parser", () => {
     expect(stack.llmModel).toBe(MODEL);
   });
 
-  test("intent is extracted from conversational phrasing", async ({ api, stack }) => {
+  /**
+   * The model's answer must actually *reach* the state machine.
+   *
+   * This is the assertion that matters, and the one that caught a real defect:
+   * `qwen3.5:2b` is a reasoning model, and until the client sent
+   * `"think": false` Ollama returned its whole schema-constrained answer in
+   * `thinking` with `response` **empty**. The client read `response`, found it
+   * empty, and fell back to the rules parser — silently, correctly, and every
+   * single time. `parserSource` stayed `"rules"` for every message, so the LLM
+   * layer contributed nothing at all while appearing to work.
+   *
+   * What is *not* asserted is that the model extracts well. That is a property
+   * of whichever model happens to be pulled, not of this code; the observed
+   * behaviour of `qwen3.5:2b` is recorded in docs/local-ai.md instead.
+   */
+  test("the model's answer reaches the state machine, validated", async ({ api, stack }) => {
     test.skip(stack.llm !== "ollama", SKIP.notLive("LLM", stack.llm));
     const probe = await probeOllama();
     test.skip(!probe.installed, SKIP.ollamaAbsent(MODEL));
 
-    const { projectId } = await api.createProject();
-    await api.chat(projectId, CASE_INPUTS.locationInput);
-    await api.chat(projectId, "we usually get through about eleven hundred and fifty units a month");
+    // Phrases with no digits and no ordinal keyword, so the rules parser
+    // returns UNKNOWN and the model is genuinely consulted.
+    const beyondRules = [
+      "we usually get through about eleven hundred and fifty units a month",
+      "whichever one my neighbour got",
+      "the one that fits fifteen panels",
+    ];
 
-    const started = Date.now();
-    const reply = await api.chat(projectId, "let's go with the middle one");
-    const elapsed = Date.now() - started;
+    const sources: string[] = [];
+    let slowest = 0;
+    for (const message of beyondRules) {
+      const { projectId } = await api.createProject();
+      await api.chat(projectId, CASE_INPUTS.locationInput);
 
-    expect(reply.status).toBe(200);
-    expect(reply.body.accepted).toBe(true);
-    expect(reply.body.assistantMessage).toContain("6 kWp");
-    // Generous, and documented: a small model on CPU is slow but not minutes.
-    expect(elapsed, `parser took ${elapsed}ms`).toBeLessThan(60_000);
+      const started = Date.now();
+      const reply = await api.chat(projectId, message);
+      const elapsed = Date.now() - started;
+      slowest = Math.max(slowest, elapsed);
+
+      expect(reply.status, message).toBe(200);
+      sources.push(reply.body.parserSource);
+      console.log(
+        `[live] "${message}" -> ${reply.body.parserSource} ` +
+          `accepted=${reply.body.accepted} in ${(elapsed / 1000).toFixed(1)}s`,
+      );
+    }
+
+    expect(
+      sources,
+      "the model was consulted but never produced output the schema accepted — " +
+        "check that `think: false` is being sent",
+    ).toContain("llm");
+
+    // A bound that catches a hang, not a benchmark: this measures the host's
+    // CPU as much as the integration.
+    expect(slowest, `slowest model call ${slowest}ms`).toBeLessThan(180_000);
   });
 
   test("the model never supplies an engineering figure", async ({ api, stack }) => {
@@ -63,10 +108,20 @@ test.describe("@live Ollama parser", () => {
     const analysis = await api.runAnalysis(projectId);
 
     // Identical to the rules-parser result: the parser chooses *which* size,
-    // and nothing else.
+    // and nothing else. The rate is asserted as an invariant, not as a
+    // literal — this tier may be running against the real ECB feed, and
+    // pinning today's rate here would be the exact mistake the fixture tier
+    // exists to avoid.
     expect(analysis.layout.placedPanelCount).toBe(15);
-    expect(analysis.exchangeRate.rate).toBe(EXPECTED_FX.rate);
+    expect(analysis.layout.feasibleSystemSizeKwp).toBe(6);
+    expect(Number(analysis.exchangeRate.rate)).toBeGreaterThan(0.5);
+    expect(Number(analysis.exchangeRate.rate)).toBeLessThan(1.5);
     expect(Number(analysis.exchangeRate.rate)).not.toBe(1);
+    // The conversion really was applied, whatever the rate was.
+    expect(Number(analysis.financial.convertedCapex.amount)).toBeCloseTo(
+      Number(analysis.financial.originalCapex.amount) * Number(analysis.exchangeRate.rate),
+      0,
+    );
   });
 
   test("an unparseable message falls back to the rules parser, not an error", async ({
@@ -82,8 +137,9 @@ test.describe("@live Ollama parser", () => {
     const reply = await api.chat(projectId, "🙂🙂🙂");
 
     // Whatever the model does with that, the workflow stays on its feet.
+    // The API names the source `llm`, not the provider.
     expect(reply.status).toBe(200);
     expect(reply.body.currentStep).toBe("consumption");
-    expect(["rules", "ollama"]).toContain(reply.body.parserSource);
+    expect(["rules", "llm"]).toContain(reply.body.parserSource);
   });
 });

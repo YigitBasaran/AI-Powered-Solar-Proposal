@@ -178,7 +178,7 @@ Model output is forced through a JSON schema, Pydantic-validated, then re-checke
 ## Testing
 
 ```bash
-cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 458 tests
+cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 459 tests
 cd apps/api && ./.venv/Scripts/python -m ruff check app tests
 cd apps/api && ./.venv/Scripts/python -m mypy app                  # strict
 cd apps/web && npm run typecheck && npm run test && npm run build  # 38 tests

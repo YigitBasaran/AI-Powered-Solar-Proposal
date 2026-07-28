@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.errors import InvalidStepTransitionError, NotFoundError
-from app.db.session import get_session
+from app.db.session import commit_before_response, get_session
 from app.domain.models import ProjectStep
 from app.integrations.exchange_rates import ExchangeRateService, SqlExchangeRateCache
 from app.models.tables import ChatMessage, Project
@@ -126,6 +126,7 @@ async def create_project(
         )
     )
     await session.flush()
+    await commit_before_response(session)
 
     logger.info("project created %s", project.id)
     return CreateProjectResponse(
@@ -185,6 +186,9 @@ async def chat(
         )
     )
     await session.flush()
+    # Durable before the caller is told it happened: the UI fires run-analysis
+    # the instant this returns, and the dependency's commit lands too late.
+    await commit_before_response(session)
 
     return ChatResponse(
         projectId=project.id,
@@ -230,6 +234,7 @@ async def run_project_analysis(
     project.analysis_status = "complete"
     project.current_step = ProjectStep.PROPOSAL.value
     await session.flush()
+    await commit_before_response(session)
 
     return {
         "projectId": project.id,

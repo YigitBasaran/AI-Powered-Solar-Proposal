@@ -50,6 +50,22 @@ async def test_request_is_schema_constrained_and_deterministic(client) -> None:
     assert body["options"]["temperature"] == 0, "parsing must be deterministic"
     assert body["format"] == ParsedChatMessage.model_json_schema()
     assert body["model"] == get_settings().ollama_model
+    assert body["think"] is False, (
+        "a reasoning model puts its whole output in `thinking` and returns an "
+        "EMPTY `response` unless thinking is off, so the parser would silently "
+        "contribute nothing and every message would fall back to the rules"
+    )
+
+
+@respx.mock
+async def test_thinking_is_disabled_for_the_explanation_too(client) -> None:
+    route = respx.post(GENERATE).mock(
+        return_value=httpx.Response(200, json={"response": "Some prose."})
+    )
+    await client.explain({"annualProductionKwh": 9502.2})
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["think"] is False
 
 
 @respx.mock

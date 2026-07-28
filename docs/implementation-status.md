@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated 2026-07-28: 458 API + 38 web + 91 E2E passing (7 `@live` skipped, honestly); MyPy strict clean; Docker stack rebuilt, verified and torn down clean; the E2E suite additionally run against the containers._
+_Last updated 2026-07-28: 459 API + 38 web + 91 E2E passing; the `@live` tier run for real against PVGIS, the ECB feed and a locally pulled `qwen3.5:2b` (6 passed, 1 skipped — Google Maps, no key); MyPy strict clean; Docker stack rebuilt, verified, exercised by the E2E suite and torn down clean._
 
 ---
 
@@ -288,18 +288,68 @@ Each would have hit a reviewer on their first command, and none was visible outs
 2. **The base image shipped Python 3.10.** The app needs 3.12 (`StrEnum`). It built cleanly and died at import. Root cause: the Dockerfile hand-duplicated the dependency list instead of installing from `pyproject.toml`, so `requires-python = ">=3.12"` was never enforced. It now installs from pyproject and asserts the interpreter at build time.
 3. **`alembic upgrade head` failed in the container.** `create_all` left `alembic_version` empty, so Alembic tried to re-create existing tables. `init_db` now stamps the head revision.
 
-### Ollama-active mode: still unverified, and why
+---
 
-The optional model was **not** pulled in this session. Before attempting it the
-host had **5.29 GB free**, below the 8 GB floor agreed for this work, and
-pruning images, volumes or build cache was explicitly not permitted. The pull
-was therefore not started.
+## Live tier — verified 2026-07-28
 
-The `@live` Ollama specs are implemented and **skip with a stated reason** when
-the daemon or the model is absent — they never pull anything themselves. Active
-Ollama remains **unverified**: the adapter is tested only against a mocked
-transport, and the degraded tier proves the fallback to the rules parser when
-Ollama is configured but unreachable.
+The optional model was pulled and the `@live` tier run against **real PVGIS,
+the real ECB feed and a real local model**. The pull was gated on disk: it was
+attempted only once free space was back above the 8 GB floor agreed for this
+work (13.97 GB after the pull), and nothing was pruned to make room.
+
+```
+before pull   host free 14.75 GB · no ollama volume · model inventory empty
+pull          docker exec solarvis-ollama ollama pull qwen3.5:2b
+              -> success, 2.7 GB, Q8_0, 2.3 B params
+after pull    host free 13.97 GB · qwen3.5:2b present in `ollama list`
+
+$ E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"
+    stacks under test: maps=fixture pvgis=live fx=live llm=ollama
+    6 passed, 1 skipped (Google Maps — no API key), 38.9s
+```
+
+| Signal | Recorded |
+|---|---|
+| Model installation | `qwen3.5:2b`, 2.7 GB, `gguf`, Q8_0, 2.3 B parameters, 262 k context |
+| Execution | CPU only (no GPU visible to the container); 3–8 s per call |
+| Structured output | Works **only after the fix below**; the schema is honoured and validates |
+| Intent extraction | `parserSource: "llm"` reached the state machine on every phrase the rules parser could not handle — but the model **refused all three**, returning `confirm` or `unknown` |
+| Fallback | An unparseable message (`🙂🙂🙂`) leaves the workflow on its feet, on `consumption`, with no error |
+| Engineering figures | Unchanged. 15 panels, 6 kWp, rate ≠ 1, conversion applied — identical to the rules path |
+| Live PVGIS | `dataSource: live`, PVGIS-SARAH3, facet yields 1678.66 / 1515.29 / 1367.22 / 1119.83 — **within 0.02 kWh of the committed fixtures**, which confirms the captures are faithful |
+| Live FX | `0.87974` on 2026-07-28, ECB via Frankfurter, `retrievalSource: live`; CAPEX €8,797.40, payback 2.60 yr |
+
+### The defect only a live model could have shown
+
+`qwen3.5:2b` is a **reasoning** model. Ollama routes a thinking model's entire
+output — including schema-constrained JSON — into the `thinking` field and
+leaves `response` **empty** unless `"think": false` is sent. The client read
+`response`, found it empty, raised `LlmUnavailableError`, and fell back to the
+rules parser. Silently. Correctly. Every single time.
+
+`parserSource` was `"rules"` for every message, so the entire LLM layer
+contributed nothing while appearing to work perfectly. No mocked test could
+find this: the mock returns whatever the test author puts in `response`. The
+fix is one field in the request, plus a unit test that pins it, plus a live
+assertion that the model's answer actually reaches the state machine.
+
+### What the model is *not* good at, recorded honestly
+
+With thinking disabled, at temperature 0, against this schema, `qwen3.5:2b`
+refused every conversational phrasing tried:
+
+| Phrase | Result |
+|---|---|
+| "we usually get through about eleven hundred and fifty units a month" | `llm` → not accepted |
+| "whichever one my neighbour got" | `llm` → not accepted (arguably correct — the neighbour's size is unknown) |
+| "the one that fits fifteen panels" | `llm` → not accepted |
+| "the middle one" / "go for the biggest you can fit" | `rules`, 10 ms, accepted |
+
+So on this case's phrasings the **deterministic parser does all the useful
+work**, and the model adds latency without adding capability. That is a fact
+about a 2.3 B model, not about the integration — and it is exactly why the
+workflow was built to run correctly with `LLM_PROVIDER=rules` rather than to
+depend on a model.
 
 ---
 
@@ -313,7 +363,7 @@ message, and silently required two hand-started servers. It was replaced.
 → **91 passed in 3.9 min** from a clean build; 7 `@live` skip with a stated
 reason on a fixture stack. Full design in [`testing.md`](testing.md).
 
-### Seven real defects the new suite found
+### Eight real defects the new suite found
 
 None of these were visible to the old suite, and each was fixed at the cause.
 
@@ -325,7 +375,8 @@ None of these were visible to the old suite, and each was fixed at the cause.
 | 4 | **Muted text failed WCAG AA contrast on 39 nodes.** `#898781` measured 3.35–3.59:1 across the three surfaces it sits on; small text needs 4.5:1. | `--color-slate-muted: #6b6a65` — 5.4:1 on white, 5.0:1 on the shell, still clearly recessive. |
 | 5 | **Two scroll regions were unreachable from the keyboard.** The chat transcript and the data tables scroll, and neither took a tab stop. | `tabIndex={0}` with `role="log"` / a named `role="region"`. |
 | 6 | **The layer toolbar overflowed a phone by 16 px**, so the "Panels" toggle could not be pressed at all. | The row wraps. |
-| 7 | **`run-analysis` answered 404 for an incomplete project** — telling the client to stop retrying a resource that exists and becomes valid the moment intake finishes. `finalize` already answered 409 for the same case. | `InvalidStepTransitionError` (409). |
+| 7 | **A response could be sent before its own write was committed.** FastAPI runs a `yield` dependency's exit code *after* the response is sent, so the session commit landed after the client already had its 200. A caller that immediately issued a dependent request could read a database without its own write. | Mutating handlers commit before returning; the dependency's commit is now only a safety net. |
+| 8 | **`run-analysis` answered 404 for an incomplete project** — telling the client to stop retrying a resource that exists and becomes valid the moment intake finishes. `finalize` already answered 409 for the same case. | `InvalidStepTransitionError` (409). |
 
 ### Two improvements the suite forced
 
@@ -360,7 +411,7 @@ by a test. ⬜ means not implemented.
 | # | Requirement | Implementation | Evidence | Status |
 |---|---|---|---|---|
 | 1 | Chat-driven flow | `services/workflow.py`, `api/v1/projects.py` | `test_workflow_api.py` · E2E `workflow.spec.ts` (9) drives chat→analysis→proposal in the browser for all three sizes | ✅ |
-| 2 | Local LLM, structured output | `integrations/ollama.py` | `test_ollama.py` (17) + `test_chat.py` (22) | ✅ |
+| 2 | Local LLM, structured output | `integrations/ollama.py` | `test_ollama.py` (18) + `test_chat.py` (22) · **verified live against a pulled `qwen3.5:2b` on 2026-07-28**: schema-constrained output validates and reaches the state machine, and no engineering figure changes | ✅ |
 | 3 | Location input step | `services/workflow.py` | `test_workflow_api.py::test_location_resolves…` | ✅ |
 | 4 | Fixed property resolution | location resolver in workflow | `test_any_location_still_resolves_to_the_case_property` | ✅ |
 | 5 | Coordinate sign verified | `CaseLocationSettings` | `test_config.py::test_case_location_keeps_both_coordinates`; `docs/location-verification.md` | ✅ |
@@ -437,7 +488,7 @@ object-identical. One snapshot, no recomputation.
 | Item | Status |
 |---|---|
 | Live Google Static Maps against the real API | **Unverified** — no API key available. The code path is unit-tested with a mocked transport; it has never received a real Google response. The `@live` imagery spec exists and skips with that reason. |
-| Active Ollama with a pulled model | **Unverified** — the pull was not attempted: the host had 5.29 GB free, below the 8 GB floor agreed for this work, and pruning was not permitted. The four `@live` Ollama specs are implemented and skip with a stated reason; they never pull a model themselves. The *fallback* when Ollama is configured and unreachable **is** verified, by the degraded tier. |
+| Ollama extraction *quality* | **Measured and poor.** `qwen3.5:2b` is reachable, returns schema-valid output and never corrupts a figure, but it refused every conversational phrasing tried — the rules parser does the useful work. Recorded above; not a pass/fail gate, because it is a property of whichever model is pulled. |
 | Full WCAG 2.1 AA compliance | **Not claimed.** axe runs clean over three screens and the suite proves keyboard-only completion, heading order and text-not-colour provenance. Automated tooling catches roughly a third of WCAG failures; no screen-reader, zoom or forced-colours testing has been done. |
 | GitHub Actions CI | **Unexecuted** — no git remote exists. Commands verified locally only. |
 | 3D rendering bonus | **Not attempted** — the brief prioritises 2D, and the chosen bonus is view tracking. |

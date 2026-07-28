@@ -56,6 +56,7 @@ The bare token `6` means 6 kWp at the system-size step and 6 kWh/month at the co
   "prompt": user_text,
   "format": ParsedChatMessage.model_json_schema(),   # schema-constrained
   "stream": False,
+  "think": False,                                     # see below - not optional
   "options": {"temperature": 0}                       # deterministic
 }
 ```
@@ -146,9 +147,19 @@ pwsh scripts/pull-model.ps1                # bash scripts/pull-model.sh
 cd apps/web && npx playwright test --grep "@live"
 ```
 
-The four `@live` Ollama specs probe `/api/tags` first and **skip with a stated reason** when the daemon is unreachable or the model is not installed — never a silent pass. They assert intent extraction, graceful fallback and, most importantly, that switching parser changes *no* engineering figure.
+The `@live` Ollama specs probe `/api/tags` first and **skip with a stated reason** when the daemon is unreachable or the model is not installed — never a silent pass. They assert intent extraction, graceful fallback and, most importantly, that switching parser changes *no* engineering figure.
 
-**Status: unverified.** No real model has answered on this machine. See [`known-limitations.md`](known-limitations.md).
+### Measured, 2026-07-28
+
+`qwen3.5:2b` (2.7 GB, Q8_0, 2.3 B params) was pulled and the `@live` tier passed against it: **6 passed, 1 skipped** (Google Maps, no key). Calls take 3–8 s on CPU.
+
+**A defect only a live model could show.** `qwen3.5:2b` is a *reasoning* model. Ollama puts a thinking model's entire output — including schema-constrained JSON — into the `thinking` field and leaves `response` **empty** unless `"think": false` is sent. The client read `response`, found it empty, and fell back to the rules parser. Silently, correctly, every time: `parserSource` was `"rules"` for every message, so the whole LLM layer contributed nothing while appearing to work. No mocked test can find that — a mock returns whatever the test author puts in `response`.
+
+**What the model is not good at.** With thinking disabled at temperature 0, it refused every conversational phrasing tried: *"about eleven hundred and fifty units a month"*, *"whichever one my neighbour got"*, *"the one that fits fifteen panels"* — all returned `confirm` or `unknown`, all correctly refused by the state machine. Meanwhile the rules parser answers *"the middle one"* in 10 ms.
+
+So on this case's phrasings the deterministic parser does all the useful work and the model adds latency without adding capability. That is a property of a 2.3 B model, not of the integration, and it is exactly why the workflow was built to be correct on `LLM_PROVIDER=rules` rather than to depend on a model. A larger model would need re-measuring, not re-coding.
+
+See [`known-limitations.md`](known-limitations.md).
 
 ---
 

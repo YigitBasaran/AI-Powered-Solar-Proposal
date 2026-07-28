@@ -65,6 +65,26 @@ const deterministic = {
 };
 
 /**
+ * `@live` overrides, opt-in and one at a time.
+ *
+ * The deterministic stack stays deterministic by default. Setting
+ * `E2E_LIVE=pvgis,fx,llm` turns individual dependencies live so the tier C
+ * specs have something real to talk to; anything not named stays on fixtures,
+ * so a live run is never accidentally live in more ways than it says.
+ */
+const live = new Set((process.env.E2E_LIVE ?? "").split(",").map((s) => s.trim()));
+if (live.has("pvgis")) deterministic.PVGIS_MODE = "live";
+if (live.has("fx")) deterministic.FX_MODE = "live";
+if (live.has("llm")) {
+  deterministic.LLM_PROVIDER = "ollama";
+  deterministic.OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL ?? "http://127.0.0.1:11434";
+  deterministic.OLLAMA_MODEL = process.env.OLLAMA_MODEL ?? "qwen3.5:2b";
+  // A 2B model on CPU is slow; a live test should wait for it rather than
+  // record a timeout as a failure of the integration.
+  deterministic.OLLAMA_TIMEOUT_SECONDS = process.env.OLLAMA_TIMEOUT_SECONDS ?? "120";
+}
+
+/**
  * Tier B. PVGIS and FX are called by the *backend*, so a browser route
  * interception cannot reach them — the only honest way to test the fallbacks
  * is a stack genuinely configured to fail.

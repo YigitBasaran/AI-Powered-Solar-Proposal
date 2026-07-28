@@ -28,9 +28,16 @@ cd apps/api && ./.venv/Scripts/python -m mypy app
 cd apps/web
 npx playwright test --grep "@p0"              # the mandatory set
 npx playwright test --grep-invert "@live"     # deterministic + degraded, everything
-npx playwright test --grep "@live"            # opt-in; skips itself on a fixture stack
 npx playwright test --headed --grep "@p0"     # watch it happen
 npx playwright show-report                    # the HTML report from the last run
+
+# Tier C, opt-in. Name only the dependencies you want live; anything unnamed
+# stays on fixtures, so a live run is never live in more ways than it says.
+# Without E2E_LIVE these skip themselves, with the reason printed.
+E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"
+
+# Against a stack the suite does not own — the Docker containers, say.
+E2E_TARGET_URL=http://127.0.0.1:3000 npx playwright test --grep "@p0"
 ```
 
 Integration tests run against a **throwaway database in fixture mode** — the exact configuration a reviewer gets from a clean clone with no credentials and no model pulled.
@@ -127,7 +134,9 @@ Per-worker databases were the first preference and are not practical here: Next 
 | `@p1` | 22 | chromium |
 | `@live` | 7 | opt-in; skipped on a fixture stack, with the reason printed |
 
-`npx playwright test --grep-invert "@live"` → **91 passed**, 3.9 min, from a clean `.next` build.
+`npx playwright test --grep-invert "@live"` → **91 passed**, 4.8 min, from a clean `.next` build.
+
+`E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"` → **6 passed, 1 skipped**, 38.9 s, against real PVGIS, the real ECB feed and a locally pulled `qwen3.5:2b`. The skip is live Google Static Maps, which has no API key. That run is what caught the `think: false` defect — see [`local-ai.md`](local-ai.md).
 
 ### Architecture
 
@@ -210,6 +219,8 @@ Each of these was written after a real defect, not in anticipation of one.
 | `test_a_moved_market_rate_does_not_change_a_finalised_proposal` | Forces a new rate into the cache and asserts a finalised proposal is untouched. |
 | `test_the_unit_decides_which_number_is_the_consumption` | "I pay 0.30 per kWh and use 1150 kWh" parsed as 0.3 kWh a month, which produced a 2,930-year payback. Found by the E2E prompt-injection spec. |
 | `test_finalising_twice_returns_the_same_proposal` | A double-click issued two share links to two documents, splitting the view counts and creating two snapshots that could later disagree. Found by the E2E contract spec. |
+| `test_request_is_schema_constrained_and_deterministic` (the `think` assertion) | Ollama puts a *reasoning* model's whole output in `thinking` and leaves `response` empty. The client read `response`, found it empty, and fell back to the rules parser — silently, every time, so the LLM layer contributed nothing while appearing to work. Only a live model could show it: a mock returns whatever the test author puts in `response`. |
+| `concurrency.spec.ts` (intermittently) | FastAPI runs a `yield` dependency's exit code **after the response is sent**, so the session commit landed after the client already had its 200. A caller that immediately issued a dependent request could read a database without its own write — surfacing as an intermittent 409 from `run-analysis` for intake that had just been accepted. Mutating handlers now commit before returning. |
 | `responsive.spec.ts` (both cases) | The Konva stage renders at a default 720 px until its `ResizeObserver` fires, which stretched the grid track and pushed a phone-width page 320 px sideways — permanently, because the observer then measured the widened container. |
 
 ---
@@ -234,8 +245,8 @@ Facet production and the total are each rounded for display, so summing the part
 
 | Gap | Why |
 |---|---|
-| Live Google Static Maps | No API key. The path is unit-tested with a mocked transport; it has never received a real Google response. The `@live` imagery spec skips itself. |
-| A real Ollama model | The adapter is fully tested against a mocked transport. The `@live` Ollama specs are implemented and skip with a reason when the daemon or the model is absent. They **never pull a model** — installation is a separate, explicit step (`scripts/pull-model.ps1` / `.sh`). |
+| Live Google Static Maps | No API key. The path is unit-tested with a mocked transport; it has never received a real Google response. The `@live` imagery spec skips itself with that reason. |
+| Ollama extraction *quality* | The model itself is verified — `qwen3.5:2b` was pulled and the `@live` tier passed against it on 2026-07-28. What is *not* asserted is that it extracts well: it refused every conversational phrasing tried. That is a property of whichever model is pulled, so it is recorded in [`local-ai.md`](local-ai.md) rather than gated on. The specs **never pull a model** — installation is a separate, explicit step (`scripts/pull-model.ps1` / `.sh`). |
 | SMTP notifications | `EMAIL_MODE=console` is exercised; the SMTP branch is not. |
 | Load and performance | The concurrency specs prove correctness under simultaneous use, not throughput. PDF rendering in-request remains a known scaling limit. |
 | Visual regression | No screenshot diffing. The calibration overlay is checked by asserting the coordinate transform instead, which is what the 410 px defect actually was. |

@@ -134,7 +134,19 @@ async def init_db() -> None:
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency yielding a transactional session."""
+    """FastAPI dependency yielding a transactional session.
+
+    The commit here is a **safety net, not the guarantee**. FastAPI runs the
+    exit code of a ``yield`` dependency *after the response has been sent*, so
+    a client that receives 200 and immediately issues a dependent request can
+    beat this commit and read a database that does not yet contain its own
+    write. A handler that mutates therefore calls :func:`commit_before_response`
+    itself, before returning.
+
+    This is not a test artefact: it is exactly what a user double-clicking, or
+    a UI chaining two calls, would hit. It surfaced as an intermittent 409 from
+    ``run-analysis`` for a project whose intake had just been accepted.
+    """
     async with get_sessionmaker()() as session:
         try:
             yield session
@@ -142,6 +154,15 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def commit_before_response(session: AsyncSession) -> None:
+    """Make this request's writes durable before the client is told they are.
+
+    Call at the end of every handler that mutates. See :func:`get_session` for
+    why the dependency's own commit is too late.
+    """
+    await session.commit()
 
 
 async def dispose_engine() -> None:

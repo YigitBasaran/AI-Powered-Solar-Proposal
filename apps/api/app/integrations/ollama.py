@@ -108,6 +108,14 @@ class OllamaClient:
             "prompt": text,
             "format": ParsedChatMessage.model_json_schema(),
             "stream": False,
+            # Reasoning models put their whole output in `thinking` and leave
+            # `response` EMPTY unless thinking is switched off - including the
+            # schema-constrained JSON. `qwen3.5:2b` is one, so without this the
+            # model contributes nothing and every message silently falls back to
+            # the rules parser. The fallback hid it perfectly; only a live run
+            # against a real model could show it. Ollama ignores the field for
+            # models that do not think.
+            "think": False,
             "options": {"temperature": 0},
         }
         data = await self._post("/api/generate", payload)
@@ -134,6 +142,10 @@ class OllamaClient:
             "system": EXPLANATION_PROMPT,
             "prompt": json.dumps(values, sort_keys=True),
             "stream": False,
+            # Same reason as in `parse_message`: a reasoning model returns an
+            # empty `response` unless thinking is off, and an empty summary
+            # would silently become the deterministic one.
+            "think": False,
             "options": {"temperature": 0},
         }
         data = await self._post("/api/generate", payload)

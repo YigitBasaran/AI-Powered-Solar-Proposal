@@ -34,9 +34,18 @@ ALLOWED_SIZES = (3.6, 6.0, 9.6)
 def _sanitise(parsed: ParsedChatMessage, step: ProjectStep) -> ParsedChatMessage:
     """Strip anything the model had no business supplying at this step."""
     if step is ProjectStep.LOCATION and parsed.intent is ChatIntent.PROVIDE_LOCATION:
-        if parsed.latitude is None or parsed.longitude is None:
+        # A written place name carries no coordinates, and that is fine: the
+        # workflow always analyses the verified case coordinate and never reads
+        # these fields. What must not survive is a *coordinate* that is not a
+        # coordinate, whether a model or a regex produced it.
+        has_lat = parsed.latitude is not None
+        has_lon = parsed.longitude is not None
+        if has_lat != has_lon:
             return ParsedChatMessage(intent=ChatIntent.UNKNOWN, confidence=0.0)
-        if not (-90.0 <= parsed.latitude <= 90.0 and -180.0 <= parsed.longitude <= 180.0):
+        if has_lat and not (
+            -90.0 <= parsed.latitude <= 90.0  # type: ignore[operator]
+            and -180.0 <= parsed.longitude <= 180.0  # type: ignore[operator]
+        ):
             return ParsedChatMessage(intent=ChatIntent.UNKNOWN, confidence=0.0)
 
     if step is ProjectStep.CONSUMPTION and parsed.intent is ChatIntent.PROVIDE_CONSUMPTION:

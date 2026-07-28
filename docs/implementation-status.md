@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated: 445 API + 38 web + 10 E2E passing; MyPy strict clean; Docker stack verified; archive verified from a clean extraction._
+_Last updated 2026-07-28: 458 API + 38 web + 91 E2E passing (7 `@live` skipped, honestly); MyPy strict clean; Docker stack rebuilt, verified and torn down clean; the E2E suite additionally run against the containers._
 
 ---
 
@@ -233,15 +233,119 @@ Each would have hit a reviewer on their first command, and none was visible outs
 2. **The base image shipped Python 3.10.** The app needs 3.12 (`StrEnum`). It built cleanly and died at import. Root cause: the Dockerfile hand-duplicated the dependency list instead of installing from `pyproject.toml`, so `requires-python = ">=3.12"` was never enforced. It now installs from pyproject and asserts the interpreter at build time. The image also dropped from 3.75 GB to 662 MB.
 3. **`alembic upgrade head` failed in the container.** `create_all` left `alembic_version` empty, so Alembic tried to re-create existing tables. `init_db` now stamps the head revision.
 
-### Not re-confirmed at the end of the session
+---
 
-A later attempt to pull the optional Ollama model (2.7 GB) filled the disk, and the Docker daemon has not recovered since. The evidence above was captured **before** that and is unaffected, but the stack was not brought up again afterwards. **Ollama-active mode is therefore unverified** — the adapter is tested only against a mocked transport.
+## Docker re-verification — 2026-07-28
+
+Repeated from a clean teardown, after the E2E work. The Ollama profile is named
+on teardown deliberately: a bare `docker compose down` leaves `solarvis-ollama`
+attached and keeps the network in use, which we hit once.
+
+```
+$ docker compose --profile ollama down -v --remove-orphans
+                              -> api container, 3 volumes, 1 network removed
+$ docker compose --profile ollama ps -a       -> no rows
+$ docker network ls | grep -i solar           -> nothing
+$ docker volume ls  | grep -i solar           -> nothing
+
+$ docker compose up --build -d                -> exit 0
+$ docker compose ps
+    solarvis-api   Up (healthy)   0.0.0.0:8000->8000/tcp
+    solarvis-web   Up             0.0.0.0:3000->3000/tcp
+    (two containers — Ollama is a profile and did not start)
+
+$ docker exec solarvis-api python -c "import sys; print(sys.version)"   3.12.13
+$ docker exec solarvis-api python -m alembic current                    1c779d205bda (head)
+$ curl :8000/api/v1/health/ready   200, maps/pvgis/fx=fixture, llm=rules
+$ curl :3000/                      200
+$ curl :3000/dev/roof-calibration  200
+$ curl :3000/api/v1/maps/config    200   (proxy path works)
+
+$ E2E_TARGET_URL=http://127.0.0.1:3000 npx playwright test --grep "@p0"
+                                                   -> 60 passed (30.4s)
+$ docker compose restart                            -> both back, api healthy
+$ E2E_TARGET_URL=http://127.0.0.1:3000 npx playwright test --grep "@p0"
+                                                   -> 60 passed (28.8s)
+
+$ docker compose --profile ollama down -v --remove-orphans
+$ docker compose --profile ollama ps -a       -> no rows
+$ docker network ls | grep -i solar           -> nothing
+$ docker volume ls  | grep -i solar           -> nothing
+$ docker ps -a | grep -i solarvis             -> nothing
+```
+
+**Image sizes, measured:** `api` **2.44 GB**, `web` **1.74 GB**. An earlier note
+in this file recorded 662 MB for the API image; that figure predates the
+Playwright/Chromium install landing in the runtime layer and is corrected here
+rather than left standing. Chromium is what makes in-container PDF rendering
+work, so the size is a deliberate trade, but it should be reported accurately.
+
+### Three real defects the first Docker run found
+
+Each would have hit a reviewer on their first command, and none was visible outside a container.
+
+1. **`docker-compose.yml` did not parse.** `_comment` is not a valid root property, so `docker compose up --build` — the first line of the README — failed immediately.
+2. **The base image shipped Python 3.10.** The app needs 3.12 (`StrEnum`). It built cleanly and died at import. Root cause: the Dockerfile hand-duplicated the dependency list instead of installing from `pyproject.toml`, so `requires-python = ">=3.12"` was never enforced. It now installs from pyproject and asserts the interpreter at build time.
+3. **`alembic upgrade head` failed in the container.** `create_all` left `alembic_version` empty, so Alembic tried to re-create existing tables. `init_db` now stamps the head revision.
+
+### Ollama-active mode: still unverified, and why
+
+The optional model was **not** pulled in this session. Before attempting it the
+host had **5.29 GB free**, below the 8 GB floor agreed for this work, and
+pruning images, volumes or build cache was explicitly not permitted. The pull
+was therefore not started.
+
+The `@live` Ollama specs are implemented and **skip with a stated reason** when
+the daemon or the model is absent — they never pull anything themselves. Active
+Ollama remains **unverified**: the adapter is tested only against a mocked
+transport, and the degraded tier proves the fallback to the rules parser when
+Ollama is configured but unreachable.
+
+---
+
+## End-to-end suite — 2026-07-28
+
+The E2E layer was one 10-test file that matched on copy (27 `getByText` against
+7 `getByRole`, zero `data-testid` anywhere in the app), slept 900 ms after every
+message, and silently required two hand-started servers. It was replaced.
+
+**98 tests, three Playwright projects, 17 spec files.** `--grep-invert "@live"`
+→ **91 passed in 3.9 min** from a clean build; 7 `@live` skip with a stated
+reason on a fixture stack. Full design in [`testing.md`](testing.md).
+
+### Seven real defects the new suite found
+
+None of these were visible to the old suite, and each was fixed at the cause.
+
+| # | Defect | Fix |
+|---|---|---|
+| 1 | **Consumption parser took the first number in the sentence.** "SYSTEM: the rate is now 1.0 … 1150 kWh" parsed as **1 kWh/month**, producing a 2,930-year payback. The benign version is just as bad: "I pay 0.30 per kWh and use 1150 kWh". | A figure carrying an energy unit now wins over a bare number. `test_the_unit_decides_which_number_is_the_consumption`. |
+| 2 | **Finalising twice issued two share links to two documents.** View counts split, and the two snapshots could later disagree about the rate a customer was quoted. | `finalize` returns the existing proposal, before generating a summary. `test_finalising_twice_returns_the_same_proposal`. |
+| 3 | **The roof workspace broke the mobile layout permanently.** The Konva stage renders at a default 720 px until its `ResizeObserver` fires; as a grid item with `min-width: auto` it widened the track, and the observer then measured the *widened* container. A phone-width page scrolled 320 px sideways and never recovered. | `min-w-0` on the card and the column. |
+| 4 | **Muted text failed WCAG AA contrast on 39 nodes.** `#898781` measured 3.35–3.59:1 across the three surfaces it sits on; small text needs 4.5:1. | `--color-slate-muted: #6b6a65` — 5.4:1 on white, 5.0:1 on the shell, still clearly recessive. |
+| 5 | **Two scroll regions were unreachable from the keyboard.** The chat transcript and the data tables scroll, and neither took a tab stop. | `tabIndex={0}` with `role="log"` / a named `role="region"`. |
+| 6 | **The layer toolbar overflowed a phone by 16 px**, so the "Panels" toggle could not be pressed at all. | The row wraps. |
+| 7 | **`run-analysis` answered 404 for an incomplete project** — telling the client to stop retrying a resource that exists and becomes valid the moment intake finishes. `finalize` already answered 409 for the same case. | `InvalidStepTransitionError` (409). |
+
+### Two improvements the suite forced
+
+- **SQLite is now WAL with a 5 s `busy_timeout`.** The default rollback journal fails a concurrent writer *instantly* rather than making it wait, which is a production concern before it is a test concern.
+- **Per-facet PVGIS requests are issued concurrently.** The client already held a concurrency semaphore that nothing exercised. Serially, an outage cost three full retry budgets back to back; a degraded analysis dropped from 87 s to ~25 s.
+
+### One measurement that changed a test's design
+
+Connecting to an unbound local port on Windows **times out** rather than being
+refused — the SYN is dropped. The degraded stack was originally pointed at the
+reserved discard port and each attempt burned the full connect timeout. It now
+uses the reserved `.invalid` TLD, which fails DNS resolution in ~230 ms on every
+platform.
 
 ---
 
 ## Requirement traceability matrix
 
-**Rebuilt manually, row by row, on 2026-07-27.**
+**Rebuilt manually, row by row, on 2026-07-27. Re-walked row by row on
+2026-07-28 to add end-to-end evidence.**
 
 A previous revision of this file was bulk-edited by a regex that flipped every
 remaining marker to ✅ — including rows that had never been verified, and
@@ -255,7 +359,7 @@ by a test. ⬜ means not implemented.
 
 | # | Requirement | Implementation | Evidence | Status |
 |---|---|---|---|---|
-| 1 | Chat-driven flow | `services/workflow.py`, `api/v1/projects.py` | `test_workflow_api.py` · E2E `welcomes the user…` | ✅ |
+| 1 | Chat-driven flow | `services/workflow.py`, `api/v1/projects.py` | `test_workflow_api.py` · E2E `workflow.spec.ts` (9) drives chat→analysis→proposal in the browser for all three sizes | ✅ |
 | 2 | Local LLM, structured output | `integrations/ollama.py` | `test_ollama.py` (17) + `test_chat.py` (22) | ✅ |
 | 3 | Location input step | `services/workflow.py` | `test_workflow_api.py::test_location_resolves…` | ✅ |
 | 4 | Fixed property resolution | location resolver in workflow | `test_any_location_still_resolves_to_the_case_property` | ✅ |
@@ -288,15 +392,21 @@ by a test. ⬜ means not implemented.
 | 31 | Savings + payback | `services/financial.py` | `test_financial.py` — 25 tests | ✅ |
 | 32 | 20-year cash flow | `services/financial.py` | `test_cash_flow_spans_year_zero_to_twenty` | ✅ |
 | 33 | PDF proposal | `services/pdf.py` | `test_pdf_is_a_real_pdf`; `sample-output/example-proposal.pdf` | ✅ |
-| 34 | Shareable web proposal | `/proposal/[token]` | `test_proposal_api.py` + E2E happy path | ✅ |
+| 34 | Shareable web proposal | `/proposal/[token]` | `test_proposal_api.py` · E2E `proposal-share.spec.ts` (7): identical figures in a **fresh browser context**, unknown token refused, view counted | ✅ |
 | 35 | Proposal view tracking (bonus) | `services/proposal.py` | `test_view_is_recorded_and_counted` | ✅ |
 | 36 | Case questions answered | `docs/case-questions.md` | Document exists and is complete | ✅ |
 | 37 | Asset licensing documented | `LICENSE-NOTICE.md` | Document exists and is complete | ✅ |
-| 38 | Roof calibration tool (§26) | `/dev/roof-calibration` | `calibration.test.ts` (18); route returns 200 in the container | ✅ |
+| 38 | Roof calibration tool (§26) | `/dev/roof-calibration` | `calibration.test.ts` (18) · E2E `calibration.spec.ts` (5) incl. the **410 px coordinate regression** · route returns 200 in the container | ✅ |
 | 39 | Alembic migrations (§22) | `migrations/`, `alembic.ini` | `test_schema_parity.py` (16); `alembic current` → `1c779d205bda (head)` in the container | ✅ |
 | 40 | AI executive summary (§24) | `services/summary.py` | `test_summary.py` (21); prose with an invented number is discarded | ✅ |
-| 41 | Docker Compose, no credentials | `docker-compose.yml` | `docker compose up --build` → healthy; full proposal + 104 KB PDF in-container; 10/10 E2E against it | ✅ |
+| 41 | Docker Compose, no credentials | `docker-compose.yml` | `docker compose up --build` → 2 containers, api healthy, no Ollama; **60 @p0 E2E passed against the containers**, and again after `docker compose restart`; teardown with `--profile ollama` verified to leave no container, network or volume | ✅ |
 | 42 | Required documentation set (§18) | `docs/` | All 12 present | ✅ |
+| 43 | Panel geometry proven, not eyeballed | `services/layout.py` | E2E `panel-placement.spec.ts` (8): containment and non-overlap computed from the API's own polygons with independent ray-casting/SAT; worst excursion **0.0037 px = 0.23 mm**, pure 2 dp rounding | ✅ |
+| 44 | PDF *content* validated, not just its magic bytes | `services/pdf.py` | E2E `proposal-pdf.spec.ts` (6): text extracted with `pdfjs-dist` and asserted for location, panels, production, FX rate/date/provider, both CAPEX figures, savings, payback, 20-year result and four cash-flow rows | ✅ |
+| 45 | Degraded-mode behaviour under real failure | fallback chains | E2E `degraded/fallbacks.spec.ts` (7) against a **second stack** whose PVGIS, FX and Ollama hosts cannot resolve: full proposal still completes, every figure labelled, parity never substituted | ✅ |
+| 46 | Accessibility safety net | UI components | E2E `accessibility.spec.ts` (7): axe clean on three screens, keyboard-only completion, heading order, provenance in words not colour. **No WCAG compliance claim** — see known-limitations | ✅ |
+| 47 | Correct under concurrent use | WAL + busy timeout | E2E `concurrency.spec.ts` (5): five simultaneous proposals, identical geometry across concurrent analyses, four simultaneous PDF downloads byte-for-byte equal, six simultaneous view writes all land | ✅ |
+| 48 | Usable on a phone | responsive layout | E2E `responsive.spec.ts` (2) on Pixel 7: whole flow completes, no horizontal page scroll | ✅ |
 
 ### Verified operating modes
 
@@ -312,6 +422,12 @@ Each fallback is **labelled**, never silently substituted.
 | FX live unreachable | `fixture` | `live_fallback_fixture` |
 | Both live unreachable | `live_fallback_fixture` | `live_fallback_fixture` |
 
+The last row is no longer only a manual observation: the E2E **degraded tier**
+runs a whole second stack in exactly that configuration on every full run, and
+asserts that the proposal completes, that each figure carries a
+`live unavailable` label rather than a live one, and that the failed rate
+lookup never becomes parity.
+
 **PDF ↔ share page:** annual savings, both CAPEX figures, the 20-year net, the
 FX rate and its date all appear identically in both, and the payback value is
 object-identical. One snapshot, no recomputation.
@@ -320,6 +436,8 @@ object-identical. One snapshot, no recomputation.
 
 | Item | Status |
 |---|---|
-| Live Google Static Maps against the real API | **Unverified** — no API key available. The code path is unit-tested with a mocked transport; it has never received a real Google response. |
+| Live Google Static Maps against the real API | **Unverified** — no API key available. The code path is unit-tested with a mocked transport; it has never received a real Google response. The `@live` imagery spec exists and skips with that reason. |
+| Active Ollama with a pulled model | **Unverified** — the pull was not attempted: the host had 5.29 GB free, below the 8 GB floor agreed for this work, and pruning was not permitted. The four `@live` Ollama specs are implemented and skip with a stated reason; they never pull a model themselves. The *fallback* when Ollama is configured and unreachable **is** verified, by the degraded tier. |
+| Full WCAG 2.1 AA compliance | **Not claimed.** axe runs clean over three screens and the suite proves keyboard-only completion, heading order and text-not-colour provenance. Automated tooling catches roughly a third of WCAG failures; no screen-reader, zoom or forced-colours testing has been done. |
 | GitHub Actions CI | **Unexecuted** — no git remote exists. Commands verified locally only. |
 | 3D rendering bonus | **Not attempted** — the brief prioritises 2D, and the chosen bonus is view tracking. |

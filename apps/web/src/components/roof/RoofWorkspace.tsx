@@ -66,11 +66,15 @@ export function RoofWorkspace({
   return (
     <Card className="overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-slate-line px-3.5 py-2.5">
-        <div className="flex items-center gap-1.5">
+        {/* Wraps rather than overflowing: the row is 428 px wide and a phone
+            is 412, so without this the last toggle is off-screen and cannot be
+            pressed at all. */}
+        <div className="flex flex-wrap items-center gap-1.5">
           {TOGGLE_META.map(({ key, label, icon: Icon }) => (
             <button
               key={key}
               type="button"
+              data-testid={`layer-toggle-${key}`}
               onClick={() => toggle(key)}
               aria-pressed={toggles[key]}
               className={cn(
@@ -87,13 +91,14 @@ export function RoofWorkspace({
         </div>
         {mapConfig ? (
           <SourceBadge
+            testId="imagery-source-badge"
             tone={mapConfig.isLive ? "live" : "fixture"}
             label={mapConfig.isLive ? "Live imagery" : "Demo imagery"}
           />
         ) : null}
       </div>
 
-      <div className="relative">
+      <div className="relative" data-testid="roof-stage">
         <RoofStage
           roof={roof}
           analysis={analysis}
@@ -104,7 +109,12 @@ export function RoofWorkspace({
           onStageReady={onStageReady}
         />
         {busy ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-[#0a1421]/70 backdrop-blur-[1px]">
+          <div
+            role="status"
+            aria-live="polite"
+            data-testid="analysis-busy"
+            className="absolute inset-0 flex items-center justify-center bg-[#0a1421]/70 backdrop-blur-[1px]"
+          >
             <div className="flex items-center gap-2 rounded-lg bg-surface px-3.5 py-2 text-[13px] shadow">
               <Loader2 className="size-4 animate-spin text-navy-700" aria-hidden />
               {busy}
@@ -132,6 +142,9 @@ export function RoofWorkspace({
                 <button
                   key={facet.id}
                   type="button"
+                  data-testid={`facet-card-${facet.id}`}
+                  data-panel-count={count}
+                  aria-pressed={active}
                   onClick={() => setSelectedFacetId(active ? null : facet.id)}
                   className={cn(
                     "rounded-lg border px-2.5 py-2 text-left transition-colors",

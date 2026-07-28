@@ -75,6 +75,15 @@ COORD_PAIR = re.compile(
 # captured deliberately: dropping it would turn "-500" into a valid 500 kWh.
 NUMERIC = re.compile(r"(?P<value>[-+]?\d{1,3}(?:[, ]\d{3})+(?:\.\d+)?|[-+]?\d+(?:\.\d+)?)")
 
+# An energy unit directly after a number. A figure carrying one is answering
+# the question that was asked; a bare number elsewhere in the sentence is not.
+ENERGY_UNIT_AFTER_NUMBER = re.compile(
+    r"^\s*(?:kwh|kw h|kw-h|kilowatt[\s-]?hours?|units?)\b"
+)
+
+# Any letter, used only to tell a written place name from punctuation or emoji.
+PLACE_NAME_LETTERS = re.compile(r"[^\W\d_]")
+
 CONFIRM_WORDS = re.compile(
     r"\b(yes|yeah|yep|sure|ok|okay|correct|confirm|confirmed|go ahead|proceed|"
     r"sounds good|that's right|thats right|continue)\b"
@@ -112,11 +121,19 @@ def _word_number(text: str) -> int | None:
 
 
 def parse_location(text: str) -> ParsedChatMessage | None:
-    """Extract a coordinate pair if one is present and in range.
+    """Recognise a location: a coordinate pair, or a written place.
 
     A location the user types is preserved verbatim by the caller; this only
     reports what was recognised. Resolution to the fixed case property happens
     in the workflow, not here.
+
+    A place *name* is accepted with no coordinates attached. Geocoding is out
+    of scope and the analysis always runs at the verified case coordinate, so
+    demanding decimal degrees from someone who typed their street address would
+    be friction with nothing behind it - and it would contradict the assumption
+    the proposal itself prints, that any entered location resolves to the case
+    property. What is refused is input with neither coordinates nor words,
+    because that is not an answer to the question at all.
     """
     for match in COORD_PAIR.finditer(text):
         lat = float(match.group("lat"))
@@ -128,6 +145,12 @@ def parse_location(text: str) -> ParsedChatMessage | None:
                 longitude=lon,
                 confidence=1.0,
             )
+
+    if len(PLACE_NAME_LETTERS.findall(text)) >= 3:
+        # Confidence is lower than a coordinate pair because nothing here was
+        # verified; it is recorded as typed and used for nothing else.
+        return ParsedChatMessage(intent=ChatIntent.PROVIDE_LOCATION, confidence=0.6)
+
     return None
 
 
@@ -137,11 +160,26 @@ def parse_consumption(text: str) -> ParsedChatMessage | None:
     Handles ``1150``, ``1,150``, ``1150 kWh``, ``around 1150 per month``. An
     annual figure is converted, because a user answering "13800 a year" is
     giving a valid answer to a question about monthly use.
+
+    When several numbers appear, the one carrying an energy unit wins. Taking
+    the first number instead reads "I pay 0.30 per kWh and use 1150 kWh" as
+    0.3 kWh a month - and makes the parser trivially steerable by any sentence
+    that mentions a number before the real answer.
     """
     normalised = _normalise(text)
-    match = NUMERIC.search(normalised)
-    if match is None:
+    candidates = list(NUMERIC.finditer(normalised))
+    if not candidates:
         return None
+
+    unit_qualified = [
+        m
+        for m in candidates
+        if ENERGY_UNIT_AFTER_NUMBER.match(normalised[m.end() : m.end() + 20])
+    ]
+    # A unit-qualified figure that turns out to be invalid (say "-500 kWh") is
+    # still the user's answer, so it is refused rather than skipped in favour
+    # of some other number in the sentence.
+    match = unit_qualified[0] if unit_qualified else candidates[0]
 
     value = _to_float(match.group("value"))
     if value <= 0 or value > 1_000_000:

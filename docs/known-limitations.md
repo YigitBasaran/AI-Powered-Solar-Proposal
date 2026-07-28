@@ -16,6 +16,7 @@ These are honestly unproven. Nothing elsewhere in the repository claims otherwis
 | **GitHub Actions CI** | No git remote exists, so `.github/workflows/ci.yml` has never executed. Its commands are verified locally. There is no green badge and none is implied. |
 | **Live Ollama with a pulled model** | The adapter is fully tested against a mocked transport, including schema validation, timeout, invalid JSON and fallback. An attempt to pull `qwen3.5:2b` (2.7 GB) exhausted the disk and was abandoned, so no real model has ever answered. Whether it produces *good* extractions is unmeasured — only that whatever it returns is validated before use. |
 | **SMTP notifications** | `EMAIL_MODE=console` is exercised; the SMTP branch is configuration-dependent and untested. |
+| **Full WCAG 2.1 AA compliance** | `@axe-core/playwright` runs clean over three screens, and the suite additionally proves keyboard-only completion, heading order and text-not-colour provenance. Automated tooling catches roughly a third of WCAG failures; no screen-reader, zoom or forced-colours testing has been done. **No compliance claim is made.** |
 
 ## Not attempted
 
@@ -80,6 +81,9 @@ Chromium is launched inside the request that asks for the PDF. Fine at this scal
 
 ### Caches are process-local
 The PVGIS cache lives in process memory and is lost on restart. The FX cache is database-backed and survives. Fine for one instance; a second replica would duplicate PVGIS calls.
+
+### A dependency outage still makes the customer wait
+With PVGIS and the FX provider both unreachable, an analysis takes about **25 seconds** before the labelled fallbacks are used — measured on the E2E degraded stack. Per-facet PVGIS requests are issued concurrently and each call has a bounded timeout and retry budget, but the budgets for the two services are spent in series and nothing is returned early. A production system would want a circuit breaker so that the *second* customer during an outage does not pay the same cost as the first.
 
 ### Share links do not expire
 Tokens carry 192 bits of entropy and are unguessable, but there is no expiry, no revocation and no rate limiting on the public route. A leaked link is permanent.

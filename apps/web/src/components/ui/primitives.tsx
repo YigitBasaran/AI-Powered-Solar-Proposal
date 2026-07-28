@@ -17,6 +17,12 @@ export function Card({
     <div
       className={cn(
         "rounded-xl border border-slate-line bg-surface shadow-[0_1px_2px_rgba(11,11,11,0.04)]",
+        // A grid or flex item defaults to `min-width: auto`, so wide content -
+        // a scrollable table, or a canvas that renders at its default width
+        // before the ResizeObserver measures it - stretches the track instead
+        // of scrolling inside. On a phone that pushed the whole page 320 px
+        // wider than the screen.
+        "min-w-0",
         className,
       )}
     >
@@ -51,10 +57,12 @@ export function SourceBadge({
   tone,
   label,
   className,
+  testId,
 }: {
   tone: "live" | "cache" | "fixture";
   label: string;
   className?: string;
+  testId?: string;
 }) {
   const tones = {
     live: "bg-[#e8f6ec] text-good-700 border-[#bfe4c8]",
@@ -64,6 +72,10 @@ export function SourceBadge({
 
   return (
     <span
+      data-testid={testId}
+      // Machine-readable so a test never has to infer provenance from colour -
+      // which is also why the human-visible label is text, not a colour alone.
+      data-tone={tone}
       className={cn(
         "inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium",
         tones[tone],
@@ -87,21 +99,35 @@ export function Kpi({
   value,
   note,
   emphasis,
+  testId,
 }: {
   label: string;
   value: ReactNode;
   note?: ReactNode;
   emphasis?: boolean;
+  /** A KPI is a styled number with no semantic role of its own, so tests need
+   *  a stable hook to read the value without matching on formatted text. */
+  testId?: string;
 }) {
   return (
-    <Card className={cn("p-3.5", emphasis && "border-navy-700/25 bg-[#f7fafd]")}>
+    <Card className={cn("p-3.5", emphasis && "border-navy-700/25 bg-[#f7fafd]")} >
       <div className="text-[10.5px] font-medium uppercase tracking-wide text-slate-muted">
         {label}
       </div>
-      <div className="mt-1 text-[22px] font-semibold leading-tight tracking-tight text-slate-ink">
+      <div
+        data-testid={testId}
+        className="mt-1 text-[22px] font-semibold leading-tight tracking-tight text-slate-ink"
+      >
         {value}
       </div>
-      {note ? <div className="mt-0.5 text-[11.5px] text-slate-muted">{note}</div> : null}
+      {note ? (
+        <div
+          data-testid={testId ? `${testId}-note` : undefined}
+          className="mt-0.5 text-[11.5px] text-slate-muted"
+        >
+          {note}
+        </div>
+      ) : null}
     </Card>
   );
 }
@@ -110,10 +136,12 @@ export function Callout({
   tone = "warning",
   title,
   children,
+  testId,
 }: {
   tone?: "warning" | "info";
   title?: string;
   children: ReactNode;
+  testId?: string;
 }) {
   return (
     <div
@@ -124,6 +152,7 @@ export function Callout({
           : "border-navy-600 bg-[#eef4fa] text-navy-900",
       )}
       role={tone === "warning" ? "alert" : undefined}
+      data-testid={testId}
     >
       {title ? <strong className="font-semibold">{title} </strong> : null}
       {children}
@@ -139,6 +168,7 @@ export function Button({
   type = "button",
   className,
   title,
+  testId,
 }: {
   children: ReactNode;
   onClick?: () => void;
@@ -147,6 +177,7 @@ export function Button({
   type?: "button" | "submit";
   className?: string;
   title?: string;
+  testId?: string;
 }) {
   const variants = {
     primary: "bg-navy-900 text-white hover:bg-navy-800 disabled:bg-slate-rule",
@@ -161,6 +192,7 @@ export function Button({
       onClick={onClick}
       disabled={disabled}
       title={title}
+      data-testid={testId}
       className={cn(
         "inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-[13px] font-medium",
         "transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-navy-700",
@@ -191,13 +223,28 @@ export function DataTable({
   headers,
   children,
   className,
+  label,
 }: {
   headers: { label: string; align?: "left" | "right" }[];
   children: ReactNode;
   className?: string;
+  /** Names the scroll region for assistive technology. */
+  label: string;
 }) {
   return (
-    <div className={cn("overflow-x-auto", className)}>
+    // The table is wider than a phone and scrolls sideways. A scroll container
+    // with no tab stop is unreachable from the keyboard, so it takes one — and
+    // a named region, so the tab stop announces what it is rather than landing
+    // the user in an anonymous box.
+    <div
+      className={cn(
+        "overflow-x-auto focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-navy-700",
+        className,
+      )}
+      tabIndex={0}
+      role="region"
+      aria-label={label}
+    >
       <table className="w-full min-w-[420px] border-collapse text-[12.5px]">
         <thead>
           <tr>

@@ -131,7 +131,12 @@ export function CalibrationCanvas({
   }, []);
 
   return (
-    <div ref={containerRef} className="relative w-full" style={{ height }}>
+    <div
+      ref={containerRef}
+      data-testid="calibration-canvas"
+      className="relative w-full"
+      style={{ height }}
+    >
       <Stage
         ref={stageRef}
         width={width}

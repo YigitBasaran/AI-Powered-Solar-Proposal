@@ -57,6 +57,13 @@ async def finalize(
     if project is None:
         raise NotFoundError(f"Project {project_id} does not exist.")
 
+    # An already-finalised project returns its existing proposal, before any
+    # work is done. Regenerating the summary would spend an LLM call on a
+    # document that is not going to change.
+    existing = await proposal_service.existing_proposal(session, project)
+    if existing is not None:
+        return _finalize_payload(existing, settings, summary_source="existing")
+
     # Readiness first: generating a summary from a missing analysis would raise
     # an unhelpful 500 where the caller deserves a clear 409.
     snapshot = proposal_service.validate_ready(project)
@@ -69,6 +76,12 @@ async def finalize(
         session, project, settings=settings, ai_summary=summary
     )
 
+    return _finalize_payload(proposal, settings, summary_source=summary_source)
+
+
+def _finalize_payload(
+    proposal: proposal_service.Proposal, settings: Settings, *, summary_source: str
+) -> dict[str, Any]:
     return {
         "proposalId": proposal.id,
         "summarySource": summary_source,

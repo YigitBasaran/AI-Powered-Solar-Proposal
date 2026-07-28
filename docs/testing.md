@@ -15,18 +15,150 @@ cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"
 # API — the live-marked set (hits PVGIS and Frankfurter for real)
 cd apps/api && ./.venv/Scripts/python -m pytest -q -m live
 
-# Web
+# Web unit
 cd apps/web && npm run typecheck && npm run test && npm run build
-
-# End-to-end (needs both servers running)
-cd apps/web && npm run test:e2e
 
 # Static analysis
 cd apps/api && ./.venv/Scripts/python -m ruff check app tests
 cd apps/api && ./.venv/Scripts/python -m mypy app
 ```
 
+```bash
+# End-to-end. No servers to start first — the suite starts its own.
+cd apps/web
+npx playwright test --grep "@p0"              # the mandatory set
+npx playwright test --grep-invert "@live"     # deterministic + degraded, everything
+npx playwright test --grep "@live"            # opt-in; skips itself on a fixture stack
+npx playwright test --headed --grep "@p0"     # watch it happen
+npx playwright show-report                    # the HTML report from the last run
+```
+
 Integration tests run against a **throwaway database in fixture mode** — the exact configuration a reviewer gets from a clean clone with no credentials and no model pulled.
+
+---
+
+## The end-to-end suite
+
+### It owns its servers
+
+There is no step where a human has to remember to start something first. Playwright's `webServer` starts **two complete stacks**, each with its own temporary SQLite database created empty at start-up, and stops them at the end:
+
+| Tier | Web | API | Configuration |
+|---|---|---|---|
+| **A — deterministic** | `:3100` | `:8100` | `MAPS_MODE`/`PVGIS_MODE`/`FX_MODE=fixture`, `LLM_PROVIDER=rules` |
+| **B — degraded** | `:3101` | `:8101` | PVGIS, FX and Ollama pointed at hosts that cannot resolve |
+| **C — live** | `:3100` | `:8100` | `@live`; skips itself unless the stack really is live |
+
+The ports are deliberately clear of 3000/8000 so a developer's running dev server is neither disturbed nor accidentally tested against, and `reuseExistingServer` is `false` everywhere. Each launcher refuses to start if its port is occupied rather than attaching to a stranger's process — a degraded stack silently answered by a healthy one would produce green tests that prove nothing.
+
+Turn tier B off while iterating with `E2E_DEGRADED=0` (it costs a second Next build), and reuse an existing build with `E2E_SKIP_BUILD=1`. Neither is used in a verification run.
+
+### How failure is simulated
+
+**PVGIS and FX are called by the backend, not the browser.** Playwright's route interception cannot reach them, so no amount of browser-level mocking would test those fallbacks. Tier B is a second stack genuinely configured to fail: `PVGIS_BASE_URL=http://pvgis.invalid/...`, `FX_BASE_URL=http://fx.invalid/...`, `OLLAMA_BASE_URL=http://ollama.invalid`.
+
+The `.invalid` TLD is reserved and never resolves, so every attempt fails in ~200 ms on every OS. An unbound local port was the first choice and was wrong: Windows drops the SYN rather than refusing it, so each attempt burned the full connect timeout and a single analysis took 87 seconds.
+
+Browser-level interception is used **only** for genuinely browser-originated requests — the satellite raster, and one deliberate 500 on the chat endpoint to prove the error banner appears. Golden-path tests never intercept internal APIs.
+
+A degraded analysis takes roughly 25 seconds because every PVGIS and FX call burns its full retry budget before falling back. The degraded project therefore has longer timeouts than the others. Those are longer waits for a slower stack, not looser assertions: every expectation is identical.
+
+### Golden values are independent of the code under test
+
+`e2e/fixtures/expected-values.ts` holds a reviewed literal per system size. The suite never imports a production function to build an expectation, never reads the current analysis response and asserts it equals itself, and never recomputes a figure with the formula the backend uses. Any of those would make the test agree with the implementation *by construction*.
+
+<a id="golden-value-derivation"></a>
+
+#### Golden value derivation
+
+Reproducible with a calculator from the committed fixtures. `E_y` is `outputs.totals.fixed.E_y` in `fixtures/pvgis/pvcalc*.json`; the rate is `fixtures/exchange-rates/usd-eur-ecb.json`.
+
+| Facet | PVGIS aspect | 1 kWp yield |
+|---|---:|---:|
+| North | −169.38° | 1678.66 kWh |
+| West | 100.62° | 1515.28 kWh |
+| East | −79.38° | 1367.24 kWh |
+| South | 10.63° | 1119.82 kWh |
+
+```
+consumption = 1150 × 12                = 13 800 kWh
+capex(EUR)  = round(10 000 × 0.87897)  = €8 789.70
+covered     = min(production, consumption)
+savings     = round(covered × 0.25)    to cents
+payback     = capex(EUR) / savings
+20-year net = −capex(EUR) + 20 × savings
+```
+
+| Size | Panels | Allocation | Production | Coverage | Savings | Payback | 20-year |
+|---|---:|---|---:|---:|---:|---:|---:|
+| 3.6 kWp | 9 | N 9 | 9 × 0.4 × 1678.66 = **6043.18** | 43.79 % | €1510.79 | 5.82 yr | €21 426.10 |
+| 6 kWp | 15 | N 9, W 3, E 3 | 3.6×1678.66 + 1.2×1515.28 + 1.2×1367.24 = **9502.20** | 68.86 % | €2375.55 | 3.70 yr | €38 721.30 |
+| 9.6 kWp | 24 | N 9, S 9, W 3, E 3 | + 3.6×1119.82 = **13 533.55** | 98.07 % | €3383.39 | 2.60 yr | €58 878.10 |
+
+The 6 kWp row is the load-bearing one. North and south are the same size and each hold nine panels, yet the last six go on the two small east/west triangles and **south stays empty** — because at −34° latitude west (1515) and east (1367) out-produce south (1120). An allocator ranking by area would fill south, and that assertion would catch it.
+
+Alongside the goldens sit invariants that are safe to compute because each restates a *rule* rather than the calculation: `capacity == panels × 0.4`, `coverage ≤ 100 %`, `savings ≤ consumption × price`, `cashFlow[0] < 0`, `cashFlow[20] == twentyYearNetBenefit`.
+
+#### Tolerance policy
+
+| Class | Rule |
+|---|---|
+| Panel counts, capacity, FX rate and date, snapshot strings | **Exact** |
+| Displayed currency | **Cent-exact** (`expectMoney`) |
+| Display-rounded figures | Must round-trip to the golden value at the displayed precision |
+| Panel containment | 0.02 source px, because coordinates are published to 2 dp. Measured worst case on the real payload: **0.0037 px = 0.23 mm** |
+| Pointer round-trip on the calibration canvas | Exact against the integer mouse position used; ±1.5 px against the point aimed at, which is sub-device-pixel |
+
+Nothing looser. A tolerance that is not derived from a measured cause is a weakened assertion.
+
+### Parallelism and SQLite
+
+One API process serves every worker, so they share one SQLite file. `fullyParallel` is **off**: files run in parallel, tests inside a file run in order in a single worker, which serialises each workflow's own writes. The engine additionally runs SQLite in **WAL mode with a 5-second `busy_timeout`** (`apps/api/app/db/session.py`), so a concurrent writer waits rather than failing instantly with `database is locked`.
+
+Per-worker databases were the first preference and are not practical here: Next bakes the API origin into `routes-manifest.json` at build time, so a per-worker API needs a per-worker Next build. That is four-plus production builds to remove contention WAL already handles. Reliability was the goal, not maximum parallelism.
+
+### Inventory
+
+98 tests across three Playwright projects and 17 spec files, from the run on 2026-07-28.
+
+| Tag | Count | What runs it |
+|---|---:|---|
+| `@p0` | 69 | 60 chromium · 7 degraded · 2 mobile-chromium |
+| `@p1` | 22 | chromium |
+| `@live` | 7 | opt-in; skipped on a fixture stack, with the reason printed |
+
+`npx playwright test --grep-invert "@live"` → **91 passed**, 3.9 min, from a clean `.next` build.
+
+### Architecture
+
+```
+apps/web/e2e/
+├── fixtures/       environment probe, golden values, API client, test fixtures
+├── pages/          solar-flow, roof-view, proposal, calibration page objects
+├── helpers/        polygon geometry, PDF extraction, assertions, console capture
+├── scripts/        the two stack launchers (port probe, temp DB, health wait)
+├── degraded/       tier B specs
+└── live/           tier C specs
+```
+
+Every wait is on an observable application state — a message rendered, a busy overlay gone, an element carrying a real value. There is not one `waitForTimeout` in the suite: a fixed sleep is a guess that either wastes time or flakes, and on a slower machine it does both.
+
+### Notable specs
+
+| Spec | What it actually proves |
+|---|---|
+| `panel-placement.spec.ts` | Containment and non-overlap computed with independent ray-casting and SAT on the polygons the backend published — not screenshot heuristics, and not the production containment routine agreeing with itself. Determinism = two independent projects, full serialised geometry compared. |
+| `calibration.spec.ts` | The **410 px regression**. Hovering a known source-map pixel must read back that same pixel; resizing the window must not move a single committed coordinate. Dimensions, aspect ratios and azimuths are all *relative*, so a constant translation leaves them looking correct — which is why only a coordinate-space assertion catches it. |
+| `proposal-pdf.spec.ts` | Text extracted from the real bytes with `pdfjs-dist`, then asserted: location as entered and as analysed, panel count, annual production, FX rate/date/provider, CAPEX in both currencies, annual saving, payback, 20-year result, and four cash-flow rows. Also that the naive `5.573 m` hip length appears nowhere. |
+| `proposal-immutability.spec.ts` | Page, PDF and API all read one snapshot; running further analyses afterwards moves none of them. |
+| `accessibility.spec.ts` | axe over three screens, plus keyboard-only completion, heading order, and that provenance is never carried by colour alone. |
+| `degraded/fallbacks.spec.ts` | A complete proposal with every external dependency unreachable, each degraded number labelled, and parity never substituted for a failed rate lookup. |
+
+### Accessibility: what axe does and does not prove
+
+`@axe-core/playwright` is an **automated safety net**. It reliably catches contrast, naming, landmark and ARIA-shape problems, and it catches roughly a third of WCAG failures overall. **A clean axe run is not a claim of WCAG compliance and none is made here.** The manual assertions cover three things axe cannot see: that the intake is completable from the keyboard alone, that heading levels never skip, and that every provenance badge states its meaning in words.
+
+Both `@axe-core/playwright` and `pdfjs-dist` are **devDependencies**, injected by the test runner. Neither is imported by application code. See "Dependency containment" below for the executed proof.
 
 ---
 
@@ -42,7 +174,7 @@ Integration tests run against a **throwaway database in fixture mode** — the e
 | `test_pvgis.py` | Request parameters, response parsing, monthly/annual consistency, retries, 429/529/5xx, cache, fixture fallback |
 | `test_exchange_rates.py` | Endpoint and ECB provider, every rejection case, the fallback chain, and that **parity is unreachable** |
 | `test_financial.py` | The case scenario end to end, the coverage cap, Decimal handling, degenerate inputs |
-| `test_rules_parser.py` | Every phrasing the brief demonstrates, step-awareness, refusal of unsupported sizes |
+| `test_rules_parser.py` | Every phrasing the brief demonstrates, step-awareness, refusal of unsupported sizes, and that **an energy unit decides which number is the consumption** |
 | `test_chat.py` | Rules-first ordering, model fallback, and that a model cannot supply a value the rules would refuse |
 | `test_ollama.py` | Schema-constrained requests, invalid JSON, timeouts, unavailable model |
 | `test_summary.py` | That generated prose containing an invented, recalculated or altered number is **discarded** |
@@ -51,15 +183,11 @@ Integration tests run against a **throwaway database in fixture mode** — the e
 
 ### API — integration
 
-`test_workflow_api.py` drives the chat flow over HTTP. `test_proposal_api.py` covers finalisation, the public share route, the PDF, view tracking and **immutability**.
+`test_workflow_api.py` drives the chat flow over HTTP. `test_proposal_api.py` covers finalisation, the public share route, the PDF, view tracking, **immutability**, and that finalising twice returns the same proposal.
 
-### Web
+### Web — unit
 
 `format.test.ts` (money as strings, provenance labels), `components.test.tsx` (chat, progress rail, accessible badges), `calibration.test.ts` (measurement, validation, JSON round-trip).
-
-### End-to-end
-
-Playwright drives the real UI against the real API in fixture mode: the acceptance flow, all three system sizes, refusal of an unsupported size, fixture labelling, layer toggles, and an unknown share token.
 
 ---
 
@@ -76,19 +204,22 @@ Each of these was written after a real defect, not in anticipation of one.
 | `test_source_repository_contains_no_parity_literal` | Greps for `rate = 1.0` and friends, so a well-meaning fallback cannot creep back in. |
 | `test_medium_system_prefers_small_high_yield_facets_over_a_large_poor_one` | An area-ranking allocator would fill the south trapezoid. At −34° the correct answer is the two small triangles. |
 | `test_a_moved_market_rate_does_not_change_a_finalised_proposal` | Forces a new rate into the cache and asserts a finalised proposal is untouched. |
+| `test_the_unit_decides_which_number_is_the_consumption` | "I pay 0.30 per kWh and use 1150 kWh" parsed as 0.3 kWh a month, which produced a 2,930-year payback. Found by the E2E prompt-injection spec. |
+| `test_finalising_twice_returns_the_same_proposal` | A double-click issued two share links to two documents, splitting the view counts and creating two snapshots that could later disagree. Found by the E2E contract spec. |
+| `responsive.spec.ts` (both cases) | The Konva stage renders at a default 720 px until its `ResizeObserver` fires, which stretched the grid track and pushed a phone-width page 320 px sideways — permanently, because the observer then measured the widened container. |
 
 ---
 
 ## What is deliberately *not* asserted
 
 ### Exact live PVGIS numbers
-Live-marked tests assert HTTP 200, a named radiation database, twelve monthly values, annual ≈ Σ monthly, a plausible 900–2,000 kWh/kWp band, and the **ordering invariant that north out-produces south at this site**. Never exact kWh.
+Live-marked tests assert HTTP 200, a named radiation database, twelve monthly values, annual ≈ Σ monthly, a plausible 1,300–1,900 kWh/kWp band at this site, southern-hemisphere seasonality, and the **ordering invariant that north out-produces south**. Never exact kWh.
 
 ### Exact live FX rates
-The rate moves daily — it changed from `0.87897` to `0.87804` between two runs during this build. Fixture mode carries the exact assertions.
+The rate moves daily — it changed from `0.87897` to `0.87804` between two runs during this build. `@live` asserts a 0.5–1.5 band, an ISO date not in the future, and that the conversion was actually applied. Fixture mode carries the exact assertions.
 
 ### Byte-identical PDF and web output
-The requirement is **numerically identical values from the same immutable snapshot**. Rendered bytes and locale formatting legitimately differ; a test compares the underlying values instead.
+The requirement is **numerically identical values from the same immutable snapshot**. Rendered bytes and locale formatting legitimately differ; the tests extract the PDF's text and compare the underlying values.
 
 ### Energy sums to the cent
 Facet production and the total are each rounded for display, so summing the parts can differ from the rounded whole by hundredths of a kWh. Money is canonicalised once because a cash-flow table must reconcile; energy is not, because 0.01 kWh on ~9,500 sits far below PVGIS's own uncertainty and forcing agreement would manufacture precision.
@@ -99,11 +230,27 @@ Facet production and the total are each rounded for display, so summing the part
 
 | Gap | Why |
 |---|---|
-| Live Google Static Maps | No API key. The path is unit-tested with a mocked transport; it has never received a real Google response. |
-| A real Ollama model | The adapter is fully tested against a mocked transport. Whether `qwen3.5:2b` extracts *well* is unmeasured — only that whatever it returns is validated. |
+| Live Google Static Maps | No API key. The path is unit-tested with a mocked transport; it has never received a real Google response. The `@live` imagery spec skips itself. |
+| A real Ollama model | The adapter is fully tested against a mocked transport. The `@live` Ollama specs are implemented and skip with a reason when the daemon or the model is absent. They **never pull a model** — installation is a separate, explicit step (`scripts/pull-model.ps1` / `.sh`). |
 | SMTP notifications | `EMAIL_MODE=console` is exercised; the SMTP branch is not. |
-| Load and concurrency | No performance testing. PDF rendering in-request is a known scaling limit. |
-| Visual regression | The calibration overlay is checked by eye against a generated debug image. That is how the 410 px offset was caught — and a unit test would not have caught it. |
+| Load and performance | The concurrency specs prove correctness under simultaneous use, not throughput. PDF rendering in-request remains a known scaling limit. |
+| Visual regression | No screenshot diffing. The calibration overlay is checked by asserting the coordinate transform instead, which is what the 410 px defect actually was. |
+| Broad browser matrix | Chromium desktop plus a Pixel 7 smoke pass. The brief warns against multiplying a heavy suite across browsers; what differs on a phone is layout, and that is what the mobile project checks. |
+
+---
+
+## Dependency containment
+
+Both test-only packages must stay out of what ships. The proof is run against the **production client bundle**, not the API image:
+
+```bash
+cd apps/web && npm run build
+grep -rlE "axe-core|pdfjs|pdf-parse" .next/static   # expect: no matches
+grep -rlE "axe-core|pdfjs-dist|pdf-parse" .next/server
+node -e "const p=require('./package.json'); console.log(Boolean(p.dependencies['pdfjs-dist']), Boolean(p.dependencies['@axe-core/playwright']))"
+```
+
+Neither package belongs to the API at all, so searching the API image is a secondary check only.
 
 ---
 

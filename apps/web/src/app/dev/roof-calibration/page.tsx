@@ -282,11 +282,25 @@ export default function RoofCalibrationPage() {
           </div>
           <div className="flex items-center gap-3 text-[11.5px]">
             {mapConfig ? (
-              <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5">
+              <span
+                data-testid="calibration-scale"
+                data-metres-per-pixel={metresPerPixel}
+                data-source-width-px={mapConfig.sourceWidthPx}
+                className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5"
+              >
                 {metresPerPixel.toFixed(6)} m/px · zoom {mapConfig.zoom} · scale {mapConfig.scale}
               </span>
             ) : null}
-            <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 tabular-nums">
+            {/* The readout is the only externally visible proof that a pointer
+                position was converted into source-map pixels rather than left
+                in window coordinates - the exact bug that once shifted the
+                whole calibration by ~410 px. */}
+            <span
+              data-testid="calibration-cursor"
+              data-x={cursor ? cursor.x : ""}
+              data-y={cursor ? cursor.y : ""}
+              className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5 tabular-nums"
+            >
               {cursor ? `x ${cursor.x.toFixed(1)}  y ${cursor.y.toFixed(1)}` : "—"}
             </span>
           </div>
@@ -418,7 +432,11 @@ export default function RoofCalibrationPage() {
 
         <div className="space-y-3">
           <Card className="p-3">
-            <div className="mb-2 flex items-center justify-between">
+            <div
+              data-testid="calibration-validation"
+              data-issue-count={problems.length}
+              className="mb-2 flex items-center justify-between"
+            >
               <h2 className="text-[13px] font-semibold">Validation</h2>
               {problems.length === 0 ? (
                 <span className="flex items-center gap-1 text-[12px] text-good-700">
@@ -452,6 +470,9 @@ export default function RoofCalibrationPage() {
               {state.vertices.map((vertex) => (
                 <div
                   key={vertex.id}
+                  data-testid={`vertex-row-${vertex.id}`}
+                  data-x={vertex.x}
+                  data-y={vertex.y}
                   className={cn(
                     "flex items-center gap-2 rounded border px-2 py-1 text-[11.5px]",
                     selectedVertexIds.includes(vertex.id)

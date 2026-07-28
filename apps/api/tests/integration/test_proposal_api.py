@@ -309,3 +309,20 @@ def test_png_upload_is_stored_and_served(client, proposal) -> None:
     served = client.get(f"/api/v1/proposals/{proposal['shareToken']}/layout-snapshot")
     assert served.status_code == 200
     assert served.headers["content-type"] == "image/png"
+
+
+def test_finalising_twice_returns_the_same_proposal(client) -> None:
+    """A double-click must not issue two links to two documents.
+
+    Two proposals would split the view counts, and - because each freezes its
+    own snapshot at its own moment - could later disagree about the exchange
+    rate a customer was quoted.
+    """
+    first = finalised(client)
+    second = client.post(f"/api/v1/projects/{first['projectId']}/finalize")
+
+    assert second.status_code == 200
+    body = second.json()
+    assert body["shareToken"] == first["shareToken"]
+    assert body["proposalId"] == first["proposalId"]
+    assert body["summarySource"] == "existing"

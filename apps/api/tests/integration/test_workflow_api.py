@@ -143,10 +143,26 @@ def test_system_size_selection_derives_the_panel_count(client, reply, size, pane
 
 
 def test_unreadable_location_is_rejected_without_advancing(client) -> None:
+    """Neither coordinates nor words is not an answer to "where?".
+
+    A written place *is* accepted - geocoding is out of scope and the analysis
+    always runs at the verified case coordinate, so an address is recorded
+    verbatim rather than demanded away.
+    """
     project_id = start_project(client)
-    body = say(client, project_id, "somewhere sunny")
+    body = say(client, project_id, "???")
     assert body["accepted"] is False
     assert body["currentStep"] == "location"
+
+
+def test_a_written_address_is_accepted_and_resolved_to_the_case_coordinate(client) -> None:
+    project_id = start_project(client)
+    body = say(client, project_id, "10 Downing Street, London")
+    assert body["accepted"] is True
+    assert body["currentStep"] == "consumption"
+    # Recorded as typed, and openly resolved.
+    assert "10 Downing Street, London" in body["assistantMessage"]
+    assert "-34.046582" in body["assistantMessage"]
 
 
 def test_unsupported_system_size_is_refused(client) -> None:

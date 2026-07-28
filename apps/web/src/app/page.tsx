@@ -14,7 +14,7 @@ import {
   RoofSection,
 } from "@/components/proposal/AnalysisPanels";
 import { RoofWorkspace } from "@/components/roof/RoofWorkspace";
-import { Button, Card, SourceBadge, Spinner } from "@/components/ui/primitives";
+import { Button, Card, SourceBadge, Spinner, cn } from "@/components/ui/primitives";
 import { api } from "@/lib/api";
 import { dataSourceLabel } from "@/lib/format";
 import type {
@@ -27,10 +27,22 @@ import type {
   RoofModel,
 } from "@/types/api";
 
+/**
+ * The three sizes the case permits. Selecting a card sends the same canonical
+ * phrase the chat parser accepts, so a card click and a typed message take
+ * exactly one backend path - there is no second code path to drift.
+ */
+const SYSTEM_SIZES = [
+  { kwp: 3.6, panels: 9, phrase: "3.6 kWp" },
+  { kwp: 6, panels: 15, phrase: "6 kWp" },
+  { kwp: 9.6, panels: 24, phrase: "9.6 kWp" },
+] as const;
+
 export default function Home() {
   const [projectId, setProjectId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [progress, setProgress] = useState<ProgressStep[]>([]);
+  const [currentStep, setCurrentStep] = useState<string>("location");
   const [pending, setPending] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -58,6 +70,7 @@ export default function Home() {
         if (cancelled) return;
         setProjectId(created.projectId);
         setProgress(created.progress);
+        setCurrentStep(created.currentStep);
         setMessages([
           {
             role: "assistant",
@@ -91,6 +104,7 @@ export default function Home() {
       try {
         const result = await api.runAnalysis(id);
         setAnalysis(result.analysis);
+        setCurrentStep(result.currentStep);
         setMessages((current) => [
           ...current,
           {
@@ -129,6 +143,7 @@ export default function Home() {
       try {
         const response = await api.chat(projectId, message);
         setProgress(response.progress);
+        setCurrentStep(response.currentStep);
         setMessages((current) => [
           ...current,
           {
@@ -196,17 +211,29 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-2 text-[11.5px]">
             {llm ? (
-              <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5">
+              <span
+                data-testid="status-parser"
+                data-provider={llm.provider}
+                className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5"
+              >
                 Parser: {llm.provider === "ollama" ? `Ollama · ${llm.model}` : "deterministic rules"}
               </span>
             ) : null}
             {mapConfig ? (
-              <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5">
+              <span
+                data-testid="status-imagery"
+                data-mode={mapConfig.mode}
+                className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5"
+              >
                 Imagery: {mapConfig.isLive ? "live" : "demo fixture"}
               </span>
             ) : null}
             {analysis ? (
-              <span className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5">
+              <span
+                data-testid="status-fx"
+                data-source={analysis.exchangeRate.retrievalSource}
+                className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5"
+              >
                 FX: {dataSourceLabel(analysis.exchangeRate.retrievalSource).label}
               </span>
             ) : null}
@@ -216,7 +243,11 @@ export default function Home() {
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-4">
         {error ? (
-          <div className="mb-3 rounded-lg border-l-4 border-[#d03b3b] bg-[#fdeeee] px-3.5 py-2.5 text-[12.5px] text-[#8a1f1f]">
+          <div
+            role="alert"
+            data-testid="error-banner"
+            className="mb-3 rounded-lg border-l-4 border-[#d03b3b] bg-[#fdeeee] px-3.5 py-2.5 text-[12.5px] text-[#8a1f1f]"
+          >
             {error}
           </div>
         ) : null}
@@ -227,15 +258,56 @@ export default function Home() {
               <ProgressRail steps={progress} />
             </div>
             {projectId ? (
-              <ChatPanel messages={messages} onSend={send} pending={pending} />
+              <>
+                {currentStep === "system_size" ? (
+                  <div
+                    data-testid="system-size-cards"
+                    className="border-b border-slate-line px-3.5 py-2.5"
+                  >
+                    <div className="mb-1.5 text-[11.5px] font-medium text-slate-body">
+                      Choose a system size
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {SYSTEM_SIZES.map((size) => (
+                        <button
+                          key={size.kwp}
+                          type="button"
+                          disabled={pending || Boolean(busy)}
+                          data-testid={`system-size-${size.kwp}`}
+                          onClick={() => send(size.phrase)}
+                          className={cn(
+                            "rounded-lg border border-slate-line px-2 py-2 text-left transition-colors",
+                            "hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2",
+                            "focus-visible:outline-navy-700 disabled:cursor-not-allowed disabled:opacity-50",
+                          )}
+                        >
+                          <div className="text-[13px] font-semibold text-slate-ink">
+                            {size.kwp} kWp
+                          </div>
+                          <div className="text-[11px] text-slate-muted">
+                            {size.panels} panels
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+                <ChatPanel messages={messages} onSend={send} pending={pending} />
+              </>
             ) : (
-              <div className="flex flex-1 items-center justify-center gap-2 text-[13px] text-slate-muted">
+              <div
+                role="status"
+                className="flex flex-1 items-center justify-center gap-2 text-[13px] text-slate-muted"
+              >
                 <Spinner /> Starting session…
               </div>
             )}
           </Card>
 
-          <div className="space-y-4">
+          {/* min-w-0: this column holds the Konva stage, which renders at its
+              default width until the ResizeObserver measures it. Without this
+              the grid track widens to fit and never shrinks back. */}
+          <div className="min-w-0 space-y-4">
             <RoofWorkspace
               roof={roof}
               analysis={analysis}
@@ -255,9 +327,15 @@ export default function Home() {
                 <Card className="flex flex-wrap items-center justify-between gap-3 px-3.5 py-3">
                   <div className="text-[12.5px] text-slate-body">
                     {proposal ? (
-                      <span className="flex items-center gap-2">
+                      <span className="flex flex-wrap items-center gap-2">
                         <SourceBadge tone="live" label="Proposal created" />
-                        <code className="rounded bg-surface-2 px-1.5 py-0.5 text-[11.5px]">
+                        <code
+                          data-testid="share-url"
+                          data-share-token={proposal.shareToken}
+                          // A share URL is one long unbreakable token; without
+                          // break-all it pushes a phone-width page sideways.
+                          className="max-w-full break-all rounded bg-surface-2 px-1.5 py-0.5 text-[11.5px]"
+                        >
                           {proposal.shareUrl}
                         </code>
                       </span>
@@ -284,7 +362,11 @@ export default function Home() {
                         </a>
                       </>
                     ) : (
-                      <Button onClick={finalize} disabled={Boolean(busy)}>
+                      <Button
+                        onClick={finalize}
+                        disabled={Boolean(busy) || !analysis}
+                        testId="create-proposal"
+                      >
                         Create proposal
                       </Button>
                     )}

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -22,21 +23,53 @@ logger = logging.getLogger("solarvis.db")
 _engine: AsyncEngine | None = None
 _sessionmaker: async_sessionmaker[AsyncSession] | None = None
 
+# Concurrent requests are normal - several browser tabs, or a test suite with
+# parallel workers, all writing through one SQLite file.
+SQLITE_BUSY_TIMEOUT_MS = 5_000
+
+
+def _apply_sqlite_pragmas(dbapi_connection: Any, _record: Any) -> None:
+    """Make SQLite safe under concurrent writers.
+
+    SQLite's default rollback journal takes an exclusive lock for the whole of
+    every write transaction, so a second concurrent writer fails *immediately*
+    with "database is locked" rather than waiting. Two pragmas fix that:
+
+    * ``journal_mode=WAL`` lets readers continue during a write, which is the
+      common case here (one write, several reads of the same proposal).
+    * ``busy_timeout`` makes a blocked writer wait and retry for a bounded
+      period instead of failing instantly.
+
+    ``foreign_keys`` is off by default in SQLite, which would silently permit
+    orphaned rows; the schema declares the constraints, so enforce them.
+    """
+    cursor = dbapi_connection.cursor()
+    try:
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+        # NORMAL is the recommended pairing with WAL: durable across process
+        # crashes, and only at risk from an OS-level crash mid-write.
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.execute("PRAGMA foreign_keys=ON")
+    finally:
+        cursor.close()
+
 
 def get_engine() -> AsyncEngine:
     global _engine
     if _engine is None:
         settings = get_settings()
+        is_sqlite = settings.database_url.startswith("sqlite")
         _engine = create_async_engine(
             settings.database_url,
             echo=False,
             future=True,
             # SQLite needs this so a single connection can be shared across the
             # async request lifecycle without tripping thread-affinity checks.
-            connect_args={"check_same_thread": False}
-            if settings.database_url.startswith("sqlite")
-            else {},
+            connect_args={"check_same_thread": False} if is_sqlite else {},
         )
+        if is_sqlite:
+            event.listen(_engine.sync_engine, "connect", _apply_sqlite_pragmas)
     return _engine
 
 

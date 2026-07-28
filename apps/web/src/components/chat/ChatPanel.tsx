@@ -57,7 +57,17 @@ export function ChatPanel({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={scrollRef} className="scroll-thin min-h-0 flex-1 space-y-3 overflow-y-auto px-3.5 py-3">
+      {/* A scrollable region needs its own tab stop, or a keyboard user can
+          reach the composer but never scroll back through the conversation.
+          `role="log"` also has assistive technology announce new replies. */}
+      <div
+        ref={scrollRef}
+        tabIndex={0}
+        role="log"
+        aria-live="polite"
+        aria-label="Conversation"
+        className="scroll-thin min-h-0 flex-1 space-y-3 overflow-y-auto px-3.5 py-3 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-navy-700"
+      >
         {messages.map((message, index) => (
           <div
             key={`${message.createdAt}-${index}`}

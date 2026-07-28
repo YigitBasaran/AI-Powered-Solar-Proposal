@@ -22,6 +22,8 @@ build/
 # --- node ---
 node_modules/
 .next/
+# Second Next build used by the E2E degraded stack (its own API origin).
+.next-degraded/
 out/
 .turbo/
 coverage/
@@ -71,3 +73,5 @@ tmp/
 # playwright
 apps/web/test-results/
 apps/web/playwright-report/
+# Temporary SQLite databases owned by the E2E stacks; removed on teardown.
+apps/web/.e2e-tmp/

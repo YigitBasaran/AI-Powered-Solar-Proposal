@@ -11,6 +11,7 @@ Nothing downstream ever sees the requested figure as though it were installed.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass
 from decimal import Decimal
@@ -59,25 +60,42 @@ async def compute_yield(
     client: PvgisClient,
     settings: Settings,
 ) -> YieldResult:
-    """Facet-level PVGIS for every facet that received panels."""
+    """Facet-level PVGIS for every facet that received panels.
+
+    The requests are issued together. They are independent - one per facet,
+    each with its own aspect - and the client already holds a concurrency
+    semaphore for exactly this. Issuing them one after another costs three
+    round trips where one suffices, and when PVGIS is unreachable it costs
+    three *full retry budgets* in series before the fallback is reached, which
+    is a wait a customer would actually sit through.
+
+    ``gather`` preserves input order, so the results stay deterministic.
+    """
     facet_results: list[FacetYieldResult] = []
     monthly_total = [0.0] * 12
     annual_total = 0.0
     radiation_db: str | None = None
     sources: set[DataSource] = set()
 
-    for facet_layout in layout.facet_layouts:
-        facet = roof.facet(facet_layout.facet_id)
-        installed_kwp = facet_layout.panel_count * settings.panel_power_kwp
+    facets = [roof.facet(fl.facet_id) for fl in layout.facet_layouts]
+    installed = [fl.panel_count * settings.panel_power_kwp for fl in layout.facet_layouts]
 
-        result = await client.pvcalc(
-            lat=settings.case_resolved_latitude,
-            lon=settings.case_resolved_longitude,
-            peak_power_kwp=installed_kwp,
-            angle_deg=facet.pitch_deg,
-            aspect_deg=facet.pvgis_aspect_deg,
+    results = await asyncio.gather(
+        *(
+            client.pvcalc(
+                lat=settings.case_resolved_latitude,
+                lon=settings.case_resolved_longitude,
+                peak_power_kwp=kwp,
+                angle_deg=facet.pitch_deg,
+                aspect_deg=facet.pvgis_aspect_deg,
+            )
+            for facet, kwp in zip(facets, installed, strict=True)
         )
+    )
 
+    for facet_layout, facet, installed_kwp, result in zip(
+        layout.facet_layouts, facets, installed, results, strict=True
+    ):
         facet_results.append(
             FacetYieldResult(
                 facet_id=facet.id,

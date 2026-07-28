@@ -75,6 +75,17 @@ def validate_ready(project: Project) -> dict[str, Any]:
     return snapshot
 
 
+async def existing_proposal(session: AsyncSession, project: Project) -> Proposal | None:
+    """The proposal already issued for this project, if there is one."""
+    result = await session.execute(
+        select(Proposal)
+        .where(Proposal.project_id == project.id)
+        .order_by(Proposal.created_at.asc())
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
 async def finalise_proposal(
     session: AsyncSession,
     project: Project,
@@ -82,8 +93,24 @@ async def finalise_proposal(
     settings: Settings | None = None,
     ai_summary: str | None = None,
 ) -> Proposal:
-    """Persist an immutable proposal from a completed analysis."""
+    """Persist an immutable proposal from a completed analysis.
+
+    Finalising a project that already has a proposal returns the existing one.
+    A customer who double-clicks "Create proposal" must not end up holding two
+    links to two documents: the view counts would split, and the two snapshots
+    could later diverge - which is precisely the immutability guarantee this
+    module exists to provide.
+    """
     settings = settings or get_settings()
+
+    already = await existing_proposal(session, project)
+    if already is not None:
+        logger.info(
+            "project %s already has proposal %s; returning it unchanged",
+            project.id,
+            already.share_token[:8],
+        )
+        return already
 
     snapshot = validate_ready(project)
     layout = snapshot["layout"]
@@ -217,6 +244,7 @@ def public_payload(proposal: Proposal, stats: dict[str, Any] | None = None) -> d
 
 __all__ = [
     "Proposal",
+    "existing_proposal",
     "finalise_proposal",
     "generate_share_token",
     "load_by_token",

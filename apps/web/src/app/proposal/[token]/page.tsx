@@ -63,8 +63,10 @@ export default function ProposalPage({
   if (error) {
     return (
       <main className="mx-auto flex min-h-screen max-w-lg items-center px-4">
-        <Card className="w-full px-5 py-6 text-center">
-          <h1 className="text-base font-semibold text-slate-ink">Proposal not found</h1>
+        <Card className="w-full px-5 py-6 text-center" >
+          <h1 data-testid="proposal-not-found" className="text-base font-semibold text-slate-ink">
+            Proposal not found
+          </h1>
           <p className="mt-1.5 text-[13px] text-slate-body">{error}</p>
           <p className="mt-3 text-[12px] text-slate-muted">
             Check the link, or ask for a new one to be sent to you.
@@ -76,7 +78,10 @@ export default function ProposalPage({
 
   if (!proposal) {
     return (
-      <main className="flex min-h-screen items-center justify-center gap-2 text-[13px] text-slate-muted">
+      <main
+        role="status"
+        className="flex min-h-screen items-center justify-center gap-2 text-[13px] text-slate-muted"
+      >
         <Spinner /> Loading proposal…
       </main>
     );
@@ -89,9 +94,9 @@ export default function ProposalPage({
           <div className="flex items-center gap-2">
             <Sun className="size-5 text-solar-500" aria-hidden />
             <div>
-              <div className="text-[15px] font-semibold tracking-tight">
+              <h1 data-testid="proposal-title" className="text-[15px] font-semibold tracking-tight">
                 Solar Feasibility Proposal
-              </div>
+              </h1>
               <div className="text-[11.5px] text-white/55">
                 Prepared by solarVis AI · {shortDate(proposal.createdAt)}
               </div>
@@ -99,7 +104,11 @@ export default function ProposalPage({
           </div>
           <div className="no-print flex flex-wrap items-center gap-2">
             {proposal.views ? (
-              <span className="flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[11.5px]">
+              <span
+                data-testid="view-count"
+                data-count={proposal.views.viewCount}
+                className="flex items-center gap-1 rounded-full border border-white/15 bg-white/5 px-2 py-0.5 text-[11.5px]"
+              >
                 <Eye className="size-3" aria-hidden />
                 {proposal.views.viewCount} view
                 {proposal.views.viewCount === 1 ? "" : "s"}
@@ -109,7 +118,7 @@ export default function ProposalPage({
               {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
               {copied ? "Copied" : "Copy link"}
             </Button>
-            <a href={api.pdfUrl(token)} target="_blank" rel="noreferrer">
+            <a href={api.pdfUrl(token)} target="_blank" rel="noreferrer" data-testid="pdf-link">
               <Button variant="secondary">
                 <FileDown className="size-3.5" /> Download PDF
               </Button>
@@ -134,6 +143,7 @@ export default function ProposalPage({
           <Card className="overflow-hidden">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
+              data-testid="layout-snapshot"
               src={proposal.layoutSnapshotUrl}
               alt="Satellite view with the roof reconstruction and panel layout"
               className="w-full"

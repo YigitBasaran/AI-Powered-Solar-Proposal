@@ -17,7 +17,12 @@
 
   --color-slate-ink: #0b0b0b;
   --color-slate-body: #52514e;
-  --color-slate-muted: #898781;
+  /* Muted text is small (10.5-12.5px), so WCAG AA wants 4.5:1 — it is not
+     "large text". The previous #898781 measured 3.35-3.59:1 across the three
+     surfaces it sits on, which axe flagged on 39 nodes of the analysis page.
+     #6b6a65 keeps the same warm grey and measures 5.4:1 on white and 5.0:1 on
+     the shell, while staying clearly recessive against --color-slate-body. */
+  --color-slate-muted: #6b6a65;
   --color-slate-line: #e1e0d9;
   --color-slate-rule: #c3c2b7;
 

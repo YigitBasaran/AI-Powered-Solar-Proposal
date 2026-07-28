@@ -21,7 +21,8 @@ WELCOME = (
     "I'll guide you through a complete solar feasibility assessment, including "
     "roof measurements, panel placement, annual production, financial return "
     "and a shareable proposal.\n\n"
-    "To begin, enter the project latitude and longitude."
+    "To begin, enter the project location — an address or place name is fine, "
+    "or give the latitude and longitude directly."
 )
 
 CONSUMPTION_PROMPT = "What is your monthly electricity consumption?"
@@ -103,7 +104,9 @@ def handle_message(
         if parsed.intent is not ChatIntent.PROVIDE_LOCATION:
             return StepOutcome(
                 assistant_message=(
-                    "I need a latitude and longitude to start. For example: -34.04658, 18.46491"
+                    "I couldn't read a location there. An address or place name "
+                    "works, or a latitude and longitude — for example: "
+                    "-34.04658, 18.46491"
                 ),
                 next_step=ProjectStep.LOCATION,
                 updates={},

@@ -10,8 +10,9 @@ export function KpiRow({ analysis }: { analysis: Analysis }) {
   const short = layout.placedPanelCount < layout.requestedPanelCount;
 
   return (
-    <div className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
+    <div data-testid="kpi-row" className="grid grid-cols-2 gap-2.5 lg:grid-cols-5">
       <Kpi
+        testId="kpi-system-size"
         label="System size"
         value={`${layout.feasibleSystemSizeKwp} kWp`}
         note={
@@ -22,21 +23,25 @@ export function KpiRow({ analysis }: { analysis: Analysis }) {
         emphasis
       />
       <Kpi
+        testId="kpi-annual-production"
         label="Annual production"
         value={kwh(energy.totalAnnualProductionKwh)}
         note={`${percent(financial.coveragePercent)} of usage`}
       />
       <Kpi
+        testId="kpi-annual-saving"
         label="Annual saving"
         value={eur(financial.annualSavingsEur, { compact: true })}
         note={`at €${financial.electricityPriceEurPerKwh}/kWh`}
       />
       <Kpi
+        testId="kpi-payback"
         label="Payback"
         value={years(financial.simplePaybackYears)}
         note={`CAPEX ${eur(financial.convertedCapex.amount, { compact: true })}`}
       />
       <Kpi
+        testId="kpi-twenty-year-net"
         label="20-year net"
         value={eur(financial.twentyYearNetBenefitEur, { compact: true })}
         note="cumulative, flat tariff"
@@ -51,12 +56,12 @@ export function FxRow({ analysis }: { analysis: Analysis }) {
   const financial = analysis.financial;
 
   return (
-    <Card className="px-3.5 py-3">
-      <div className="flex flex-wrap items-center justify-between gap-3">
+    <Card className="px-3.5 py-3" >
+      <div data-testid="fx-row" className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-baseline gap-x-5 gap-y-1 text-[12.5px]">
           <span className="text-slate-muted">
             Capital cost as quoted{" "}
-            <strong className="tnum font-semibold text-slate-ink">
+            <strong data-testid="fx-capex-usd" className="tnum font-semibold text-slate-ink">
               {usd(financial.originalCapex.amount)}
             </strong>
           </span>
@@ -65,19 +70,23 @@ export function FxRow({ analysis }: { analysis: Analysis }) {
           </span>
           <span className="text-slate-muted">
             used in analysis{" "}
-            <strong className="tnum font-semibold text-slate-ink">
+            <strong data-testid="fx-capex-eur" className="tnum font-semibold text-slate-ink">
               {eur(financial.convertedCapex.amount)}
             </strong>
           </span>
           <span className="text-slate-muted">
             1 {fx.baseCurrency} ={" "}
-            <span className="tnum font-medium text-slate-ink">{fx.rate}</span> {fx.quoteCurrency}
+            <span data-testid="fx-rate" className="tnum font-medium text-slate-ink">
+              {fx.rate}
+            </span>{" "}
+            {fx.quoteCurrency}
           </span>
           <span className="text-slate-muted">
-            {fx.dataProvider} · {fx.rateDate}
+            <span data-testid="fx-provider">{fx.dataProvider}</span> ·{" "}
+            <span data-testid="fx-rate-date">{fx.rateDate}</span>
           </span>
         </div>
-        <SourceBadge tone={source.tone} label={source.label} />
+        <SourceBadge testId="fx-source-badge" tone={source.tone} label={source.label} />
       </div>
       {fx.isFixture ? (
         <p className="mt-2 text-[11.5px] text-[#8a5210]">
@@ -96,13 +105,22 @@ export function EnergySection({ analysis }: { analysis: Analysis }) {
 
   return (
     <Card className="px-3.5 py-3">
-      <SectionTitle action={<SourceBadge tone={source.tone} label={`PVGIS · ${source.label}`} />}>
+      <SectionTitle
+        action={
+          <SourceBadge
+            testId="pvgis-source-badge"
+            tone={source.tone}
+            label={`PVGIS · ${source.label}`}
+          />
+        }
+      >
         Energy production
       </SectionTitle>
 
       <MonthlyProductionChart monthly={energy.totalMonthlyProductionKwh} />
 
       <DataTable
+        label="Energy production by roof facet"
         className="mt-3"
         headers={[
           { label: "Facet" },
@@ -194,6 +212,7 @@ export function RoofSection({ analysis }: { analysis: Analysis }) {
       </SectionTitle>
 
       <DataTable
+        label="Roof facet measurements"
         headers={[
           { label: "Facet" },
           { label: "Azimuth", align: "right" },
@@ -217,6 +236,7 @@ export function RoofSection({ analysis }: { analysis: Analysis }) {
         <span className="mt-3 block">Edge measurements</span>
       </SectionTitle>
       <DataTable
+        label="Roof edge measurements"
         headers={[
           { label: "Edge" },
           { label: "Type" },
@@ -247,7 +267,11 @@ export function RoofSection({ analysis }: { analysis: Analysis }) {
 
 export function CapacityWarning({ warning }: { warning: string | null }) {
   if (!warning) return null;
-  return <Callout title="Capacity note.">{warning}</Callout>;
+  return (
+    <Callout testId="capacity-warning" title="Capacity note.">
+      {warning}
+    </Callout>
+  );
 }
 
 function Row({ label, value }: { label: string; value: string }) {

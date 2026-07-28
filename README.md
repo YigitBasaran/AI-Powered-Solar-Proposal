@@ -178,12 +178,23 @@ Model output is forced through a JSON schema, Pydantic-validated, then re-checke
 ## Testing
 
 ```bash
-cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 445 tests
+cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 458 tests
 cd apps/api && ./.venv/Scripts/python -m ruff check app tests
 cd apps/api && ./.venv/Scripts/python -m mypy app                  # strict
 cd apps/web && npm run typecheck && npm run test && npm run build  # 38 tests
-cd apps/web && npm run test:e2e                                    # 10 tests
 ```
+
+```bash
+# End-to-end. Nothing to start first — the suite starts its own stacks.
+cd apps/web
+npx playwright test --grep "@p0"            # 69 mandatory
+npx playwright test --grep-invert "@live"   # 91: deterministic + degraded
+npx playwright test --grep "@live"          # 7, opt-in; skips on a fixture stack
+```
+
+Playwright starts **two complete stacks** — a deterministic one on `:3100`/`:8100` where every external dependency is a committed fixture, and a degraded one on `:3101`/`:8101` whose PVGIS, FX and Ollama endpoints cannot resolve. PVGIS and FX are called by the backend, so browser-level mocking could never test those fallbacks; a second stack genuinely configured to fail is the only honest way. Each owns a temporary database and refuses to start on an occupied port rather than attaching to a stranger's server.
+
+`E2E_TARGET_URL=http://127.0.0.1:3000 npx playwright test --grep "@p0"` runs the same suite against the Docker containers instead.
 
 Live-marked tests hit real APIs and are deselected by default: `pytest -m live`.
 

@@ -16,7 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.errors import NotFoundError
+from app.core.errors import InvalidStepTransitionError, NotFoundError
 from app.db.session import get_session
 from app.domain.models import ProjectStep
 from app.integrations.exchange_rates import ExchangeRateService, SqlExchangeRateCache
@@ -207,7 +207,13 @@ async def run_project_analysis(
     project = await _load(session, project_id)
 
     if project.monthly_consumption_kwh is None or project.selected_system_size_kwp is None:
-        raise NotFoundError("The project has no consumption or system size yet.")
+        # The project exists; it is the *step* that is wrong. 404 would tell the
+        # client to stop retrying a resource that is actually there and will
+        # become valid as soon as intake finishes. `finalize` already answers
+        # 409 for the same class of problem.
+        raise InvalidStepTransitionError(
+            "The project has no consumption or system size yet."
+        )
 
     project.analysis_status = "running"
     await session.flush()

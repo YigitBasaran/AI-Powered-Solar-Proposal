@@ -109,7 +109,7 @@ async def test_unusual_phrasing_falls_through_to_the_model(ollama_settings) -> N
 async def test_model_unavailable_falls_back_to_the_rules_result(ollama_settings) -> None:
     respx.post(GENERATE).mock(side_effect=httpx.ConnectError("no ollama"))
     parsed, source = await parse_user_message(
-        "something odd", step=ProjectStep.LOCATION, settings=ollama_settings
+        "something odd", step=ProjectStep.SYSTEM_SIZE, settings=ollama_settings
     )
     assert source == "rules"
     assert parsed.intent is ChatIntent.UNKNOWN
@@ -119,7 +119,7 @@ async def test_model_unavailable_falls_back_to_the_rules_result(ollama_settings)
 async def test_model_timeout_falls_back(ollama_settings) -> None:
     respx.post(GENERATE).mock(side_effect=httpx.ReadTimeout("slow"))
     _, source = await parse_user_message(
-        "something odd", step=ProjectStep.LOCATION, settings=ollama_settings
+        "something odd", step=ProjectStep.SYSTEM_SIZE, settings=ollama_settings
     )
     assert source == "rules"
 
@@ -138,7 +138,9 @@ async def test_fallback_can_be_disabled_for_strict_deployments(ollama_settings) 
     strict = ollama_settings.model_copy(update={"llm_fallback_enabled": False})
     respx.post(GENERATE).mock(side_effect=httpx.ConnectError("no ollama"))
     with pytest.raises(LlmUnavailableError):
-        await parse_user_message("something odd", step=ProjectStep.LOCATION, settings=strict)
+        # A step the rules parser genuinely cannot resolve, so the model is
+        # actually reached: a written location now parses without one.
+        await parse_user_message("something odd", step=ProjectStep.SYSTEM_SIZE, settings=strict)
 
 
 async def test_disabled_provider_never_calls_a_model() -> None:
@@ -190,8 +192,10 @@ async def test_a_model_supplied_out_of_range_coordinate_is_discarded(
             }
         )
     )
+    # "???" so the rules parser genuinely cannot answer and the model is
+    # reached - a written place name is now parsed without one.
     parsed, _ = await parse_user_message(
-        "the usual place", step=ProjectStep.LOCATION, settings=ollama_settings
+        "???", step=ProjectStep.LOCATION, settings=ollama_settings
     )
     assert parsed.intent is ChatIntent.UNKNOWN
 

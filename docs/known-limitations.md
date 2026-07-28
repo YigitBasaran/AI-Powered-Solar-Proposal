@@ -14,7 +14,7 @@ These are honestly unproven. Nothing elsewhere in the repository claims otherwis
 |---|---|
 | **Live Google Static Maps** | No API key was available. The code path is unit-tested with a mocked transport — it has never received a real Google response. Status, content type and payload size are validated, but the raster itself has not been seen. |
 | **GitHub Actions CI** | No git remote exists, so `.github/workflows/ci.yml` has never executed. Its commands are verified locally. There is no green badge and none is implied. |
-| **Live Ollama with a pulled model** | The adapter is fully tested against a mocked transport, including schema validation, timeout, invalid JSON and fallback. Whether `qwen3.5:2b` produces *good* extractions in practice has not been measured — only that whatever it produces is validated before use. |
+| **Live Ollama with a pulled model** | The adapter is fully tested against a mocked transport, including schema validation, timeout, invalid JSON and fallback. An attempt to pull `qwen3.5:2b` (2.7 GB) exhausted the disk and was abandoned, so no real model has ever answered. Whether it produces *good* extractions is unmeasured — only that whatever it returns is validated before use. |
 | **SMTP notifications** | `EMAIL_MODE=console` is exercised; the SMTP branch is configuration-dependent and untested. |
 
 ## Not attempted

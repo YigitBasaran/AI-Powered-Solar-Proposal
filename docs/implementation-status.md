@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated: all phases complete. 355 API tests + 20 web tests + 10 E2E passing; archive verified from a clean extraction._
+_Last updated: 445 API + 38 web + 10 E2E passing; MyPy strict clean; Docker stack verified; archive verified from a clean extraction._
 
 ---
 
@@ -194,6 +194,48 @@ The commit `674b333` was made with one test failing and its message claimed 354 
 ### Packaging
 
 `git archive` builds the submission, so `.gitignore` is the single definition of what ships and there is no second exclude list to drift. Pre-flight refuses a tracked `.env`, greps for key patterns, and fails if the sample PDF is missing. `verify-submission.sh` extracts to a throwaway directory and follows the README from scratch.
+
+---
+
+---
+
+## Docker verification
+
+Run on 2026-07-27 against a clean `docker compose build`.
+
+```
+$ docker compose build                      -> exit 0, both images
+$ docker compose up -d                      -> solarvis-api Healthy, solarvis-web Started
+$ docker exec solarvis-api python -c "import sys; print(sys.version)"
+                                               3.12.13
+$ docker exec solarvis-api python -c "...get_settings()..."
+                                               fixtures -> /fixtures (exists)
+                                               m/px 0.06184999671148604
+$ docker exec solarvis-api python -c "...playwright..."
+                                               chromium 149.0.7827.55
+$ docker exec solarvis-api python -m alembic current
+                                               1c779d205bda (head)
+$ docker exec solarvis-api python -m alembic upgrade head
+                                               exit 0 (no-op)
+$ curl .../run-analysis                     -> 15 panels, 9502.18 kWh, pvgis=live
+                                               fx 0.87804 live, payback 3.70 yr
+$ curl .../proposals/<token>/pdf            -> HTTP 200, application/pdf, 104,383 bytes
+$ curl http://127.0.0.1:3000/                -> 200
+$ curl http://127.0.0.1:3000/dev/roof-calibration -> 200
+$ npx playwright test                        -> 10 passed (against the containers)
+```
+
+### Three real defects this found
+
+Each would have hit a reviewer on their first command, and none was visible outside a container.
+
+1. **`docker-compose.yml` did not parse.** `_comment` is not a valid root property, so `docker compose up --build` — the first line of the README — failed immediately.
+2. **The base image shipped Python 3.10.** The app needs 3.12 (`StrEnum`). It built cleanly and died at import. Root cause: the Dockerfile hand-duplicated the dependency list instead of installing from `pyproject.toml`, so `requires-python = ">=3.12"` was never enforced. It now installs from pyproject and asserts the interpreter at build time. The image also dropped from 3.75 GB to 662 MB.
+3. **`alembic upgrade head` failed in the container.** `create_all` left `alembic_version` empty, so Alembic tried to re-create existing tables. `init_db` now stamps the head revision.
+
+### Not re-confirmed at the end of the session
+
+A later attempt to pull the optional Ollama model (2.7 GB) filled the disk, and the Docker daemon has not recovered since. The evidence above was captured **before** that and is unaffected, but the stack was not brought up again afterwards. **Ollama-active mode is therefore unverified** — the adapter is tested only against a mocked transport.
 
 ---
 

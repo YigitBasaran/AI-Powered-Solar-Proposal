@@ -14,7 +14,7 @@ These are honestly unproven. Nothing elsewhere in the repository claims otherwis
 |---|---|
 | **Live Google Static Maps** | No API key was available. The code path is unit-tested with a mocked transport — it has never received a real Google response. Status, content type and payload size are validated, but the raster itself has not been seen. |
 | **GitHub Actions CI** | No git remote exists, so `.github/workflows/ci.yml` has never executed. Its commands are verified locally. There is no green badge and none is implied. |
-| **Live Ollama with a pulled model** | The adapter is fully tested against a mocked transport, including schema validation, timeout, invalid JSON and fallback. An attempt to pull `qwen3.5:2b` (2.7 GB) exhausted the disk and was abandoned, so no real model has ever answered. Whether it produces *good* extractions is unmeasured — only that whatever it returns is validated before use. |
+| **Live Ollama with a pulled model** | The adapter is fully tested against a mocked transport, including schema validation, timeout, invalid JSON and fallback, and the E2E degraded tier proves the fallback to the rules parser when Ollama is configured but unreachable. No real model has ever answered: an earlier pull attempt exhausted the disk, and on 2026-07-28 the host had 5.29 GB free — below the 8 GB floor agreed for this work — so the pull was not retried. The four `@live` Ollama specs are implemented and **skip with a stated reason**; they never pull a model themselves. Whether `qwen3.5:2b` extracts *well* is unmeasured — only that whatever it returns is validated before use. |
 | **SMTP notifications** | `EMAIL_MODE=console` is exercised; the SMTP branch is configuration-dependent and untested. |
 | **Full WCAG 2.1 AA compliance** | `@axe-core/playwright` runs clean over three screens, and the suite additionally proves keyboard-only completion, heading order and text-not-colour provenance. Automated tooling catches roughly a third of WCAG failures; no screen-reader, zoom or forced-colours testing has been done. **No compliance claim is made.** |
 
@@ -89,7 +89,7 @@ With PVGIS and the FX provider both unreachable, an analysis takes about **25 se
 Tokens carry 192 bits of entropy and are unguessable, but there is no expiry, no revocation and no rate limiting on the public route. A leaked link is permanent.
 
 ### SQLite
-One file, one writer. Correct for this workload; a real deployment would want Postgres. The SQLAlchemy layer is portable and Alembic migrations use batch mode, so the move is mechanical.
+One file, one writer. The engine runs in WAL mode with a 5-second `busy_timeout`, so concurrent writers queue instead of failing instantly — verified by the E2E concurrency specs — but the write path is still serialised. Correct for this workload; a real deployment would want Postgres. The SQLAlchemy layer is portable and Alembic migrations use batch mode, so the move is mechanical.
 
 ---
 
@@ -104,8 +104,10 @@ One file, one writer. Correct for this workload; a real deployment would want Po
 ## Platform
 
 - `make` is not available on Windows by default. The Makefile ships for parity; `scripts/setup.ps1` and the npm scripts are the real entry points.
-- `python3` resolves to a non-functional Microsoft Store stub on many Windows machines. `verify-submission.sh` probes interpreters **by executing them** rather than by name for this reason.
-- The API image carries Chromium for PDF rendering, so it is larger than a plain API image would be (662 MB). An earlier revision built on the Playwright base image and reached 3.75 GB; installing from pyproject onto python:3.12-slim removed most of that.
+- `python3` resolves to a non-functional Microsoft Store stub on many Windows machines. Both `verify-submission.sh` and `verify-submission.ps1` probe interpreters **by executing them** rather than by name for this reason.
+- Packaging and verification ship in **both** shells (`scripts/*.sh` and `scripts/*.ps1`), and both were executed on this machine. The `.ps1` scripts are real PowerShell, not wrappers that shell out to Bash, because a Windows machine without Git Bash cannot run the `.sh` versions at all.
+- Connecting to an unbound local port on Windows **times out** rather than being refused — the SYN is dropped. Anything that simulates an unreachable service should use an unresolvable host (`*.invalid`) instead, which the E2E degraded stack does.
+- The API image carries Chromium for PDF rendering, so it is much larger than a plain API image would be: **2.44 GB**, measured on 2026-07-28 (the web image is 1.74 GB). An earlier revision built on the Playwright base image; installing from pyproject onto  removed a layer of duplication but not Chromium itself, which is what makes in-container PDF rendering work. Splitting rendering into its own service would shrink the API image and is the obvious next step.
 
 ---
 

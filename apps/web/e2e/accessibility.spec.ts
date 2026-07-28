@@ -1,4 +1,5 @@
 import AxeBuilder from "@axe-core/playwright";
+import type { Page } from "@playwright/test";
 
 import { expect, test } from "./fixtures/proposal";
 
@@ -38,6 +39,24 @@ function describeViolations(
   );
 }
 
+/**
+ * Wait for every running animation to finish before measuring.
+ *
+ * Chat bubbles fade in over 180 ms. Scanned mid-fade, a partly transparent
+ * bubble composites to #78797a on white and axe correctly reports 4.21:1 —
+ * a real measurement of a state that exists for a sixth of a second and is
+ * exempt from the contrast requirement anyway. The result depended on machine
+ * load, which is the worst kind of test: right sometimes, for no visible
+ * reason. Measure the settled page instead.
+ */
+async function settle(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => document.getAnimations().every((animation) => animation.playState !== "running"),
+    undefined,
+    { timeout: 10_000 },
+  );
+}
+
 test.describe("@p1 accessibility", () => {
   test("the intake screen has no automatically detectable violations", async ({
     solarFlow,
@@ -49,6 +68,7 @@ test.describe("@p1 accessibility", () => {
     // mid-flight makes the result depend on machine load.
     await expect(solarFlow.status("parser")).toBeVisible();
     await expect(solarFlow.status("imagery")).toBeVisible();
+    await settle(page);
 
     const results = await new AxeBuilder({ page }).withTags(WCAG).analyze();
     expect(describeViolations(results.violations)).toEqual([]);
@@ -60,6 +80,7 @@ test.describe("@p1 accessibility", () => {
   }) => {
     await solarFlow.open();
     await solarFlow.completeIntake({ size: 6 });
+    await settle(page);
 
     const results = await new AxeBuilder({ page })
       .withTags(WCAG)
@@ -77,6 +98,7 @@ test.describe("@p1 accessibility", () => {
   }) => {
     const { shareToken } = await api.finalisedProposal("6 kWp");
     await proposalPage.open(shareToken);
+    await settle(page);
 
     const results = await new AxeBuilder({ page }).withTags(WCAG).analyze();
     expect(describeViolations(results.violations)).toEqual([]);

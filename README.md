@@ -212,6 +212,8 @@ Integration tests run fully offline against a throwaway database in fixture mode
 - Imagery date is unknown and may predate changes to the property.
 - The roof calibration derives from a minimum-area rectangle fit; a human should confirm it against current imagery before any commercial use.
 - 3D rendering was not attempted. The brief prioritises the 2D flow, and the chosen bonus is proposal-view tracking.
+- **Active Ollama is unverified.** The adapter is tested against a mocked transport and the fallback to the rules parser is tested against a genuinely unreachable daemon, but no real model has ever answered — the pull needs disk this machine did not have. The `@live` Ollama specs are implemented and skip with that reason; they never pull a model themselves.
+- **Accessibility is checked, not certified.** axe runs clean over three screens and the suite proves keyboard-only completion, heading order and text-not-colour provenance. That is a safety net, not a WCAG compliance claim.
 
 ---
 

@@ -230,7 +230,7 @@ $ npx playwright test                        -> 10 passed (against the container
 Each would have hit a reviewer on their first command, and none was visible outside a container.
 
 1. **`docker-compose.yml` did not parse.** `_comment` is not a valid root property, so `docker compose up --build` — the first line of the README — failed immediately.
-2. **The base image shipped Python 3.10.** The app needs 3.12 (`StrEnum`). It built cleanly and died at import. Root cause: the Dockerfile hand-duplicated the dependency list instead of installing from `pyproject.toml`, so `requires-python = ">=3.12"` was never enforced. It now installs from pyproject and asserts the interpreter at build time. The image also dropped from 3.75 GB to 662 MB.
+2. **The base image shipped Python 3.10.** The app needs 3.12 (`StrEnum`). It built cleanly and died at import. Root cause: the Dockerfile hand-duplicated the dependency list instead of installing from `pyproject.toml`, so `requires-python = ">=3.12"` was never enforced. It now installs from pyproject and asserts the interpreter at build time. (The image size quoted here at the time was later re-measured — see the 2026-07-28 re-verification above.)
 3. **`alembic upgrade head` failed in the container.** `create_all` left `alembic_version` empty, so Alembic tried to re-create existing tables. `init_db` now stamps the head revision.
 
 ---

@@ -154,6 +154,10 @@ Every wait is on an observable application state — a message rendered, a busy 
 | `accessibility.spec.ts` | axe over three screens, plus keyboard-only completion, heading order, and that provenance is never carried by colour alone. |
 | `degraded/fallbacks.spec.ts` | A complete proposal with every external dependency unreachable, each degraded number labelled, and parity never substituted for a failed rate lookup. |
 
+### One thing that had to be measured, not assumed
+
+The axe scans wait for `document.getAnimations()` to settle. Chat bubbles fade in over 180 ms, and a partly transparent bubble composites to `#78797a` on white — 4.21:1, which axe correctly reports. It is a real measurement of a state that lasts a sixth of a second and is exempt from the contrast rule anyway, and the result depended on machine load. That is the worst kind of test: right sometimes, for no visible reason. The scan measures the settled page instead. The animation already honours `prefers-reduced-motion`.
+
 ### Accessibility: what axe does and does not prove
 
 `@axe-core/playwright` is an **automated safety net**. It reliably catches contrast, naming, landmark and ARIA-shape problems, and it catches roughly a third of WCAG failures overall. **A clean axe run is not a claim of WCAG compliance and none is made here.** The manual assertions cover three things axe cannot see: that the intake is completable from the keyboard alone, that heading levels never skip, and that every provenance badge states its meaning in words.

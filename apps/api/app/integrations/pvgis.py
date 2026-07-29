@@ -2,10 +2,17 @@
 
 The LLM never estimates production; this is where the numbers come from.
 
-Fixture responses are parsed by exactly the same code as live ones, so fixture
-mode cannot drift into being a second, subtly different implementation. What
-mode a number came from is always carried on the result and surfaced to the
-user - a fixture is never presented as live.
+Every facet is probed once at **1 kWp**. Specific yield is independent of
+installed power, so one normalised observation per facet serves the ranking the
+optimiser needs *and* the production figure for whatever size is chosen - from
+the same observation, so the two cannot disagree. Production is then
+`installed kWp x specific yield`, which is arithmetic rather than a second call.
+
+Retry policy is explicit and bounded. Transient statuses get the full budget, a
+500 gets one cautious extra attempt, anything else is permanent, and a 200 whose
+body parses as JSON but not as a PVcalc response is a permanent failure too -
+retrying a deterministic parse failure only delays it. Time is injected, so the
+retry tests run in milliseconds rather than waiting.
 """
 
 from __future__ import annotations
@@ -15,7 +22,10 @@ import json
 import logging
 import random
 import time
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,9 +37,59 @@ from app.domain.models import DataSource, RoofFacet
 
 logger = logging.getLogger("solarvis.pvgis")
 
-RETRY_DELAYS = (0.5, 1.0, 2.0)
-RETRYABLE_STATUS = {429, 500, 502, 503, 504, 529}
+#: Statuses worth the full retry budget: the service is up but busy or briefly
+#: unwell, and the next attempt plausibly succeeds.
+TRANSIENT_STATUS = frozenset({429, 502, 503, 504, 529})
+
+#: Statuses that get a *bounded* second chance. A 500 is ambiguous - plausibly a
+#: blip, plausibly a request PVGIS mishandled - so one retry buys the blip case
+#: without spending the whole ladder confirming a deterministic failure.
+CAUTIOUS_STATUS_ATTEMPTS: dict[int, int] = {500: 2}
+
 MAX_CONCURRENCY = 4
+
+#: The loss fields PVGIS reports, and the names they are stored under. `l_spec`
+#: arrives as a JSON *string* while the rest are numbers, and three of the four
+#: are negative percentages - so each is coerced separately and a field that
+#: will not coerce is simply dropped.
+LOSS_FIELDS = {
+    "l_aoi": "angleOfIncidencePercent",
+    "l_spec": "spectralPercent",
+    "l_tg": "temperatureAndIrradiancePercent",
+    "l_total": "totalPercent",
+}
+
+
+# ---------------------------------------------------------------------------
+# Injected time
+# ---------------------------------------------------------------------------
+
+
+def _default_jitter(upper: float) -> float:
+    return random.uniform(0.0, upper)
+
+
+@dataclass(frozen=True)
+class RetryClock:
+    """Everything time-dependent about a retry, in one injectable place.
+
+    Real by default. Tests supply a fake that advances a virtual clock and
+    records what it was asked to sleep, so the retry suite asserts on a
+    schedule instead of waiting several seconds per case - which is how retry
+    logic ends up untested.
+    """
+
+    now: Callable[[], float] = time.monotonic
+    sleep: Callable[[float], Awaitable[None]] = asyncio.sleep
+    jitter: Callable[[float], float] = _default_jitter
+
+
+DEFAULT_RETRY_CLOCK = RetryClock()
+
+
+# ---------------------------------------------------------------------------
+# Results
+# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
@@ -37,11 +97,58 @@ class PvgisResult:
     annual_kwh: float
     monthly_kwh: list[float]
     specific_yield_kwh_per_kwp: float
+    #: The same twelve values normalised to 1 kWp, so production at any size is
+    #: a multiplication rather than another request.
+    monthly_specific_yield_kwh_per_kwp: list[float]
     peak_power_kwp: float
     aspect_deg: float
     angle_deg: float
     radiation_database: str
     data_source: DataSource
+    retrieved_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+    #: The query actually sent, for provenance. Never used for control flow.
+    request_params: dict[str, Any] = field(default_factory=dict)
+    #: PVGIS's own loss breakdown where it returned one - angle of incidence,
+    #: spectral, temperature. Recorded, never recomputed.
+    losses_percent: dict[str, float] | None = None
+
+
+@dataclass(frozen=True)
+class FacetProbe:
+    """One facet's normalised observation."""
+
+    facet_id: str
+    compass_azimuth_deg: float
+    pvgis_aspect_deg: float
+    angle_deg: float
+    result: PvgisResult
+
+    @property
+    def specific_yield_kwh_per_kwp(self) -> float:
+        return self.result.specific_yield_kwh_per_kwp
+
+
+@dataclass(frozen=True)
+class PvgisProbeSet:
+    """Every usable facet, probed at 1 kWp, from one batch.
+
+    A partial set is never produced: the optimiser ranks facets *against each
+    other*, so a missing facet silently changes which roof planes get panels.
+    That is not a smaller problem than a missing analysis.
+    """
+
+    probes: dict[str, FacetProbe]
+    endpoint: str
+    batch_completed_at: datetime
+    data_source: DataSource
+    request_params: dict[str, Any]
+
+    def yields(self) -> dict[str, float]:
+        return {fid: p.specific_yield_kwh_per_kwp for fid, p in self.probes.items()}
+
+    @property
+    def radiation_databases(self) -> set[str]:
+        return {p.result.radiation_database for p in self.probes.values()}
 
 
 @dataclass
@@ -52,11 +159,11 @@ class _CacheEntry:
 
 @dataclass
 class InMemoryPvgisCache:
-    """Process-lifetime cache.
+    """Per-request cache.
 
-    PVGIS yields for a fixed site are stable over the analysis horizon and the
-    service asks to be used politely, so a long TTL is appropriate. The cache
-    is keyed on every parameter that changes the answer, per the brief.
+    Kept while fixture mode still exists. Once every probe is a 1 kWp call at a
+    distinct aspect, no two keys within a request can collide and there is no
+    cross-request reuse, so this becomes dead weight.
     """
 
     ttl_seconds: float
@@ -105,8 +212,43 @@ def build_cache_key(
     )
 
 
-def parse_pvcalc(payload: dict[str, Any], *, source: DataSource) -> PvgisResult:
-    """Parse a PVcalc payload. Shared by live and fixture paths."""
+# ---------------------------------------------------------------------------
+# Parsing
+# ---------------------------------------------------------------------------
+
+
+def _losses(totals: dict[str, Any]) -> dict[str, float] | None:
+    """PVGIS's loss breakdown, coerced field by field.
+
+    A loss figure is provenance, not a number anything depends on, so one that
+    will not coerce is dropped rather than allowed to fail an otherwise-good
+    response.
+    """
+    found: dict[str, float] = {}
+    for source_key, name in LOSS_FIELDS.items():
+        if source_key not in totals:
+            continue
+        try:
+            found[name] = float(totals[source_key])
+        except (TypeError, ValueError):
+            logger.debug("PVGIS loss field %s was not numeric: %r", source_key, totals[source_key])
+    return found or None
+
+
+def parse_pvcalc(
+    payload: dict[str, Any],
+    *,
+    source: DataSource,
+    request_params: dict[str, Any] | None = None,
+    retrieved_at: datetime | None = None,
+) -> PvgisResult:
+    """Parse a PVcalc payload.
+
+    A failure here is **permanent**. The body arrived intact and is valid JSON;
+    it simply is not a PVcalc response, and asking again would produce the same
+    thing. Transport-level damage - a truncated body that will not parse as JSON
+    at all - is handled in the fetch loop, where it is genuinely worth retrying.
+    """
     try:
         outputs = payload["outputs"]
         totals = outputs["totals"]["fixed"]
@@ -137,12 +279,38 @@ def parse_pvcalc(payload: dict[str, Any], *, source: DataSource) -> PvgisResult:
         annual_kwh=annual,
         monthly_kwh=monthly,
         specific_yield_kwh_per_kwp=annual / peak,
+        monthly_specific_yield_kwh_per_kwp=[m / peak for m in monthly],
         peak_power_kwp=peak,
         aspect_deg=aspect,
         angle_deg=angle,
         radiation_database=radiation_db,
         data_source=source,
+        retrieved_at=retrieved_at or datetime.now(UTC),
+        request_params=dict(request_params or {}),
+        losses_percent=_losses(totals),
     )
+
+
+def parse_retry_after(value: str | None, *, now: datetime | None = None) -> float | None:
+    """`Retry-After`, in seconds. Both the delta and the HTTP-date form."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value.strip()))
+    except ValueError:
+        pass
+    try:
+        when = parsedate_to_datetime(value)
+    except (TypeError, ValueError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    return max(0.0, (when - (now or datetime.now(UTC))).total_seconds())
+
+
+# ---------------------------------------------------------------------------
+# Client
+# ---------------------------------------------------------------------------
 
 
 class PvgisClient:
@@ -152,10 +320,10 @@ class PvgisClient:
         *,
         cache: InMemoryPvgisCache | None = None,
         client: httpx.AsyncClient | None = None,
-        retry_delays: tuple[float, ...] = RETRY_DELAYS,
+        retry_clock: RetryClock | None = None,
     ) -> None:
         self._settings = settings or get_settings()
-        self._retry_delays = retry_delays
+        self._clock = retry_clock or DEFAULT_RETRY_CLOCK
         self._cache = cache or InMemoryPvgisCache(
             ttl_seconds=self._settings.pvgis_cache_ttl_hours * 3600
         )
@@ -204,44 +372,110 @@ class PvgisClient:
             annual_kwh=base.annual_kwh * factor,
             monthly_kwh=[m * factor for m in base.monthly_kwh],
             specific_yield_kwh_per_kwp=base.specific_yield_kwh_per_kwp,
+            monthly_specific_yield_kwh_per_kwp=base.monthly_specific_yield_kwh_per_kwp,
             peak_power_kwp=peak_power_kwp,
             aspect_deg=base.aspect_deg,
             angle_deg=base.angle_deg,
             radiation_database=base.radiation_database,
             data_source=source,
+            losses_percent=base.losses_percent,
         )
 
     # -- live -------------------------------------------------------------
 
+    def _backoff(self, attempt: int) -> float:
+        """Exponential with full jitter, so concurrent facets do not resonate."""
+        s = self._settings
+        ceiling = min(
+            s.pvgis_retry_base_delay_seconds * (2 ** (attempt - 1)),
+            s.pvgis_retry_max_delay_seconds,
+        )
+        return self._clock.jitter(ceiling)
+
     async def _fetch_live(self, params: dict[str, Any]) -> dict[str, Any]:
-        url = f"{self._settings.pvgis_base_url}/PVcalc"
-        timeout = self._settings.pvgis_timeout_seconds
+        s = self._settings
+        url = f"{s.pvgis_base_url}/PVcalc"
+        started = self._clock.now()
+        attempt = 0
+        last_error = "unknown"
+
+        async def _once(
+            client: httpx.AsyncClient,
+        ) -> tuple[dict[str, Any] | None, int, float | None]:
+            """One attempt. Returns `(payload, attempt_cap, retry_after)`.
+
+            A cap below the configured maximum is how a 500 gets exactly one
+            extra try without a special case in the loop.
+            """
+            nonlocal last_error
+            try:
+                # Redirects are refused, never followed: a 3xx moves the request
+                # off the origin whose trustworthiness was just established.
+                response = await client.get(
+                    url, params=params, timeout=s.pvgis_timeout_seconds, follow_redirects=False
+                )
+            except (httpx.TimeoutException, httpx.TransportError) as exc:
+                last_error = type(exc).__name__
+                return None, s.pvgis_max_attempts, None
+
+            status = response.status_code
+            if response.is_redirect:
+                raise PvgisUnavailableError(
+                    f"PVGIS redirected to {response.headers.get('location')!r}; refusing to "
+                    f"follow it off the trusted origin",
+                    details={"status": status},
+                )
+            if status == 200:
+                try:
+                    return dict(response.json()), s.pvgis_max_attempts, None
+                except (json.JSONDecodeError, ValueError) as exc:
+                    # A body that is not JSON at all is plausibly a truncated
+                    # transfer, which is worth another try. A body that *is*
+                    # JSON but not a PVcalc response is not - `parse_pvcalc`
+                    # raises for that, outside this loop.
+                    last_error = f"invalid JSON: {exc}"
+                    return None, s.pvgis_max_attempts, None
+
+            last_error = f"HTTP {status}"
+            retry_after = parse_retry_after(response.headers.get("Retry-After"))
+            if status in TRANSIENT_STATUS:
+                return None, s.pvgis_max_attempts, retry_after
+            if status in CAUTIOUS_STATUS_ATTEMPTS:
+                return None, CAUTIOUS_STATUS_ATTEMPTS[status], retry_after
+            raise PvgisUnavailableError(
+                f"PVGIS rejected the request: {last_error}", details={"status": status}
+            )
 
         async def _do(client: httpx.AsyncClient) -> dict[str, Any]:
-            last_error: str = "unknown"
-            for attempt, delay in enumerate((*self._retry_delays, None)):
-                try:
-                    response = await client.get(url, params=params, timeout=timeout)
-                    if response.status_code == 200:
-                        return dict(response.json())
-                    last_error = f"HTTP {response.status_code}"
-                    if response.status_code not in RETRYABLE_STATUS:
-                        raise PvgisUnavailableError(
-                            f"PVGIS rejected the request: {last_error}",
-                            details={"status": response.status_code},
-                        )
-                except (httpx.TimeoutException, httpx.TransportError) as exc:
-                    last_error = type(exc).__name__
-                except json.JSONDecodeError as exc:
-                    last_error = f"invalid JSON: {exc}"
+            nonlocal attempt
+            while True:
+                attempt += 1
+                payload, cap, retry_after = await _once(client)
+                if payload is not None:
+                    return payload
 
-                if delay is None:
-                    break
-                # Jitter so retries from concurrent facets do not resonate.
-                await asyncio.sleep(delay + random.uniform(0, 0.1))
-                logger.warning("PVGIS retry %d after %s", attempt + 1, last_error)
+                if attempt >= min(cap, s.pvgis_max_attempts):
+                    raise PvgisUnavailableError(
+                        f"PVGIS unavailable after {attempt} attempts: {last_error}",
+                        details={"attempts": attempt, "lastError": last_error},
+                    )
 
-            raise PvgisUnavailableError(f"PVGIS unavailable after retries: {last_error}")
+                elapsed = self._clock.now() - started
+                remaining = s.pvgis_retry_budget_seconds - elapsed
+                if remaining <= 0:
+                    raise PvgisUnavailableError(
+                        f"PVGIS retry budget of {s.pvgis_retry_budget_seconds:.0f}s "
+                        f"exhausted after {attempt} attempts: {last_error}",
+                        details={"attempts": attempt, "lastError": last_error},
+                    )
+
+                # A server-suggested delay is honoured, but never beyond what is
+                # left of the budget: a customer's request is not held open for
+                # five minutes because a header asked nicely.
+                suggested = retry_after if retry_after is not None else self._backoff(attempt)
+                delay = min(suggested, remaining)
+                logger.warning("PVGIS retry %d in %.2fs after %s", attempt, delay, last_error)
+                await self._clock.sleep(delay)
 
         if self._client is not None:
             return await _do(self._client)
@@ -300,7 +534,7 @@ class PvgisClient:
         try:
             async with self._semaphore:
                 payload = await self._fetch_live(params)
-            result = parse_pvcalc(payload, source=DataSource.LIVE)
+            result = parse_pvcalc(payload, source=DataSource.LIVE, request_params=params)
         except PvgisUnavailableError:
             if not s.pvgis_fallback_enabled:
                 raise
@@ -325,11 +559,100 @@ class PvgisClient:
         return result
 
 
+# ---------------------------------------------------------------------------
+# Probing every facet, once
+# ---------------------------------------------------------------------------
+
+
+async def probe_facets(
+    facets: Sequence[RoofFacet],
+    *,
+    settings: Settings | None = None,
+    client: PvgisClient | None = None,
+    http_client: httpx.AsyncClient | None = None,
+) -> PvgisProbeSet:
+    """One 1 kWp observation per facet, concurrently, on one connection pool.
+
+    Concurrent matters twice. It is four round trips instead of four in series,
+    and - because each facet carries its own retry budget - a bad PVGIS day
+    costs roughly one budget in wall-clock rather than four. Getting that wrong
+    is silent: the numbers come out identical and only the latency betrays it.
+
+    Every facet is probed, not just the ones that will receive panels, because
+    the optimiser ranks them against each other and a later size change must be
+    answerable without another call.
+    """
+    settings = settings or get_settings()
+
+    async def _run(pvgis: PvgisClient) -> PvgisProbeSet:
+        started = datetime.now(UTC)
+        results = await asyncio.gather(
+            *(
+                pvgis.pvcalc(
+                    lat=settings.case_resolved_latitude,
+                    lon=settings.case_resolved_longitude,
+                    peak_power_kwp=1.0,
+                    angle_deg=facet.pitch_deg,
+                    aspect_deg=facet.pvgis_aspect_deg,
+                )
+                for facet in facets
+            ),
+            return_exceptions=True,
+        )
+
+        probes: dict[str, FacetProbe] = {}
+        failures: list[str] = []
+        for facet, outcome in zip(facets, results, strict=True):
+            if isinstance(outcome, BaseException):
+                failures.append(f"{facet.id}: {outcome}")
+                continue
+            probes[facet.id] = FacetProbe(
+                facet_id=facet.id,
+                compass_azimuth_deg=facet.compass_azimuth_deg,
+                pvgis_aspect_deg=facet.pvgis_aspect_deg,
+                angle_deg=facet.pitch_deg,
+                result=outcome,
+            )
+
+        if failures:
+            # No partial set. The optimiser ranks facets against each other, so
+            # a missing facet does not shrink the problem - it silently changes
+            # which roof planes get panels.
+            raise PvgisUnavailableError(
+                "PVGIS did not answer for every roof facet, so no layout can be "
+                f"optimised: {'; '.join(failures)}",
+                details={"facets": [f.split(":")[0] for f in failures]},
+            )
+
+        sources = {p.result.data_source for p in probes.values()}
+        aggregate = DataSource.LIVE if sources == {DataSource.LIVE} else next(iter(sources))
+        first = next(iter(probes.values())).result
+        return PvgisProbeSet(
+            probes=probes,
+            endpoint=f"{settings.pvgis_base_url}/PVcalc",
+            batch_completed_at=max(
+                (p.result.retrieved_at for p in probes.values()), default=started
+            ),
+            data_source=aggregate,
+            request_params={
+                k: v for k, v in first.request_params.items() if k not in {"aspect", "angle"}
+            },
+        )
+
+    if client is not None:
+        return await _run(client)
+    if http_client is not None:
+        return await _run(PvgisClient(settings, client=http_client))
+    # One pool for the batch, rather than a fresh connection per facet.
+    async with httpx.AsyncClient() as pooled:
+        return await _run(PvgisClient(settings, client=pooled))
+
+
 class PvgisFacetYieldRankingProvider:
     """Live ranking implementation of :class:`FacetYieldRankingProvider`.
 
     A 1 kWp probe is enough: specific yield is independent of installed power,
-    so one cached probe per aspect serves every system size.
+    so one probe per aspect serves every system size.
     """
 
     def __init__(self, client: PvgisClient, *, settings: Settings | None = None) -> None:

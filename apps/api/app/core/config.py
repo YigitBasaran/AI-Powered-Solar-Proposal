@@ -185,6 +185,17 @@ class Settings(BaseSettings):
     pvgis_timeout_seconds: float = 15.0
     pvgis_cache_ttl_hours: int = 168
 
+    #: How hard a single facet probe tries before the whole analysis fails.
+    #:
+    #: Two bounds, whichever binds first: a hard attempt count, and a wall-clock
+    #: budget so a run of slow responses or a generous `Retry-After` cannot hold
+    #: a customer's request open. The facets are probed concurrently, so the
+    #: batch costs roughly one budget rather than four.
+    pvgis_max_attempts: int = 4
+    pvgis_retry_budget_seconds: float = 30.0
+    pvgis_retry_base_delay_seconds: float = 0.5
+    pvgis_retry_max_delay_seconds: float = 8.0
+
     # --- fx ----------------------------------------------------------------
     fx_mode: FxMode = FxMode.LIVE
     fx_provider: str = "frankfurter"

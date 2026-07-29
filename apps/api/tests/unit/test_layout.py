@@ -21,10 +21,7 @@ from app.services.layout import (
     generate_layout,
 )
 from app.services.roof import build_roof_model, facet_surface_polygon
-from app.services.yield_ranking import (
-    FixtureFacetYieldRankingProvider,
-    StaticFacetYieldRankingProvider,
-)
+from tests.support.yields import fixture_yields
 
 PITCH = 25.0
 COS_PITCH = math.cos(math.radians(PITCH))
@@ -41,8 +38,9 @@ def roof():
 
 
 @pytest.fixture(scope="module")
-def provider():
-    return FixtureFacetYieldRankingProvider()
+def provider(roof):
+    """The captured 1 kWp sweep, as the plain mapping the optimiser now takes."""
+    return fixture_yields(roof.facets)
 
 
 # ---------------------------------------------------------------------------
@@ -64,7 +62,7 @@ def test_non_integral_system_size_is_rejected(settings) -> None:
 async def test_each_case_size_places_the_requested_count(
     roof, provider, settings, size, expected
 ) -> None:
-    layout = await generate_layout(roof, size, provider, settings)
+    layout = generate_layout(roof, size, provider, settings)
     assert layout.requested_panel_count == expected
     assert layout.placed_panel_count == expected
     assert layout.is_fully_satisfied
@@ -75,14 +73,14 @@ async def test_each_case_size_places_the_requested_count(
 async def test_installed_power_equals_count_times_panel_rating(
     roof, provider, settings, size
 ) -> None:
-    layout = await generate_layout(roof, size, provider, settings)
+    layout = generate_layout(roof, size, provider, settings)
     assert layout.feasible_system_size_kwp == pytest.approx(layout.placed_panel_count * 0.4)
     assert layout.feasible_system_size_kwp == pytest.approx(size)
 
 
 async def test_unsupported_system_size_is_refused(roof, provider, settings) -> None:
     with pytest.raises(ValueError):
-        await generate_layout(roof, 5.0, provider, settings)
+        generate_layout(roof, 5.0, provider, settings)
 
 
 # ---------------------------------------------------------------------------
@@ -92,14 +90,14 @@ async def test_unsupported_system_size_is_refused(roof, provider, settings) -> N
 
 @pytest.mark.parametrize("size", [3.6, 6.0, 9.6])
 async def test_layout_passes_its_own_post_conditions(roof, provider, settings, size) -> None:
-    layout = await generate_layout(roof, size, provider, settings)
+    layout = generate_layout(roof, size, provider, settings)
     assert_layout_valid(roof, layout, settings)
 
 
 @pytest.mark.parametrize("size", [3.6, 6.0, 9.6])
 async def test_every_panel_lies_fully_within_its_facet(roof, provider, settings, size) -> None:
     """Containment of the whole footprint, not just the centre."""
-    layout = await generate_layout(roof, size, provider, settings)
+    layout = generate_layout(roof, size, provider, settings)
     for facet_layout in layout.facet_layouts:
         facet = roof.facet(facet_layout.facet_id)
         usable = Polygon([(p.x, p.y) for p in facet_surface_polygon(roof, facet)])
@@ -109,7 +107,7 @@ async def test_every_panel_lies_fully_within_its_facet(roof, provider, settings,
 
 @pytest.mark.parametrize("size", [3.6, 6.0, 9.6])
 async def test_no_two_panels_overlap(roof, provider, settings, size) -> None:
-    layout = await generate_layout(roof, size, provider, settings)
+    layout = generate_layout(roof, size, provider, settings)
     for facet_layout in layout.facet_layouts:
         polys = [
             Polygon([(p.x, p.y) for p in panel.surface_polygon]) for panel in facet_layout.panels
@@ -121,7 +119,7 @@ async def test_no_two_panels_overlap(roof, provider, settings, size) -> None:
 
 async def test_configured_gap_is_respected(roof, provider, settings) -> None:
     """Neighbouring panels in a row must be at least the gap apart."""
-    layout = await generate_layout(roof, 9.6, provider, settings)
+    layout = generate_layout(roof, 9.6, provider, settings)
     gap = settings.panel_gap_m
     for facet_layout in layout.facet_layouts:
         polys = [
@@ -137,7 +135,7 @@ async def test_panels_are_physically_one_by_two_metres_on_the_slope(
     roof, provider, settings, size
 ) -> None:
     """The whole reason placement happens in surface coordinates."""
-    layout = await generate_layout(roof, size, provider, settings)
+    layout = generate_layout(roof, size, provider, settings)
     for panel in layout.panels:
         poly = panel.surface_polygon
         side_a = math.dist(poly[0].as_tuple(), poly[1].as_tuple())
@@ -148,7 +146,7 @@ async def test_panels_are_physically_one_by_two_metres_on_the_slope(
 
 async def test_projected_panel_is_foreshortened_by_cos_pitch(roof, provider, settings) -> None:
     """In plan view a panel must shrink along the slope - and only along it."""
-    layout = await generate_layout(roof, 3.6, provider, settings)
+    layout = generate_layout(roof, 3.6, provider, settings)
     for panel in layout.panels:
         surface_area = Polygon([(p.x, p.y) for p in panel.surface_polygon]).area
         projected_area = Polygon([(p.x, p.y) for p in panel.projected_metric_polygon]).area
@@ -156,7 +154,7 @@ async def test_projected_panel_is_foreshortened_by_cos_pitch(roof, provider, set
 
 
 async def test_panels_have_source_pixel_geometry_for_rendering(roof, provider, settings) -> None:
-    layout = await generate_layout(roof, 3.6, provider, settings)
+    layout = generate_layout(roof, 3.6, provider, settings)
     for panel in layout.panels:
         assert len(panel.source_pixel_polygon) == 4
         for p in panel.source_pixel_polygon:
@@ -192,7 +190,7 @@ def test_landscape_outperforms_portrait_on_these_facets(roof, settings) -> None:
 
 
 async def test_small_system_goes_entirely_to_the_best_facet(roof, provider, settings) -> None:
-    layout = await generate_layout(roof, 3.6, provider, settings)
+    layout = generate_layout(roof, 3.6, provider, settings)
     assert len(layout.facet_layouts) == 1
     assert layout.facet_layouts[0].facet_id == "facet_n"
 
@@ -208,7 +206,7 @@ async def test_medium_system_prefers_small_high_yield_facets_over_a_large_poor_o
     1367 and 1515, so the correct answer is to use both triangles and leave
     south empty.
     """
-    layout = await generate_layout(roof, 6.0, provider, settings)
+    layout = generate_layout(roof, 6.0, provider, settings)
     used = {fl.facet_id: fl.panel_count for fl in layout.facet_layouts}
 
     assert used["facet_n"] == 9
@@ -218,7 +216,7 @@ async def test_medium_system_prefers_small_high_yield_facets_over_a_large_poor_o
 
 
 async def test_full_system_uses_every_facet(roof, provider, settings) -> None:
-    layout = await generate_layout(roof, 9.6, provider, settings)
+    layout = generate_layout(roof, 9.6, provider, settings)
     assert {fl.facet_id for fl in layout.facet_layouts} == {
         "facet_n",
         "facet_s",
@@ -229,10 +227,8 @@ async def test_full_system_uses_every_facet(roof, provider, settings) -> None:
 
 async def test_allocation_follows_the_supplied_ranking_not_the_geometry(roof, settings) -> None:
     """Invert the yields and the allocation must invert with them."""
-    inverted = StaticFacetYieldRankingProvider(
-        {"facet_n": 100.0, "facet_s": 2000.0, "facet_e": 100.0, "facet_w": 100.0}
-    )
-    layout = await generate_layout(roof, 3.6, inverted, settings)
+    inverted = {"facet_n": 100.0, "facet_s": 2000.0, "facet_e": 100.0, "facet_w": 100.0}
+    layout = generate_layout(roof, 3.6, inverted, settings)
     assert [fl.facet_id for fl in layout.facet_layouts] == ["facet_s"]
 
 
@@ -240,8 +236,8 @@ async def test_expected_production_is_maximised_for_the_placed_count(
     roof, provider, settings
 ) -> None:
     """No reshuffle of the same number of panels can beat the chosen one."""
-    layout = await generate_layout(roof, 6.0, provider, settings)
-    yields = {f.id: provider.lookup(f.pvgis_aspect_deg) for f in roof.facets}
+    layout = generate_layout(roof, 6.0, provider, settings)
+    yields = provider
     chosen = sum(fl.panel_count * 0.4 * yields[fl.facet_id] for fl in layout.facet_layouts)
 
     capacity = {
@@ -265,8 +261,8 @@ async def test_expected_production_is_maximised_for_the_placed_count(
 
 @pytest.mark.parametrize("size", [3.6, 6.0, 9.6])
 async def test_repeated_runs_produce_identical_layouts(roof, provider, settings, size) -> None:
-    a = await generate_layout(roof, size, provider, settings)
-    b = await generate_layout(roof, size, provider, settings)
+    a = generate_layout(roof, size, provider, settings)
+    b = generate_layout(roof, size, provider, settings)
     assert a.model_dump_json() == b.model_dump_json()
 
 
@@ -285,7 +281,7 @@ async def test_large_setback_reduces_capacity_and_raises_a_warning(
     handled honestly rather than papered over.
     """
     tight = settings.model_copy(update={"roof_edge_setback_m": 1.0})
-    layout = await generate_layout(roof, 9.6, provider, tight)
+    layout = generate_layout(roof, 9.6, provider, tight)
 
     assert layout.requested_panel_count == 24
     assert layout.placed_panel_count < 24
@@ -297,7 +293,7 @@ async def test_large_setback_reduces_capacity_and_raises_a_warning(
 
 async def test_shortfall_still_prefers_the_best_facets(roof, provider, settings) -> None:
     tight = settings.model_copy(update={"roof_edge_setback_m": 1.0})
-    layout = await generate_layout(roof, 9.6, provider, tight)
+    layout = generate_layout(roof, 9.6, provider, tight)
     if layout.facet_layouts:
         best = max(layout.facet_layouts, key=lambda fl: fl.panel_count)
         assert best.facet_id == "facet_n"
@@ -305,7 +301,7 @@ async def test_shortfall_still_prefers_the_best_facets(roof, provider, settings)
 
 async def test_impossible_setback_yields_no_panels_and_a_warning(roof, provider, settings) -> None:
     absurd = settings.model_copy(update={"roof_edge_setback_m": 5.0})
-    layout = await generate_layout(roof, 3.6, provider, absurd)
+    layout = generate_layout(roof, 3.6, provider, absurd)
     assert layout.placed_panel_count == 0
     assert layout.feasible_system_size_kwp == 0
     assert layout.capacity_warning is not None
@@ -315,6 +311,6 @@ async def test_capacity_warning_never_claims_the_requested_size_was_installed(
     roof, provider, settings
 ) -> None:
     tight = settings.model_copy(update={"roof_edge_setback_m": 1.0})
-    layout = await generate_layout(roof, 9.6, provider, tight)
+    layout = generate_layout(roof, 9.6, provider, tight)
     assert layout.feasible_system_size_kwp < layout.requested_system_size_kwp
     assert not layout.is_fully_satisfied

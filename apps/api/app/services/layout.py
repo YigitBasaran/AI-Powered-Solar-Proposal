@@ -28,6 +28,7 @@ is what flows on to PVGIS and the financial model.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 from shapely.geometry import Polygon, box
@@ -44,7 +45,6 @@ from app.domain.models import (
     SolarPanel,
 )
 from app.services.roof import facet_surface_frame, facet_surface_polygon
-from app.services.yield_ranking import FacetYieldRankingProvider, rank_facets
 
 logger = logging.getLogger("solarvis.layout")
 
@@ -205,7 +205,7 @@ def build_facet_candidates(
 
 def _allocate(
     candidates_by_facet: list[list[FacetCandidate]],
-    yields: dict[str, float],
+    yields: Mapping[str, float],
     target: int,
     panel_kwp: float,
 ) -> dict[str, tuple[FacetCandidate, int]]:
@@ -288,12 +288,21 @@ def _to_panel(
     )
 
 
-async def generate_layout(
+def generate_layout(
     roof: RoofModel,
     requested_system_size_kwp: float,
-    provider: FacetYieldRankingProvider,
+    yields: Mapping[str, float],
     settings: Settings | None = None,
 ) -> PanelLayout:
+    """Place panels to maximise production for the requested count.
+
+    Takes the facet yields as data rather than a provider to await. They are
+    necessarily retrieved before layout can begin - the optimiser ranks the
+    facets against each other, so it needs all of them - which makes the port
+    that used to live here a decorated way of building a dict the caller
+    already had. Passing the mapping makes this a pure function, and lets the
+    coverage check below be an error rather than a silent zero.
+    """
     settings = settings or get_settings()
 
     if requested_system_size_kwp not in settings.allowed_system_sizes_kwp:
@@ -301,8 +310,14 @@ async def generate_layout(
             f"{requested_system_size_kwp} kWp is not one of {settings.allowed_system_sizes_kwp}"
         )
 
+    missing = [f.id for f in roof.facets if f.id not in yields]
+    if missing:
+        # `_allocate` reads `yields.get(facet_id, 0.0)`, so a missing facet used
+        # to score zero and simply never receive panels - a silently different
+        # layout rather than a failure.
+        raise ValueError(f"no yield supplied for {missing}; every facet must be ranked")
+
     requested_count = settings.required_panel_count(requested_system_size_kwp)
-    yields = await rank_facets(roof.facets, provider)
 
     candidates_by_facet = [build_facet_candidates(roof, f, settings) for f in roof.facets]
     capacity = sum(max((c.max_count for c in cs), default=0) for cs in candidates_by_facet)

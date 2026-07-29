@@ -83,6 +83,24 @@ class PvgisUnavailableError(AppError):
     message = "Solar production data could not be retrieved from PVGIS."
 
 
+class PvgisInconsistentProvenanceError(AppError):
+    """The facet probes did not all come from the same radiation database.
+
+    Distinct from `PVGIS_UNAVAILABLE` because the service answered perfectly
+    well - it just answered from more than one dataset, and the optimiser
+    compares the four specific yields directly, so they have to be comparable.
+    An operator reading the log needs to know it was a consistency problem
+    rather than an outage; they are fixed differently.
+    """
+
+    code = "PVGIS_INCONSISTENT_PROVENANCE"
+    status_code = 502
+    message = (
+        "PVGIS answered from more than one radiation database, so the facet "
+        "yields cannot be compared."
+    )
+
+
 class FxRateUnavailableError(AppError):
     code = "FX_RATE_UNAVAILABLE"
     status_code = 502

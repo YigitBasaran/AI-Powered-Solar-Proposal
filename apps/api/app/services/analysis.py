@@ -11,7 +11,6 @@ Nothing downstream ever sees the requested figure as though it were installed.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -19,9 +18,12 @@ from decimal import Decimal
 from typing import Any
 
 from app.core.config import Settings, get_settings
+from app.core.errors import (
+    PvgisInconsistentProvenanceError,
+    PvgisUnavailableError,
+)
 from app.domain.models import (
     CapexConversion,
-    DataSource,
     ExchangeRate,
     ExchangeRateSource,
     FacetYieldResult,
@@ -31,14 +33,10 @@ from app.domain.models import (
     YieldResult,
 )
 from app.integrations.exchange_rates import ExchangeRateService
-from app.integrations.pvgis import PvgisClient, PvgisFacetYieldRankingProvider
+from app.integrations.pvgis import PvgisClient, PvgisProbeSet, probe_facets
 from app.services.financial import calculate_financials, convert_capex
 from app.services.layout import assert_layout_valid, generate_layout
 from app.services.roof import build_roof_model, roof_summary
-from app.services.yield_ranking import (
-    FacetYieldRankingProvider,
-    FixtureFacetYieldRankingProvider,
-)
 
 logger = logging.getLogger("solarvis.analysis")
 
@@ -57,89 +55,82 @@ class AnalysisResult:
         return self.layout.capacity_warning
 
 
-async def compute_yield(
-    roof: RoofModel,
+def compute_yield(
     layout: PanelLayout,
-    client: PvgisClient,
+    probes: PvgisProbeSet,
     settings: Settings,
 ) -> YieldResult:
-    """Facet-level PVGIS for every facet that received panels.
+    """Production for a layout, from observations already made.
 
-    The requests are issued together. They are independent - one per facet,
-    each with its own aspect - and the client already holds a concurrency
-    semaphore for exactly this. Issuing them one after another costs three
-    round trips where one suffices, and when PVGIS is unreachable it costs
-    three *full retry budgets* in series before the fallback is reached, which
-    is a wait a customer would actually sit through.
-
-    ``gather`` preserves input order, so the results stay deterministic.
+    No I/O. Every facet was probed at 1 kWp before the layout existed - the
+    optimiser needed all of them to rank - so production here is
+    `installed kWp x specific yield`, arithmetic over the *same* observation
+    the ranking used. Two calls at two different powers could disagree; one
+    call and a multiplication cannot.
     """
     facet_results: list[FacetYieldResult] = []
     monthly_total = [0.0] * 12
     annual_total = 0.0
-    radiation_db: str | None = None
-    sources: set[DataSource] = set()
 
-    facets = [roof.facet(fl.facet_id) for fl in layout.facet_layouts]
-    installed = [fl.panel_count * settings.panel_power_kwp for fl in layout.facet_layouts]
-
-    results = await asyncio.gather(
-        *(
-            client.pvcalc(
-                lat=settings.case_resolved_latitude,
-                lon=settings.case_resolved_longitude,
-                peak_power_kwp=kwp,
-                angle_deg=facet.pitch_deg,
-                aspect_deg=facet.pvgis_aspect_deg,
+    for facet_layout in layout.facet_layouts:
+        probe = probes.probes.get(facet_layout.facet_id)
+        if probe is None:
+            # The layout placed panels on a facet that was never probed. That
+            # is a bug in the caller, not a facet worth zero.
+            raise PvgisUnavailableError(
+                f"no PVGIS probe for {facet_layout.facet_id}, which the layout uses"
             )
-            for facet, kwp in zip(facets, installed, strict=True)
-        )
-    )
 
-    for facet_layout, facet, installed_kwp, result in zip(
-        layout.facet_layouts, facets, installed, results, strict=True
-    ):
+        installed_kwp = facet_layout.panel_count * settings.panel_power_kwp
+        specific = probe.result.specific_yield_kwh_per_kwp
+        monthly = [m * installed_kwp for m in probe.result.monthly_specific_yield_kwh_per_kwp]
+        annual = installed_kwp * specific
+
         facet_results.append(
             FacetYieldResult(
-                facet_id=facet.id,
+                facet_id=probe.facet_id,
                 panel_count=facet_layout.panel_count,
                 installed_power_kwp=installed_kwp,
-                pitch_deg=facet.pitch_deg,
-                compass_azimuth_deg=facet.compass_azimuth_deg,
-                pvgis_aspect_deg=facet.pvgis_aspect_deg,
-                annual_production_kwh=result.annual_kwh,
-                specific_yield_kwh_per_kwp=result.specific_yield_kwh_per_kwp,
-                monthly_production_kwh=result.monthly_kwh,
-                data_source=result.data_source,
+                pitch_deg=probe.angle_deg,
+                compass_azimuth_deg=probe.compass_azimuth_deg,
+                pvgis_aspect_deg=probe.pvgis_aspect_deg,
+                annual_production_kwh=annual,
+                specific_yield_kwh_per_kwp=specific,
+                monthly_production_kwh=monthly,
+                data_source=probe.result.data_source,
             )
         )
-        annual_total += result.annual_kwh
-        monthly_total = [a + b for a, b in zip(monthly_total, result.monthly_kwh, strict=True)]
-        radiation_db = result.radiation_database
-        sources.add(result.data_source)
-
-    # If any facet fell back, the aggregate must report the weaker provenance
-    # rather than the best one.
-    for candidate in (
-        DataSource.LIVE_FALLBACK_FIXTURE,
-        DataSource.FIXTURE,
-        DataSource.LIVE_FALLBACK_CACHE,
-        DataSource.CACHE,
-        DataSource.LIVE,
-    ):
-        if candidate in sources:
-            aggregate_source = candidate
-            break
-    else:
-        aggregate_source = DataSource.LIVE
+        annual_total += annual
+        monthly_total = [a + b for a, b in zip(monthly_total, monthly, strict=True)]
 
     return YieldResult(
         facet_results=facet_results,
         total_annual_production_kwh=annual_total,
         total_monthly_production_kwh=monthly_total,
         installed_power_kwp=layout.feasible_system_size_kwp,
-        data_source=aggregate_source,
-        radiation_database=radiation_db,
+        data_source=probes.data_source,
+        radiation_database=single_radiation_database(probes),
+    )
+
+
+def single_radiation_database(probes: PvgisProbeSet) -> str:
+    """The one dataset every probe came from.
+
+    The optimiser compares the four specific yields directly, so a yield drawn
+    from a different dataset is not comparable with the others - ranking on it
+    would silently change which roof planes get panels. Disagreement is
+    therefore a failure of the batch, not something to average or pick from.
+    """
+    databases = probes.radiation_databases
+    if len(databases) == 1:
+        return next(iter(databases))
+
+    detail = {fid: p.result.radiation_database for fid, p in probes.probes.items()}
+    logger.error("PVGIS returned mixed radiation databases: %s", detail)
+    raise PvgisInconsistentProvenanceError(
+        "PVGIS answered from more than one radiation database, so the facet yields "
+        f"are not comparable and no layout can be optimised: {detail}",
+        details={"radiationDatabases": detail},
     )
 
 
@@ -150,26 +141,22 @@ async def run_analysis(
     settings: Settings | None = None,
     pvgis_client: PvgisClient | None = None,
     fx_service: ExchangeRateService | None = None,
-    ranking_provider: FacetYieldRankingProvider | None = None,
+    probes: PvgisProbeSet | None = None,
 ) -> AnalysisResult:
     settings = settings or get_settings()
-    client = pvgis_client or PvgisClient(settings)
     fx = fx_service or ExchangeRateService(settings)
 
     roof = build_roof_model(settings)
 
-    # Ranking uses live PVGIS when available and the captured table otherwise;
-    # either way it is the same port the optimiser was written against.
-    provider = ranking_provider or (
-        PvgisFacetYieldRankingProvider(client, settings=settings)
-        if settings.pvgis_mode.value == "live"
-        else FixtureFacetYieldRankingProvider()
-    )
+    # Every facet, once, at 1 kWp - concurrently, on one connection pool. This
+    # has to happen before the layout exists, because the optimiser ranks the
+    # facets against each other.
+    probes = probes or await probe_facets(roof.facets, settings=settings, client=pvgis_client)
 
-    layout = await generate_layout(roof, system_size_kwp, provider, settings)
+    layout = generate_layout(roof, system_size_kwp, probes.yields(), settings)
     assert_layout_valid(roof, layout, settings)
 
-    yield_result = await compute_yield(roof, layout, client, settings)
+    yield_result = compute_yield(layout, probes, settings)
 
     rate = await fx.get_usd_to_eur_rate()
     capex = convert_capex(
@@ -416,7 +403,7 @@ async def recompute_for_system_size(
     monthly_consumption_kwh: float,
     settings: Settings | None = None,
     pvgis_client: PvgisClient | None = None,
-    ranking_provider: FacetYieldRankingProvider | None = None,
+    probes: PvgisProbeSet | None = None,
 ) -> dict[str, object]:
     """A new snapshot for a changed system size. Layout, yield and financial.
 
@@ -425,18 +412,13 @@ async def recompute_for_system_size(
     recorded rather than a fresh one.
     """
     settings = settings or get_settings()
-    client = pvgis_client or PvgisClient(settings)
     roof = build_roof_model(settings)
 
-    provider = ranking_provider or (
-        PvgisFacetYieldRankingProvider(client, settings=settings)
-        if settings.pvgis_mode.value == "live"
-        else FixtureFacetYieldRankingProvider()
-    )
+    probes = probes or await probe_facets(roof.facets, settings=settings, client=pvgis_client)
 
-    layout = await generate_layout(roof, system_size_kwp, provider, settings)
+    layout = generate_layout(roof, system_size_kwp, probes.yields(), settings)
     assert_layout_valid(roof, layout, settings)
-    yield_result = await compute_yield(roof, layout, client, settings)
+    yield_result = compute_yield(layout, probes, settings)
 
     rate = exchange_rate_from_snapshot(snapshot)
     capex = _capex_from(rate, settings)

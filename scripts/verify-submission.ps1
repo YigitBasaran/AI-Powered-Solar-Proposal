@@ -104,19 +104,28 @@ try {
     & $venvPy -m playwright install chromium *> $null
     if ($LASTEXITCODE -ne 0) { Write-Host '  note: chromium install failed; PDF tests will skip' -ForegroundColor Yellow }
 
-    Write-Host '== API: tests (offline, fixture mode) =='
+    Write-Host '== API: tests (offline; PVGIS answered by the local replay stub) =='
     & $venvPy -m pytest -q -m 'not live'
     if ($LASTEXITCODE -ne 0) { Fail 'API tests failed' }
 
     Write-Host '== API: complete a proposal end to end =='
+    $env:APP_ENV = 'test'
     $env:MAPS_MODE = 'fixture'
-    $env:PVGIS_MODE = 'fixture'
     $env:FX_MODE = 'fixture'
     $env:LLM_PROVIDER = 'rules'
+    # PVGIS has no fixture mode; the inline script starts the replay stub and
+    # points PVGIS_BASE_URL at it, so this stays offline while making a real call.
+    $env:ALLOW_REPLAY_PROPOSALS = 'true'
 
     $script = @'
-import os, tempfile
+import os, sys, tempfile
 from pathlib import Path
+
+sys.path.insert(0, ".")
+from tests.support.pvgis_stub import start_stub
+
+stub_url, _stub, stop_stub = start_stub()
+os.environ["PVGIS_BASE_URL"] = f"{stub_url}/api/v5_3"
 
 tmp = Path(tempfile.mkdtemp())
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{(tmp / 'verify.db').as_posix()}"
@@ -142,6 +151,8 @@ with TestClient(create_app()) as client:
           f"{analysis['energy']['totalAnnualProductionKwh']:.0f} kWh, "
           f"payback {shared['financial']['simplePaybackYears']:.2f} yr")
     print(f"  share token {token[:12]}...")
+
+stop_stub()
 '@
     $scriptFile = Join-Path $work 'verify_flow.py'
     Set-Content -LiteralPath $scriptFile -Value $script -Encoding utf8

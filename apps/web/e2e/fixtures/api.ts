@@ -129,6 +129,18 @@ export class ApiClient {
     return { status: response.status(), body: await response.json() };
   }
 
+  /** Run the analysis expecting it to fail, and return the error envelope. */
+  async runAnalysisExpectingFailure(projectId: string) {
+    const response = await this.request.post(`${this.base}/projects/${projectId}/run-analysis`);
+    if (response.status() < 400) {
+      throw new Error(
+        `run-analysis unexpectedly succeeded (${response.status()}); the stack under ` +
+          `test is supposed to have an unreachable PVGIS`,
+      );
+    }
+    return { status: response.status(), body: await response.json() };
+  }
+
   /** The stored project, for asserting what a message did *not* write. */
   async project(projectId: string) {
     const response = await this.request.get(`${this.base}/projects/${projectId}`);

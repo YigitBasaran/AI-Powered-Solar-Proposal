@@ -243,7 +243,20 @@ class PanelLayout(BaseModel):
 
 
 class DataSource(StrEnum):
+    """Where a production figure came from.
+
+    ``LIVE`` is the only proposal-grade value: it means the canonical PVGIS
+    origin answered over HTTPS at the expected API version. ``REPLAY`` means a
+    PVGIS-shaped endpoint answered that is not that one - the test stub - and
+    such a figure cannot be finalised unless a test environment explicitly
+    permits it.
+
+    The remaining members exist only so snapshots issued before PVGIS became
+    mandatory still render. Nothing produces them.
+    """
+
     LIVE = "live"
+    REPLAY = "replay"
     CACHE = "cache"
     FIXTURE = "fixture"
     LIVE_FALLBACK_CACHE = "live_fallback_cache"

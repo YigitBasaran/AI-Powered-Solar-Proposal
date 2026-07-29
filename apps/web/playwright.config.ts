@@ -1,6 +1,13 @@
 import { defineConfig, devices } from "@playwright/test";
 
-import { DEGRADED_ENABLED, EXTERNAL_TARGET, PORTS, PRIMARY_BASE_URL, URLS } from "./e2e/ports";
+import {
+  DEGRADED_ENABLED,
+  EXTERNAL_TARGET,
+  PORTS,
+  PRIMARY_BASE_URL,
+  PVGIS_DOWN_ENABLED,
+  URLS,
+} from "./e2e/ports";
 
 /**
  * E2E configuration.
@@ -51,6 +58,16 @@ const IS_CI = Boolean(process.env.CI);
  */
 const webServers = EXTERNAL_TARGET !== null ? [] : [
   {
+    // Started first: the application has no PVGIS fixture mode, so every API
+    // stack below makes a real HTTP call and this is what answers it.
+    command: `node e2e/scripts/serve-pvgis-stub.mjs --port ${PORTS.pvgisStub}`,
+    url: `${URLS.pvgisStub}/__stub/health`,
+    reuseExistingServer: false,
+    timeout: 60_000,
+    stdout: "pipe" as const,
+    stderr: "pipe" as const,
+  },
+  {
     command: `node e2e/scripts/serve-api.mjs --port ${PORTS.api} --db e2e-deterministic.db --mode deterministic`,
     url: `${URLS.api}/api/v1/health/live`,
     reuseExistingServer: false,
@@ -93,6 +110,21 @@ if (DEGRADED_ENABLED) {
   );
 }
 
+if (PVGIS_DOWN_ENABLED) {
+  // API only. Its whole job is the PVGIS-unavailable path, so it needs no
+  // browser and no Next build - about a second to start.
+  webServers.push({
+    command:
+      `node e2e/scripts/serve-api.mjs --port ${PORTS.pvgisDownApi} ` +
+      `--db e2e-pvgis-down.db --mode pvgis-down`,
+    url: `${URLS.pvgisDownApi}/api/v1/health/live`,
+    reuseExistingServer: false,
+    timeout: 120_000,
+    stdout: "pipe" as const,
+    stderr: "pipe" as const,
+  });
+}
+
 export default defineConfig({
   testDir: "./e2e",
   outputDir: "./test-results",
@@ -126,7 +158,7 @@ export default defineConfig({
   projects: [
     {
       name: "chromium",
-      testIgnore: /degraded\/.*/,
+      testIgnore: [/degraded\/.*/, /pvgis-failure\.spec\.ts/],
       use: { ...devices["Desktop Chrome"], baseURL: PRIMARY_BASE_URL },
     },
     {
@@ -134,10 +166,22 @@ export default defineConfig({
       // browser matrix; what matters on mobile is that the flow is usable, and
       // that is a handful of tests, not all of them.
       name: "mobile-chromium",
-      testIgnore: /degraded\/.*/,
+      testIgnore: [/degraded\/.*/, /pvgis-failure\.spec\.ts/],
       grep: /@mobile/,
       use: { ...devices["Pixel 7"], baseURL: PRIMARY_BASE_URL },
     },
+    ...(PVGIS_DOWN_ENABLED
+      ? [
+          {
+            // API-only, so no browser and no baseURL. Its specs use the `api`
+            // fixture against a stack whose PVGIS never answers.
+            name: "pvgis-down",
+            testMatch: /pvgis-failure\.spec\.ts/,
+            timeout: 120_000,
+            use: { baseURL: URLS.pvgisDownApi },
+          },
+        ]
+      : []),
     ...(DEGRADED_ENABLED
       ? [
           {

@@ -59,17 +59,31 @@ VENV_PY=".venv/bin/python"
 # Chromium is what turns the PDF tests from skipped into actually exercised.
 "$VENV_PY" -m playwright install chromium >/dev/null 2>&1 ||   echo "  note: chromium install failed; PDF tests will skip"
 
-echo "== API: tests (offline, fixture mode) =="
+echo "== API: tests (offline; PVGIS answered by the local replay stub) =="
 "$VENV_PY" -m pytest -q -m "not live"
 
 echo "== API: complete a proposal end to end =="
-MAPS_MODE=fixture PVGIS_MODE=fixture FX_MODE=fixture LLM_PROVIDER=rules \
+APP_ENV=test MAPS_MODE=fixture FX_MODE=fixture LLM_PROVIDER=rules \
 "$VENV_PY" - <<'PYCODE'
 import os, tempfile
 from pathlib import Path
 
+# PVGIS has no fixture mode: the application always makes a real HTTP call.
+# The local replay stub answers it, so this stays offline while exercising the
+# same transport, retry ladder and parser a production call would.
+import sys
+sys.path.insert(0, ".")
+from tests.support.pvgis_stub import start_stub
+
+stub_url, _stub, stop_stub = start_stub()
+
 tmp = Path(tempfile.mkdtemp())
 os.environ["DATABASE_URL"] = f"sqlite+aiosqlite:///{(tmp / 'verify.db').as_posix()}"
+os.environ["PVGIS_BASE_URL"] = f"{stub_url}/api/v5_3"
+# The stub is not the canonical PVGIS origin, so what it produces is labelled
+# `replay` and is not proposal-grade. Permitted here, and only here, because
+# APP_ENV says this is a verification run.
+os.environ["ALLOW_REPLAY_PROPOSALS"] = "true"
 from app.core.config import get_settings
 get_settings.cache_clear()
 
@@ -92,6 +106,8 @@ with TestClient(create_app()) as client:
           f"{analysis['energy']['totalAnnualProductionKwh']:.0f} kWh, "
           f"payback {shared['financial']['simplePaybackYears']:.2f} yr")
     print(f"  share token {token[:12]}...")
+
+stop_stub()
 PYCODE
 
 echo "== sample PDF =="

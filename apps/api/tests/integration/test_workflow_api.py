@@ -317,9 +317,15 @@ def test_production_provenance_is_recorded(analysis) -> None:
     the trustworthiness of the endpoint; until then the honest assertion is that
     provenance is recorded at all.
 
+    The suite answers that call from a local replay stub, which is not the
+    canonical PVGIS origin - so the figure is labelled `replay`, never `live`.
+    That distinction is what stops a replayed capture being finalised as though
+    it were an observation, and it is also the assertion that would catch the
+    stack quietly falling back to reading captures off disk.
+
     FX still has a fixture mode and is unaffected.
     """
-    assert analysis["energy"]["dataSource"] in ("live", "cache")
+    assert analysis["energy"]["dataSource"] == "replay"
     assert analysis["energy"]["radiationDatabase"] == "PVGIS-SARAH3"
     assert analysis["exchangeRate"]["isFixture"] is True
     assert analysis["exchangeRate"]["isLive"] is False
@@ -400,10 +406,17 @@ def test_roof_endpoint_publishes_source_pixel_geometry(client) -> None:
 def test_health_ready_reports_every_operating_mode(client) -> None:
     checks = client.get("/api/v1/health/ready").json()["checks"]
     assert checks["maps"]["mode"] == "fixture"
-    # PVGIS has no mode any more - it is always a live call. What matters is
-    # which endpoint will be called, which step 2 makes the reported field.
-    assert checks["pvgis"]["mode"] == "live"
     assert checks["fx"]["mode"] == "fixture"
+
+    # PVGIS has no mode: it is always a real call. What is reported is which
+    # endpoint will be called and whether that configuration could back a
+    # proposal - here the local replay stub, which could not.
+    pvgis = checks["pvgis"]
+    assert "127.0.0.1" in pvgis["endpoint"]
+    assert pvgis["trusted"] is False
+    assert pvgis["maxAttempts"] >= 1
+    # Untrusted is fine in a test environment, so readiness is unaffected.
+    assert pvgis["ready"] is True
     assert checks["llm"]["provider"] == "rules"
     assert checks["llm"]["ready"] is True
 

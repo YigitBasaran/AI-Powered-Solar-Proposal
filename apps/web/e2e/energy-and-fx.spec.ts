@@ -54,12 +54,17 @@ test.describe("@p0 PVGIS energy", () => {
     expect(north.specificYieldKwhPerKwp / south.specificYieldKwhPerKwp).toBeGreaterThan(1.4);
   });
 
-  test("fixture provenance is labelled everywhere it is shown", async ({ solarFlow, page }) => {
+  test("provenance is labelled everywhere it is shown", async ({ solarFlow, page }) => {
     await solarFlow.open();
     await solarFlow.completeIntake();
 
-    await expect(page.getByTestId("pvgis-source-badge")).toHaveAttribute("data-tone", "fixture");
-    await expect(page.getByTestId("pvgis-source-badge")).toContainText("Demo fixture");
+    // PVGIS is a real HTTP call now, answered here by the local replay stub.
+    // "Replayed capture" is a distinct label from both "Live" and "Demo
+    // fixture", so a replayed figure can never read as a live observation -
+    // and this assertion is what would catch the stack quietly falling back to
+    // reading captures off disk.
+    await expect(page.getByTestId("pvgis-source-badge")).toHaveAttribute("data-tone", "replay");
+    await expect(page.getByTestId("pvgis-source-badge")).toContainText("Replayed capture");
     await expect(page.getByTestId("imagery-source-badge")).toHaveAttribute("data-tone", "fixture");
     await expect(solarFlow.fx("source-badge")).toHaveAttribute("data-tone", "fixture");
     // The label is text, not colour alone.

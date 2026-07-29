@@ -28,6 +28,7 @@ from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 
@@ -58,6 +59,79 @@ LOSS_FIELDS = {
     "l_tg": "temperatureAndIrradiancePercent",
     "l_total": "totalPercent",
 }
+
+
+# ---------------------------------------------------------------------------
+# Endpoint trust
+# ---------------------------------------------------------------------------
+
+#: The one origin whose answers are proposal-grade. Scheme included on purpose:
+#: a hostname is not enough, because anyone can resolve a name and plain HTTP
+#: has no origin guarantee at all.
+TRUSTED_PVGIS_ORIGIN = "https://re.jrc.ec.europa.eu"
+
+#: The expected API path, as **segments**. Compared element-wise rather than
+#: with `startswith`, which would accept `/api/v5_31` and `/api/v5_3.evil`.
+TRUSTED_PVGIS_API_SEGMENTS = ("api", "v5_3")
+
+
+@dataclass(frozen=True)
+class EndpointTrust:
+    """Whether an endpoint's answers may back a proposal, and why."""
+
+    source: DataSource
+    origin: str
+    api_version: str | None
+    reason: str | None = None
+
+    @property
+    def is_trusted(self) -> bool:
+        return self.source is DataSource.LIVE
+
+
+def classify_endpoint(url: str) -> EndpointTrust:
+    """The single place endpoint trust is decided.
+
+    Reused by provenance, probe reuse, finalisation, `/health/ready` and the
+    sample-output guard. Five independent implementations of "is this really
+    PVGIS?" would drift, and the one that drifted would be the one that mattered.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return EndpointTrust(DataSource.REPLAY, url, None, "the URL could not be parsed")
+
+    if not parsed.hostname:
+        return EndpointTrust(DataSource.REPLAY, url, None, "the URL has no host")
+
+    port = f":{parsed.port}" if parsed.port and parsed.port not in (80, 443) else ""
+    origin = f"{parsed.scheme.lower()}://{parsed.hostname.lower()}{port}"
+
+    segments = [s for s in parsed.path.split("/") if s]
+    api_version = segments[1] if len(segments) > 1 else None
+
+    if parsed.scheme.lower() != "https":
+        return EndpointTrust(DataSource.REPLAY, origin, api_version, "not HTTPS")
+    if parsed.username or parsed.password:
+        return EndpointTrust(DataSource.REPLAY, origin, api_version, "the URL carries userinfo")
+    if origin != TRUSTED_PVGIS_ORIGIN:
+        return EndpointTrust(
+            DataSource.REPLAY,
+            origin,
+            api_version,
+            f"not the canonical origin {TRUSTED_PVGIS_ORIGIN}",
+        )
+    if any(s in {".", ".."} for s in segments):
+        return EndpointTrust(DataSource.REPLAY, origin, api_version, "the path is not normalised")
+    if tuple(segments[: len(TRUSTED_PVGIS_API_SEGMENTS)]) != TRUSTED_PVGIS_API_SEGMENTS:
+        return EndpointTrust(
+            DataSource.REPLAY,
+            origin,
+            api_version,
+            f"not the expected API path /{'/'.join(TRUSTED_PVGIS_API_SEGMENTS)}",
+        )
+
+    return EndpointTrust(DataSource.LIVE, origin, api_version)
 
 
 # ---------------------------------------------------------------------------
@@ -139,9 +213,17 @@ class PvgisProbeSet:
 
     probes: dict[str, FacetProbe]
     endpoint: str
+    #: Reuse identity. A live observation from another origin or another API
+    #: version is a different service, not the same one on a new port.
+    origin: str
+    api_version: str | None
     batch_completed_at: datetime
     data_source: DataSource
     request_params: dict[str, Any]
+
+    @property
+    def is_trusted(self) -> bool:
+        return self.data_source is DataSource.LIVE
 
     def yields(self) -> dict[str, float]:
         return {fid: p.specific_yield_kwh_per_kwp for fid, p in self.probes.items()}
@@ -534,7 +616,8 @@ class PvgisClient:
         try:
             async with self._semaphore:
                 payload = await self._fetch_live(params)
-            result = parse_pvcalc(payload, source=DataSource.LIVE, request_params=params)
+            trust = classify_endpoint(s.pvgis_base_url)
+            result = parse_pvcalc(payload, source=trust.source, request_params=params)
         except PvgisUnavailableError:
             if not s.pvgis_fallback_enabled:
                 raise
@@ -624,16 +707,17 @@ async def probe_facets(
                 details={"facets": [f.split(":")[0] for f in failures]},
             )
 
-        sources = {p.result.data_source for p in probes.values()}
-        aggregate = DataSource.LIVE if sources == {DataSource.LIVE} else next(iter(sources))
+        trust = classify_endpoint(settings.pvgis_base_url)
         first = next(iter(probes.values())).result
         return PvgisProbeSet(
             probes=probes,
             endpoint=f"{settings.pvgis_base_url}/PVcalc",
+            origin=trust.origin,
+            api_version=trust.api_version,
             batch_completed_at=max(
                 (p.result.retrieved_at for p in probes.values()), default=started
             ),
-            data_source=aggregate,
+            data_source=trust.source,
             request_params={
                 k: v for k, v in first.request_params.items() if k not in {"aspect", "angle"}
             },

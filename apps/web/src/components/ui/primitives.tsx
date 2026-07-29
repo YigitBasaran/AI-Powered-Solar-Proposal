@@ -59,7 +59,7 @@ export function SourceBadge({
   className,
   testId,
 }: {
-  tone: "live" | "cache" | "fixture";
+  tone: "live" | "cache" | "fixture" | "replay";
   label: string;
   className?: string;
   testId?: string;
@@ -68,6 +68,10 @@ export function SourceBadge({
     live: "bg-[#e8f6ec] text-good-700 border-[#bfe4c8]",
     cache: "bg-[#eef2f8] text-navy-800 border-[#cfdcec]",
     fixture: "bg-solar-100 text-[#8a5210] border-[#f0d9ac]",
+    // Shares the fixture palette on purpose: both mean "not a live
+    // observation", and a reader should not have to learn a third colour to
+    // notice that.
+    replay: "bg-solar-100 text-[#8a5210] border-[#f0d9ac]",
   } as const;
 
   return (

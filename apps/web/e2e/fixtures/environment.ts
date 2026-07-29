@@ -10,7 +10,14 @@
 
 export type StackMode = {
   maps: "live" | "fixture";
-  pvgis: "live" | "fixture";
+  /**
+   * PVGIS has no mode - it is always a real call. What identifies the tier is
+   * *which endpoint* the stack will call, so that is what is read. A `@live`
+   * PVGIS test skips unless this is the canonical JRC origin, which means it
+   * can no longer be satisfied by the replay stub.
+   */
+  pvgisEndpoint: string;
+  pvgisTrusted: boolean;
   fx: "live" | "fixture";
   llm: "ollama" | "rules" | "disabled";
   llmModel: string | null;
@@ -24,7 +31,7 @@ type ReadyPayload = {
   status: "ok" | "degraded";
   checks: {
     maps: { mode: string };
-    pvgis: { mode: string };
+    pvgis: { endpoint: string; trusted: boolean };
     fx: { mode: string };
     llm: { provider: string; model: string | null };
   };
@@ -43,7 +50,8 @@ export async function readStackMode(baseURL: string): Promise<StackMode> {
   const body = (await response.json()) as ReadyPayload;
   return {
     maps: body.checks.maps.mode as "live" | "fixture",
-    pvgis: body.checks.pvgis.mode as "live" | "fixture",
+    pvgisEndpoint: body.checks.pvgis.endpoint,
+    pvgisTrusted: body.checks.pvgis.trusted,
     fx: body.checks.fx.mode as "live" | "fixture",
     llm: body.checks.llm.provider as "ollama" | "rules" | "disabled",
     llmModel: body.checks.llm.model,

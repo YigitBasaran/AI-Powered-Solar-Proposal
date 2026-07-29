@@ -78,11 +78,16 @@ export function shortDate(iso: string): string {
  */
 export function dataSourceLabel(source: string): {
   label: string;
-  tone: "live" | "cache" | "fixture";
+  tone: "live" | "cache" | "fixture" | "replay";
 } {
   switch (source) {
     case "live":
       return { label: "Live", tone: "live" };
+    case "replay":
+      // A PVGIS-shaped endpoint answered, but not the canonical one. Never
+      // presented as live, and not proposal-grade without an explicit
+      // test-environment override.
+      return { label: "Replayed capture", tone: "replay" };
     case "cache":
       return { label: "Cached", tone: "cache" };
     case "live_fallback_cache":

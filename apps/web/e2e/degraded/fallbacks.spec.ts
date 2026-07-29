@@ -21,9 +21,13 @@ test.describe("@p0 degraded external services", () => {
   }) => {
     // Guard against the worst failure mode of a degraded tier: accidentally
     // running against the healthy stack and reporting a pass.
-    expect(stack.pvgis, "degraded stack must be configured for live PVGIS").toBe("live");
     expect(stack.fx, "degraded stack must be configured for live FX").toBe("live");
     expect(stack.llm).toBe("ollama");
+    // PVGIS points at the replay stub here, deliberately. Without production
+    // figures there is no analysis, and the FX and maps fallbacks this tier
+    // exists to prove would have nothing to be asserted against. The
+    // PVGIS-unavailable path has its own stack — see pvgis-failure.spec.ts.
+    expect(stack.pvgisEndpoint).toContain("127.0.0.1");
   });
 
   test("a full proposal still completes with every dependency unreachable", async ({
@@ -42,22 +46,16 @@ test.describe("@p0 degraded external services", () => {
     expect(shareToken.length).toBeGreaterThan(15);
   });
 
-  test("PVGIS falls back to captured data, and says so", async ({ api, page, solarFlow }) => {
-    const { analysis } = await api.analysedProject("6 kWp");
-
-    // Fell back rather than failed — and the source is recorded honestly.
-    expect(analysis.energy.dataSource).toMatch(/fixture|cache/);
-    expect(analysis.energy.dataSource).not.toBe("live");
-    expect(analysis.energy.totalAnnualProductionKwh).toBeGreaterThan(0);
-
-    await solarFlow.open();
-    await solarFlow.completeIntake({ size: 6 });
-    const badge = page.getByTestId("pvgis-source-badge");
-    await expect(badge).toBeVisible();
-    await expect(badge).not.toHaveAttribute("data-tone", "live");
-    // "live unavailable" is stated, not implied by a colour.
-    await expect(badge).toContainText(/unavailable|fixture|cached/i);
-  });
+  test.fixme(
+    "PVGIS falls back to captured data, and says so",
+    async () => {
+      // Removed behaviour, not a broken test. There is no fixture fallback for
+      // production any more: an unreachable PVGIS fails the analysis and blocks
+      // finalisation. That is asserted in `e2e/pvgis-failure.spec.ts` against a
+      // stack whose PVGIS genuinely never answers. Unfixme'd and deleted in the
+      // step that removes fixture mode.
+    },
+  );
 
   test("FX falls back without ever substituting parity", async ({ api, solarFlow }) => {
     const { analysis } = await api.analysedProject("6 kWp");

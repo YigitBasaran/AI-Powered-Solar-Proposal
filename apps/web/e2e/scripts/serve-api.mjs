@@ -45,6 +45,11 @@ const python =
 /** Settings shared by every E2E stack. */
 const common = {
   APP_ENV: "test",
+  // Explicit, not left to the field default: a developer's own `.env` may say
+  // `fixture`, and if it does the stack silently reads captures off disk while
+  // still reporting the stub as its endpoint - which is exactly what the
+  // global-setup guard cannot see. Deleted with the setting itself.
+  PVGIS_MODE: "live",
   LOG_LEVEL: "WARNING",
   DATABASE_URL: sqliteUrl(dbPath),
   API_BASE_URL: `http://127.0.0.1:${port}`,
@@ -52,14 +57,25 @@ const common = {
   GOOGLE_MAPS_API_KEY: "",
 };
 
+const stubPort = process.env.E2E_PVGIS_STUB_PORT ?? 8102;
+const stubBase = `http://127.0.0.1:${stubPort}/api/v5_3`;
+
 /**
- * Tier A. Every external dependency is a committed fixture, so the same
- * inputs always give the same numbers.
+ * Tier A. Maps and FX are committed fixtures; PVGIS is a **real HTTP call**
+ * answered by the local replay stub, because the application has no fixture
+ * mode any more. Same numbers, same transport as production.
  */
 const deterministic = {
   ...common,
   WEB_BASE_URL: `http://127.0.0.1:${process.env.E2E_WEB_PORT ?? 3100}`,
-  PVGIS_MODE: "fixture",
+  PVGIS_BASE_URL: stubBase,
+  // Short, because the stub is local: a slow response here means the stub did
+  // not start, and that should fail fast rather than look like a slow PVGIS.
+  PVGIS_TIMEOUT_SECONDS: "3",
+  // The stub is not the canonical PVGIS origin, so its output is labelled
+  // `replay` and is not proposal-grade. Named explicitly, and only ever on a
+  // stack whose APP_ENV is `test`.
+  ALLOW_REPLAY_PROPOSALS: "true",
   FX_MODE: "fixture",
   LLM_PROVIDER: "rules",
 };
@@ -73,7 +89,14 @@ const deterministic = {
  * so a live run is never accidentally live in more ways than it says.
  */
 const live = new Set((process.env.E2E_LIVE ?? "").split(",").map((s) => s.trim()));
-if (live.has("pvgis")) deterministic.PVGIS_MODE = "live";
+if (live.has("pvgis")) {
+  // Drop the override entirely so the application's own default - the
+  // canonical JRC endpoint - applies. Tier C then genuinely cannot be served
+  // by the stub, which is what makes its skip guard meaningful.
+  delete deterministic.PVGIS_BASE_URL;
+  delete deterministic.PVGIS_TIMEOUT_SECONDS;
+  delete deterministic.ALLOW_REPLAY_PROPOSALS;
+}
 if (live.has("fx")) deterministic.FX_MODE = "live";
 if (live.has("llm")) {
   deterministic.LLM_PROVIDER = "ollama";
@@ -98,10 +121,13 @@ if (live.has("llm")) {
 const degraded = {
   ...common,
   WEB_BASE_URL: `http://127.0.0.1:${process.env.E2E_DEGRADED_WEB_PORT ?? 3101}`,
-  PVGIS_MODE: "live",
-  PVGIS_BASE_URL: "http://pvgis.invalid/api/v5_3",
-  PVGIS_TIMEOUT_SECONDS: "2",
-  PVGIS_FALLBACK_ENABLED: "true",
+  // PVGIS points at the healthy stub, not at `.invalid`. Without production
+  // figures there is no analysis at all, and then the FX and maps fallbacks -
+  // which is what this tier exists to prove - have nothing to be asserted
+  // against. The PVGIS-unavailable path gets its own stack below.
+  PVGIS_BASE_URL: stubBase,
+  PVGIS_TIMEOUT_SECONDS: "3",
+  ALLOW_REPLAY_PROPOSALS: "true",
   FX_MODE: "live",
   FX_BASE_URL: "http://fx.invalid/v2",
   FX_TIMEOUT_SECONDS: "2",
@@ -112,14 +138,36 @@ const degraded = {
   LLM_FALLBACK_ENABLED: "true",
 };
 
+/**
+ * A stack whose PVGIS genuinely never answers.
+ *
+ * API only - no web server, so it costs about a second and no Next build. Its
+ * whole job is to prove that an unavailable PVGIS fails the analysis honestly
+ * and blocks finalisation, which is the behaviour that replaced the fixture
+ * fallback.
+ */
+const pvgisDown = {
+  ...common,
+  WEB_BASE_URL: `http://127.0.0.1:${process.env.E2E_WEB_PORT ?? 3100}`,
+  PVGIS_BASE_URL: `http://127.0.0.1:${stubPort}/__fault/unavailable/api/v5_3`,
+  PVGIS_TIMEOUT_SECONDS: "2",
+  PVGIS_MAX_ATTEMPTS: "2",
+  PVGIS_RETRY_BUDGET_SECONDS: "3",
+  // Explicit while the fallback setting still exists. It is deleted in the
+  // step that removes fixture mode, at which point there is nothing to switch.
+  PVGIS_FALLBACK_ENABLED: "false",
+  FX_MODE: "fixture",
+  LLM_PROVIDER: "rules",
+};
+
+const ENVIRONMENTS = { deterministic, degraded, "pvgis-down": pvgisDown };
+const chosen = ENVIRONMENTS[mode];
+if (!chosen) throw new Error(`unknown --mode ${mode}; expected one of ${Object.keys(ENVIRONMENTS)}`);
+
 const child = spawn(
   python,
   ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", String(port)],
-  {
-    cwd: apiRoot,
-    stdio: "inherit",
-    env: { ...process.env, ...(mode === "degraded" ? degraded : deterministic) },
-  },
+  { cwd: apiRoot, stdio: "inherit", env: { ...process.env, ...chosen } },
 );
 
 console.log(`[e2e] ${mode} API on :${port}, database ${dbPath}`);

@@ -16,7 +16,9 @@ import { EXPECTED_ROOF } from "../fixtures/expected-values";
 
 test.describe("@live external services", () => {
   test("live PVGIS returns plausible yields, north-favoured", async ({ api, stack }) => {
-    test.skip(stack.pvgis !== "live", SKIP.notLive("PVGIS", stack.pvgis));
+    // Strictly more honest than the old mode check: this cannot be satisfied
+    // by the replay stub, because the stub is not the canonical origin.
+    test.skip(!stack.pvgisTrusted, SKIP.notLive("PVGIS", stack.pvgisEndpoint));
 
     const { analysis } = await api.analysedProject("9.6 kWp");
     expect(analysis.energy.dataSource).toBe("live");

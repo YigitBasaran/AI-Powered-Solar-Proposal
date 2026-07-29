@@ -1,10 +1,17 @@
 """Liveness, readiness and configuration transparency endpoints.
 
-`/health/ready` deliberately reports *degraded* rather than *down* when an
-external dependency is unavailable: the whole point of the fixture modes is
-that the application still completes a full proposal without them. What must
-never happen is a fixture being presented as live, so every operating mode is
-reported explicitly here and surfaced in the UI.
+Maps and FX still have fixture modes, and for those `/health/ready` reports
+*degraded* rather than *down*: a full proposal still completes without them.
+
+**PVGIS is different, and the asymmetry is worth stating.** It is a hard
+dependency - there is no fixture, no fallback and no synthetic estimate - so
+what is reported for it is not a mode but *which endpoint will be called* and
+whether that configuration could produce a valid proposal at all.
+
+The check makes no outbound request; a readiness probe that called PVGIS would
+be a fine way to get rate-limited. It validates configuration instead, which
+costs nothing and catches faults that would otherwise surface only when a
+customer runs an analysis.
 """
 
 from __future__ import annotations
@@ -14,6 +21,7 @@ from typing import Any, Literal
 from fastapi import APIRouter
 
 from app.core.config import LlmProvider, MapsMode, Settings, get_settings
+from app.integrations.pvgis import classify_endpoint
 
 router = APIRouter(prefix="/health", tags=["health"])
 
@@ -46,6 +54,45 @@ def _maps_status(settings: Settings) -> dict[str, Any]:
     }
 
 
+#: Environments in which a replay-backed proposal may be issued at all.
+TEST_ENVIRONMENTS = frozenset({"test", "e2e", "verification"})
+
+
+def _pvgis_status(settings: Settings) -> dict[str, Any]:
+    """Which endpoint will be called, and whether it could back a proposal.
+
+    No outbound call. Every fault below is a configuration mistake that would
+    otherwise be discovered by a customer.
+    """
+    trust = classify_endpoint(settings.pvgis_base_url)
+    is_test_env = settings.app_env.lower() in TEST_ENVIRONMENTS
+
+    reasons: list[str] = []
+    if not trust.origin or trust.reason == "the URL has no host":
+        reasons.append("PVGIS_BASE_URL does not name a host")
+    elif not trust.is_trusted and not is_test_env:
+        reasons.append(f"PVGIS endpoint is not proposal-grade: {trust.reason}")
+
+    if settings.pvgis_max_attempts < 1:
+        reasons.append("PVGIS_MAX_ATTEMPTS must be at least 1")
+    if settings.pvgis_retry_budget_seconds <= 0:
+        reasons.append("PVGIS_RETRY_BUDGET_SECONDS must be positive")
+    if settings.pvgis_timeout_seconds <= 0:
+        reasons.append("PVGIS_TIMEOUT_SECONDS must be positive")
+
+    return {
+        "endpoint": f"{settings.pvgis_base_url}/PVcalc",
+        "origin": trust.origin,
+        "apiVersion": trust.api_version,
+        "trusted": trust.is_trusted,
+        "timeoutSeconds": settings.pvgis_timeout_seconds,
+        "maxAttempts": settings.pvgis_max_attempts,
+        "retryBudgetSeconds": settings.pvgis_retry_budget_seconds,
+        "ready": not reasons,
+        "detail": "; ".join(reasons) or None,
+    }
+
+
 @router.get("/ready")
 async def ready() -> dict[str, Any]:
     settings = get_settings()
@@ -56,7 +103,7 @@ async def ready() -> dict[str, Any]:
     checks: dict[str, Any] = {
         "database": {"mode": settings.database_url.split(":")[0], "ready": True},
         "maps": maps,
-        "pvgis": {"mode": settings.pvgis_mode.value, "ready": True},
+        "pvgis": _pvgis_status(settings),
         "fx": {
             "mode": settings.fx_mode.value,
             "provider": settings.fx_provider,

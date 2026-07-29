@@ -23,10 +23,24 @@ REQUEST_ID_HEADER = "X-Request-ID"
 
 
 def _configure_logging(settings: Settings) -> None:
+    """Set the level on `solarvis` itself, not only on the root logger.
+
+    `basicConfig` sets the *root* level, and anything that later reconfigures
+    logging takes that with it. Something does: running a migration inside
+    start-up applies `alembic.ini`, whose `[logger_root]` is WARNING - so every
+    `logger.info` under `solarvis` went silent after boot while `uvicorn.access`,
+    which carries its own level, kept working. A container logged its banner and
+    then nothing about what it was doing.
+
+    Naming the level on the application's own logger makes it independent of
+    whatever else touches root, which is where it should have been anyway.
+    """
+    level = getattr(logging, settings.log_level.upper(), logging.INFO)
     logging.basicConfig(
-        level=getattr(logging, settings.log_level.upper(), logging.INFO),
+        level=level,
         format="%(asctime)s %(levelname)-8s %(name)s %(message)s",
     )
+    logging.getLogger("solarvis").setLevel(level)
 
 
 @asynccontextmanager

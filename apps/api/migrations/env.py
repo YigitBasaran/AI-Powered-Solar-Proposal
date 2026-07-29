@@ -21,7 +21,17 @@ from app.models.tables import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False` is load-bearing, not tidiness.
+    #
+    # It defaults to True, which disables every logger that already exists.
+    # Migrations run inside API start-up (`init_db`), so the default silenced
+    # `solarvis`, every child of it and `uvicorn.access` for the rest of the
+    # process's life: a container logged its boot banner and then nothing at
+    # all - no requests, no PVGIS retrievals, no warnings, no diagnostics.
+    #
+    # Found while trying to count PVGIS calls in Docker by reading the log, and
+    # discovering there was no log to read.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 

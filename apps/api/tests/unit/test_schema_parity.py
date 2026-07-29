@@ -452,3 +452,50 @@ def test_two_rows_written_in_the_same_tick_get_distinct_timestamps() -> None:
 
     assert len(set(stamps)) == len(stamps), "row timestamps collided"
     assert stamps == sorted(stamps), "row timestamps went backwards"
+
+
+def test_running_a_migration_does_not_silence_application_logging() -> None:
+    """Alembic's `fileConfig` disables existing loggers by default.
+
+    Migrations run inside API start-up, so that default silenced `solarvis`,
+    every child of it and `uvicorn.access` for the rest of the process's life.
+    A container logged its boot banner and then nothing: no requests, no PVGIS
+    retrievals, no warnings, no diagnostics. Found while trying to count PVGIS
+    calls in Docker and discovering there was no log to read.
+    """
+    import logging
+
+    from alembic import command
+
+    marker = logging.getLogger("solarvis.a-logger-that-existed-first")
+    assert not marker.disabled
+
+    command.upgrade(_alembic_config("sqlite:///:memory:"), "head")
+
+    assert not marker.disabled, "the migration disabled a pre-existing logger"
+    assert not logging.getLogger("solarvis").disabled
+    assert not logging.getLogger("uvicorn.access").disabled
+
+
+def test_the_application_logger_survives_a_migration_at_startup() -> None:
+    """`alembic.ini` sets the root level to WARNING; `solarvis` must not care.
+
+    Migrations run inside start-up, so applying that file used to drag every
+    `solarvis` INFO line down with it - silently, and only in a deployment,
+    because tests never run the two together.
+    """
+    import logging
+
+    from alembic import command
+
+    from app.core.config import get_settings
+    from app.main import _configure_logging
+
+    _configure_logging(get_settings().model_copy(update={"log_level": "INFO"}))
+    assert logging.getLogger("solarvis.pvgis").isEnabledFor(logging.INFO)
+
+    command.upgrade(_alembic_config("sqlite:///:memory:"), "head")
+
+    assert logging.getLogger("solarvis.pvgis").isEnabledFor(logging.INFO), (
+        "a migration silenced the application's own logging"
+    )

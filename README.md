@@ -147,10 +147,21 @@ Every mode is surfaced in the UI, in the proposal snapshot, and in the PDF assum
 | Setting | Default | Notes |
 |---|---|---|
 | `MAPS_MODE` | `fixture` | `live` needs `GOOGLE_MAPS_API_KEY`; key stays server-side |
-| `PVGIS_MODE` | `live` | Falls back to committed fixtures, labelled as such |
 | `FX_MODE` | `live` | Frankfurter with ECB as the explicit provider |
 | `LLM_PROVIDER` | `rules` | `ollama` · `rules` · `disabled` — the full flow works in all three |
 | `EMAIL_MODE` | `console` | Proposal-view notifications |
+
+**PVGIS has no mode.** Every analysis makes a real HTTP call to `PVGIS_BASE_URL`,
+and an analysis that cannot make one *fails* — no captured payload, no synthetic
+estimate, no partial answer. The consequence is deliberate and worth stating
+plainly: an offline deployment cannot complete an analysis. The test suites stay
+offline by pointing that URL at a local replay server; the application does not.
+
+Only `https://re.jrc.ec.europa.eu/api/v5_3` produces a proposal-grade
+observation. Anything else — another origin, another API version, plain HTTP —
+is labelled `replay` and **cannot be finalised**. `ALLOW_REPLAY_PROPOSALS` is
+the sole exception, exists only so the stub-backed test harnesses can exercise
+finalisation, and start-up refuses it outside a recognised test environment.
 
 ### Currency: parity is unreachable by construction
 
@@ -197,12 +208,16 @@ cd apps/web && npm run typecheck && npm run test && npm run build  # 51 tests
 ```bash
 # End-to-end. Nothing to start first — the suite starts its own stacks.
 cd apps/web
-npx playwright test --grep "@p0"            # 84 mandatory
-npx playwright test --grep-invert "@live"   # 117: deterministic + degraded
+npx playwright test --grep "@p0"            # 87 mandatory
+npx playwright test --grep-invert "@live"   # 122: deterministic + degraded + pvgis-down
 npx playwright test --grep "@live"          # 7, opt-in; skips on a fixture stack
 ```
 
-Playwright starts **two complete stacks** — a deterministic one on `:3100`/`:8100` where every external dependency is a committed fixture, and a degraded one on `:3101`/`:8101` whose PVGIS, FX and Ollama endpoints cannot resolve. PVGIS and FX are called by the backend, so browser-level mocking could never test those fallbacks; a second stack genuinely configured to fail is the only honest way. Each owns a temporary database and refuses to start on an occupied port rather than attaching to a stranger's server.
+Playwright starts **three stacks**. A deterministic one on `:3100`/`:8100` where Maps, FX and the LLM are committed fixtures and PVGIS answers from a local replay server on `:8102`. A degraded one on `:3101`/`:8101` whose FX and Ollama endpoints cannot resolve. And an API-only one on `:8103` — no browser, no Next build — whose PVGIS points at a fault path that always answers 503, for the failure spec.
+
+PVGIS and FX are called by the backend, so browser-level mocking could never reach them; stacks genuinely configured to fail are the only honest way. Each owns a temporary database and refuses to start on an occupied port rather than attaching to a stranger's server.
+
+The degraded stack's PVGIS is *not* unreachable, and that is a deliberate change: an unreachable PVGIS now fails the analysis outright, so there would be no proposal left with which to test the FX and LLM fallbacks. The genuine-outage case has its own stack instead.
 
 `E2E_TARGET_URL=http://127.0.0.1:3000 npx playwright test --grep "@p0"` runs the same suite against the Docker containers instead.
 
@@ -210,7 +225,7 @@ Live-marked tests hit real APIs and are deselected by default: `pytest -m live`.
 
 **Exact production numbers are asserted only against fixtures.** Live PVGIS tests assert invariants and plausible ranges — including that north out-produces south at this site — because PVGIS revises its radiation datasets and pinned live kWh would fail for reasons unrelated to this code.
 
-Integration tests run fully offline against a throwaway database in fixture mode: the exact configuration a reviewer gets from a clean clone.
+Integration tests run fully offline against a throwaway database: Maps, FX and the LLM on committed fixtures, and PVGIS against a local replay server started by the suite. The application always makes a real PVGIS request; the suite decides who answers it. That is what makes "a consumption change makes zero PVGIS calls" an assertable request count rather than a claim.
 
 ---
 

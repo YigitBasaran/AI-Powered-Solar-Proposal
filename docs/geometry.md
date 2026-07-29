@@ -143,6 +143,26 @@ aspect = compass − 180
 
 This is **hemisphere-agnostic** — a pure change of angular reference. What changes below the equator is which aspect is *good*, not how it is computed.
 
+### Both conventions are always named
+
+A field called `aspect` could mean either, and the ambiguity is not academic —
+the two readings are **different roof planes**, 180° apart. A figure recorded
+under an ambiguous name is a figure that can be attributed to the wrong facet.
+
+So nothing in the snapshot is called `aspect` alone. Every angle carries the
+convention in its name, in `energy.facets[]` and in `energy.pvgis.probes[]`
+alike:
+
+| Field | Convention | Purpose |
+|---|---|---|
+| `compassAzimuthDeg` | N 0°, E 90°, S 180°, W 270° | human reading; matches a compass and the roof-view overlay |
+| `pvgisAspectDeg` | S 0°, W 90°, E −90°, N ±180° | what is *sent* to PVGIS, and the equality key when deciding whether a stored probe may be reused |
+
+`pvgisAspectDeg` is kept in provenance at **six decimal places** rather than the
+two used for display: it is a comparison key, and rounding to two would collapse
+−169.3798 and −169.38 into one value, quietly making two different facets look
+like the same observation.
+
 ### The case roof
 
 | Facet | Compass | PVGIS aspect | 1 kWp yield |
@@ -153,6 +173,11 @@ This is **hemisphere-agnostic** — a pure change of angular reference. What cha
 | South trapezoid | 190.6° | 10.6° | 1,119.8 |
 
 At −34° latitude the **north** face is the best, by 50 %. No optimal aspect is hardcoded anywhere; ranking comes from per-facet PVGIS probes, so the correct answer emerges from data rather than from an assumption that happens to be northern-hemisphere.
+
+Those four yields are **live retrievals**, one per facet, taken at 1 kWp before
+any system size is chosen — which is what lets a later size change reuse them
+without asking PVGIS the same four questions again. The figures above are from
+the committed captures; a live run agrees to within a hundredth of a kWh/kWp.
 
 ---
 

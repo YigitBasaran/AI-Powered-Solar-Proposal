@@ -2,7 +2,9 @@
 
 What is tested, what deliberately is not, and how to run each layer.
 
-The guiding rule: **exact numeric assertions belong to fixtures; live tests assert invariants and ranges.** PVGIS revises its radiation datasets and the ECB rate moves daily — pinning either would make the suite fail for reasons unrelated to this code.
+The guiding rule: **exact numeric assertions belong to replayed captures; live tests assert invariants and ranges.** PVGIS revises its radiation datasets and the ECB rate moves daily — pinning either would make the suite fail for reasons unrelated to this code.
+
+A second rule, learned the hard way: **assert the transport, not the figures.** A replayed PVGIS response and a live one produce identical numbers, so every value assertion in this suite passes whether or not the call was made. Twice during this work the suite ran green while making zero HTTP requests. What catches that is `test_pvgis_is_a_real_call.py`, which watches the transport, and the `data-tone="replay"` badge in `energy-and-fx.spec.ts`, which only the stub path can produce.
 
 ---
 
@@ -24,6 +26,15 @@ cd apps/api && ./.venv/Scripts/python -m mypy app
 ```
 
 ```bash
+# Regenerate the committed sample proposal. Opt-in, and the only thing in the
+# repo that must talk to the real PVGIS: the sample PDF is the artefact a reader
+# is most likely to take at face value, so it has to be a real one. Refuses to
+# write unless every probe came from the canonical origin, and writes the frozen
+# snapshot beside the PDF so `test_sample_output.py` can check that offline.
+cd apps/api && ./.venv/Scripts/python.exe ../../scripts/regenerate_sample_output.py
+```
+
+```bash
 # End-to-end. No servers to start first — the suite starts its own.
 cd apps/web
 npx playwright test --grep "@p0"              # the mandatory set
@@ -40,7 +51,9 @@ E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"
 E2E_TARGET_URL=http://127.0.0.1:3000 npx playwright test --grep "@p0"
 ```
 
-Integration tests run against a **throwaway database in fixture mode** — the exact configuration a reviewer gets from a clean clone with no credentials and no model pulled.
+Integration tests run against a **throwaway database** with Maps, FX and the LLM on committed fixtures — the configuration a reviewer gets from a clean clone with no credentials and no model pulled.
+
+**PVGIS is different, and deliberately so.** It has no fixture mode: the application always makes a real HTTP call. The suite stays offline by starting a local replay server (`tests/support/pvgis_stub.py`) and pointing `PVGIS_BASE_URL` at it, so every test exercises the same transport, retry and parse code a production call does. One mechanism serves pytest, all three Playwright launchers and both verification scripts, and because the stub keeps a request log, "a consumption change makes zero PVGIS calls" is an assertable count rather than a claim.
 
 ---
 
@@ -52,9 +65,10 @@ There is no step where a human has to remember to start something first. Playwri
 
 | Tier | Web | API | Configuration |
 |---|---|---|---|
-| **A — deterministic** | `:3100` | `:8100` | `MAPS_MODE`/`PVGIS_MODE`/`FX_MODE=fixture`, `LLM_PROVIDER=rules` |
-| **B — degraded** | `:3101` | `:8101` | PVGIS, FX and Ollama pointed at hosts that cannot resolve |
-| **C — live** | `:3100` | `:8100` | `@live`; skips itself unless the stack really is live |
+| **A — deterministic** | `:3100` | `:8100` | `MAPS_MODE`/`FX_MODE=fixture`, `LLM_PROVIDER=rules`, PVGIS at the replay stub on `:8102` |
+| **B — degraded** | `:3101` | `:8101` | FX and Ollama pointed at hosts that cannot resolve; PVGIS at the replay stub, because an unreachable PVGIS now fails the analysis outright and there would be no proposal left to test |
+| **C — live** | `:3100` | `:8100` | `@live`; skips itself unless the stack really is live. `E2E_LIVE=pvgis` *omits* the base-URL override rather than flipping a mode |
+| **D — pvgis-down** | — | `:8103` | API only, no browser, no Next build. PVGIS pointed at a fault path that always answers 503, for `e2e/pvgis-failure.spec.ts` |
 
 The ports are deliberately clear of 3000/8000 so a developer's running dev server is neither disturbed nor accidentally tested against, and `reuseExistingServer` is `false` everywhere. Each launcher refuses to start if its port is occupied rather than attaching to a stranger's process — a degraded stack silently answered by a healthy one would produce green tests that prove nothing.
 
@@ -62,13 +76,24 @@ Turn tier B off while iterating with `E2E_DEGRADED=0` (it costs a second Next bu
 
 ### How failure is simulated
 
-**PVGIS and FX are called by the backend, not the browser.** Playwright's route interception cannot reach them, so no amount of browser-level mocking would test those fallbacks. Tier B is a second stack genuinely configured to fail: `PVGIS_BASE_URL=http://pvgis.invalid/...`, `FX_BASE_URL=http://fx.invalid/...`, `OLLAMA_BASE_URL=http://ollama.invalid`.
+**PVGIS and FX are called by the backend, not the browser.** Playwright's route interception cannot reach them, so no amount of browser-level mocking would test those fallbacks. Tier B is a second stack genuinely configured to fail: `FX_BASE_URL=http://fx.invalid/...`, `OLLAMA_BASE_URL=http://ollama.invalid`.
+
+Tier B's PVGIS points at the replay stub rather than at `pvgis.invalid`, which is
+a change worth explaining. An unreachable PVGIS no longer degrades — it fails the
+analysis outright — so pointing tier B's PVGIS at nothing would leave no proposal
+with which to test the FX and LLM fallbacks; the tier would stop covering what it
+exists to cover. The genuine-outage case moved to tier D, whose PVGIS answers 503
+to everything and where the expected outcome *is* the failure.
+
+Faults there are carried in the **URL path**, never in stub state: `PVGIS_BASE_URL`
+is per-process, so fault mode is a property of the stack and parallel workers
+cannot poison each other's expectations. There is no arming endpoint, deliberately.
 
 The `.invalid` TLD is reserved and never resolves, so every attempt fails in ~200 ms on every OS. An unbound local port was the first choice and was wrong: Windows drops the SYN rather than refusing it, so each attempt burned the full connect timeout and a single analysis took 87 seconds.
 
 Browser-level interception is used **only** for genuinely browser-originated requests — the satellite raster, and one deliberate 500 on the chat endpoint to prove the error banner appears. Golden-path tests never intercept internal APIs.
 
-A degraded analysis takes roughly 25 seconds because every PVGIS and FX call burns its full retry budget before falling back. The degraded project therefore has longer timeouts than the others. Those are longer waits for a slower stack, not looser assertions: every expectation is identical.
+A degraded analysis takes roughly 10 seconds: the FX call burns its retry budget before falling back, while PVGIS answers immediately from the stub. It was ~25 seconds when PVGIS also had to time out. The degraded project still carries longer timeouts than the others — longer waits for a slower stack, not looser assertions: every expectation is identical.
 
 ### Golden values are independent of the code under test
 
@@ -78,7 +103,9 @@ A degraded analysis takes roughly 25 seconds because every PVGIS and FX call bur
 
 #### Golden value derivation
 
-Reproducible with a calculator from the committed fixtures. `E_y` is `outputs.totals.fixed.E_y` in `fixtures/pvgis/pvcalc*.json`; the rate is `fixtures/exchange-rates/usd-eur-ecb.json`.
+Reproducible with a calculator from the committed captures. `E_y` is `outputs.totals.fixed.E_y` in `fixtures/pvgis/pvcalc*.json` — served by the replay stub, never read off disk by the application; the rate is `fixtures/exchange-rates/usd-eur-ecb.json`.
+
+The goldens are pinned against the **replayed** captures, not against live PVGIS, and that distinction is real: a live run on 2026-07-29 returned 1119.83 for the south facet where the capture says 1119.82. Live tests therefore assert invariants and ranges, and only the replay tier asserts exact kWh.
 
 | Facet | PVGIS aspect | 1 kWp yield |
 |---|---:|---:|
@@ -101,6 +128,8 @@ payback     = capex(EUR) / savings
 | 3.6 kWp | 9 | N 9 | 9 × 0.4 × 1678.66 = **6043.18** | 43.79 % | €1510.79 | 5.82 yr | €21 426.10 |
 | 6 kWp | 15 | N 9, W 3, E 3 | 3.6×1678.66 + 1.2×1515.28 + 1.2×1367.24 = **9502.20** | 68.86 % | €2375.55 | 3.70 yr | €38 721.30 |
 | 9.6 kWp | 24 | N 9, S 9, W 3, E 3 | + 3.6×1119.82 = **13 533.55** | 98.07 % | €3383.39 | 2.60 yr | €58 878.10 |
+
+The production column is now literally the formula the code evaluates: the four 1 kWp probes give a specific yield per facet, and production is `installed kWp × specific yield`. It used to agree only because linear scaling of a capture reproduced the same arithmetic.
 
 The 6 kWp row is the load-bearing one. North and south are the same size and each hold nine panels, yet the last six go on the two small east/west triangles and **south stays empty** — because at −34° latitude west (1515) and east (1367) out-produce south (1120). An allocator ranking by area would fill south, and that assertion would catch it.
 
@@ -134,7 +163,7 @@ Per-worker databases were the first preference and are not practical here: Next 
 | `@p1` | 33 | chromium |
 | `@live` | 7 | opt-in; skipped on a fixture stack, with the reason printed |
 
-`npx playwright test --grep-invert "@live"` → **117 passed**, 4.1 min, from a clean `.next` build. (2026-07-29; 91 before the conversational layer added `conversation.spec.ts`, `conversation-changes.spec.ts` and `degraded/llm-telemetry.spec.ts`.)
+`npx playwright test --grep-invert "@live"` → **122 passed**, 2.0 min, from a clean `.next` build. (2026-07-30; 117 before mandatory live PVGIS added `pvgis-failure.spec.ts` and `analysis-failure-ui.spec.ts` and removed the fixture-fallback spec. Faster than the 4.1 min recorded on 2026-07-29 because the probe refactor makes four PVGIS calls per analysis where the old path made seven.)
 
 `E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"` → **6 passed, 1 skipped**, 38.9 s, against real PVGIS, the real ECB feed and a locally pulled `qwen3.5:2b`. The skip is live Google Static Maps, which has no API key. That run is what caught the `think: false` defect — see [`local-ai.md`](local-ai.md).
 

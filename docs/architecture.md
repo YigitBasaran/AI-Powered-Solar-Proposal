@@ -76,7 +76,21 @@ class FacetYieldRankingProvider(Protocol):
     async def specific_yield_kwh_per_kwp(self, facet: RoofFacet) -> float: ...
 ```
 
-A fixture implementation reads captured probes; the live implementation arrived later and changed no optimiser code or test.
+A fixture implementation read captured probes; the live implementation arrived
+later and changed no optimiser code or test.
+
+**The port has since been retired, and it is worth recording why rather than
+letting it vanish from the diagram.** It existed so the optimiser could be built
+and tested before the integration behind it. That purpose is spent: every facet
+is now probed at 1 kWp *before* layout begins, because production is
+`installed kWp × specific yield` and the allocator needs all four yields to rank
+the facets against each other. So `generate_layout` takes a plain
+`Mapping[str, float]` of yields, is synchronous, and **raises** on a facet with
+no yield — where the port's fixture implementation would have quietly scored it
+zero and moved the panels somewhere else. The synthetic estimator that
+interpolated yield between captured aspects is gone from the application
+entirely; what remains of it lives in `tests/support/yields.py`, where it is
+unambiguously test scaffolding.
 
 ### `ExchangeRateCache`
 
@@ -125,7 +139,6 @@ Every mode is surfaced in the UI, the snapshot and the PDF. **Fixture data is ne
 | Setting | Default | Fallback |
 |---|---|---|
 | `MAPS_MODE` | `fixture` | — |
-| `PVGIS_MODE` | `live` | → labelled fixture |
 | `FX_MODE` | `live` | → cache → labelled fixture, **never parity** |
 | `LLM_PROVIDER` | `rules` | → rules |
 

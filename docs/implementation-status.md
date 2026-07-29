@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated 2026-07-29: **1,065 API + 51 web + 117 E2E passing**; Ruff and strict MyPy clean over 54 source files; the `@live` LLM tier re-run against a locally pulled `qwen3.5:2b` (4 passed, 3 skipped). The conversational layer was rebuilt this day — see the phase 9 entry below and [`conversation.md`](conversation.md)._
+_Last updated 2026-07-30: **1,211 API + 51 web + 122 E2E passing** (2 API tests `@live`-deselected); Ruff and strict MyPy clean over 54 source files. PVGIS fixture mode was removed from the runtime this day: every analysis now makes real PVGIS calls, an analysis that cannot fails rather than substituting a capture, and only a live observation from the canonical origin may back a proposal. See [`known-limitations.md`](known-limitations.md) for the trade-off that buys._
 
 ---
 
@@ -149,7 +149,7 @@ Carrying full precision through the cash flow and rounding each year for display
 
 ## Phases 2 and 8 — complete backend
 
-**342 tests pass** (2 live-marked deselected), Ruff clean. Integration tests run fully offline against a throwaway database in fixture mode — the exact configuration a reviewer gets from a clean clone with no credentials and no model pulled.
+**342 tests pass** (2 live-marked deselected), Ruff clean — the count at the time of that phase; see the header for current figures. Integration tests run offline against a throwaway database with Maps, FX and the LLM on committed fixtures. PVGIS is the exception: it has no fixture mode, so the suite starts a local replay server and points `PVGIS_BASE_URL` at it — the application always makes a real HTTP call.
 
 ### The case flow, over HTTP, with no credentials
 
@@ -169,7 +169,7 @@ Jinja2 → Chromium → A4, page numbers, stable breaks, generated from the real
 
 Charts are **server-rendered inline SVG**, not a JS charting library: Chromium then has nothing to wait on beyond fonts — no script load, no animation, no race with the print call. The PDF also **draws the roof itself** from stored source-pixel geometry when no Konva export has been uploaded; without that fallback, a proposal generated straight from the API would show no reconstruction at all, which is the first thing a reviewer would hit.
 
-Every non-live data source is surfaced in the assumptions rather than quietly omitted — fixture FX, fixture PVGIS and fixture imagery each add an explicit note.
+Every non-live data source is surfaced in the assumptions rather than quietly omitted — fixture FX, replayed PVGIS and fixture imagery each add an explicit note. A replayed PVGIS observation additionally cannot be finalised at all, so that note only ever appears on a document a test harness produced.
 
 ---
 
@@ -255,7 +255,7 @@ $ docker compose ps
     (two containers — Ollama is a profile and did not start)
 
 $ docker exec solarvis-api python -c "import sys; print(sys.version)"   3.12.13
-$ docker exec solarvis-api python -m alembic current                    1c779d205bda (head)
+$ docker exec solarvis-api python -m alembic current                    1c779d205bda (head at the time)
 $ curl :8000/api/v1/health/ready   200, maps/pvgis/fx=fixture, llm=rules
 $ curl :3000/                      200
 $ curl :3000/dev/roof-calibration  200

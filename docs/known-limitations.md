@@ -79,11 +79,82 @@ The exhaustive offset sweep plus exact DP is right for four facets and ≤24 pan
 ### PDF rendering is in-request
 Chromium is launched inside the request that asks for the PDF. Fine at this scale; under real load it needs a worker queue. Memory-hungry.
 
-### Caches are process-local
-The PVGIS cache lives in process memory and is lost on restart. The FX cache is database-backed and survives. Fine for one instance; a second replica would duplicate PVGIS calls.
+### Live PVGIS is a hard runtime dependency
+**An offline deployment cannot complete an analysis.** This is by design, and it
+is the largest single trade-off in the system.
 
-### A dependency outage still makes the customer wait
-With PVGIS and the FX provider both unreachable, an analysis takes about **25 seconds** before the labelled fallbacks are used — measured on the E2E degraded stack. Per-facet PVGIS requests are issued concurrently and each call has a bounded timeout and retry budget, but the budgets for the two services are spent in series and nothing is returned early. A production system would want a circuit breaker so that the *second* customer during an outage does not pay the same cost as the first.
+There is no fixture mode, no fallback to a captured payload, no synthetic
+estimate and no partial answer: if any facet probe fails after its retry budget,
+the whole analysis fails, the project is marked `failed` with the reason, and
+finalisation is blocked. The alternative was worse — until this change, a
+customer could receive a proposal quoting an annual production figure that had
+never been observed for their roof. The substitution was labelled in the
+snapshot; nothing downstream read the label.
+
+The test suites remain fully offline, but not because the application has an
+offline path: they point `PVGIS_BASE_URL` at a local replay server. The
+*application* always makes a real call.
+
+Trust is pinned to `https://re.jrc.ec.europa.eu/api/v5_3`, by exact origin and
+exact path segments. If PVGIS ever moves origin or bumps its API version,
+proposals stop being classified `live` and finalisation starts refusing until
+the constant is updated deliberately. That is the intended failure direction and
+it will eventually fire — better a refused document than a mislabelled one.
+
+`ALLOW_REPLAY_PROPOSALS` is the only thing standing between a replayed capture
+and an issued proposal. It is false everywhere but the test stacks, start-up
+refuses it outside a recognised test environment, and `docker-compose.yml` states
+it explicitly as false so a reader can see that the container cannot issue one.
+
+### Caches are process-local
+The FX cache is database-backed and survives a restart. There is **no PVGIS
+cache at all** any more: the four probes are at four distinct aspects and all at
+1 kWp, so no two lookups within a request could ever collide, and there is no
+cross-request reuse by design — every new project issues fresh calls. What the
+cache actually did was relabel a result as `cache`, which meant a snapshot could
+report a source that was not where its numbers came from.
+
+Probes *are* reused within one project when a system size changes, because they
+are taken at 1 kWp before any size is chosen. That reuse is refused the moment
+anything sent to PVGIS differs — location, pitch, aspect, loss, technology,
+mounting, API version or origin — and refused outright for a replayed
+observation unless the override above is set.
+
+### A dependency outage makes the customer wait, and then fails
+This used to be a degraded-tier curiosity; it is now the default failure cost,
+because there is nothing to fall back to.
+
+A PVGIS outage costs the full retry budget before the analysis fails: at most
+`PVGIS_MAX_ATTEMPTS` (4) attempts within `PVGIS_RETRY_BUDGET_SECONDS` (30) **per
+facet**. The four facets are probed concurrently on one connection pool, so a bad
+day costs roughly one budget in wall-clock rather than four — about 30 seconds,
+not two minutes. Backoff is exponential with full jitter, and a `Retry-After`
+header is honoured but clamped to the remaining budget, so a server-suggested
+300 s cannot hold a request open.
+
+Not every status spends the whole ladder. 429/502/503/504/529, connection errors,
+timeouts and a body that is not JSON at all get the full budget. **HTTP 500 gets
+exactly one extra attempt** — it is ambiguous enough to be worth one retry and
+not worth four. A permanent 4xx, a 3xx redirect, and a 200 whose body parses as
+JSON but fails schema validation all raise immediately.
+
+A production system would want a circuit breaker so the *second* customer during
+an outage does not pay the same cost as the first.
+
+### One analysis per project, enforced by a 120-second lease
+Two concurrent `run-analysis` requests for one project used to issue two full
+sets of probes and race to write, so the stored snapshot could describe inputs
+that had already been superseded. A conditional UPDATE now grants the claim to
+one and answers the other `409 ANALYSIS_IN_PROGRESS`, before any probe is issued.
+
+The limitation is the lease. A hard process kill mid-analysis leaves the claim
+held until it expires, so that project refuses a new analysis for up to
+`ANALYSIS_LEASE_SECONDS` (120). The lease is validated at start-up against the
+worst-case external-call window — a lease shorter than the work it protects is
+worse than none, because it hands the project to a second batch while the first
+is still holding a snapshot it means to write. That case is caught by a fencing
+token (`analysis_run_id`) on every terminal write, which answers
+`409 ANALYSIS_SUPERSEDED` rather than clobbering the fresher result.
 
 ### Revisions chain; they do not branch
 Editing a project whose proposal has been finalised forks a **revision** — a new editable project with the change applied, only the dependent sections recomputed, and no proposal of its own. The issued proposal and its share link are immutable and permanent; finalising the revision mints a new link. `projects.revision_of_project_id` is UNIQUE, so a parent may have at most one direct child and a retried or concurrent change cannot fork two drafts.

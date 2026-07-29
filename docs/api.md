@@ -55,7 +55,11 @@ Reports **every operating mode explicitly**, because the one thing that must nev
     "database": { "mode": "sqlite+aiosqlite", "ready": true },
     "maps":     { "mode": "fixture", "ready": true,
                   "detail": "Development fixture on the exact z20/scale2 grid. Not live imagery." },
-    "pvgis":    { "mode": "live", "ready": true },
+    "pvgis":    { "endpoint": "https://re.jrc.ec.europa.eu/api/v5_3/PVcalc",
+                  "origin": "https://re.jrc.ec.europa.eu", "apiVersion": "v5_3",
+                  "trusted": true, "timeoutSeconds": 15, "maxAttempts": 4,
+                  "retryBudgetSeconds": 30, "allowReplayProposals": false,
+                  "ready": true, "detail": null },
     "fx":       { "mode": "live", "provider": "frankfurter", "dataProvider": "ECB", "ready": true },
     "llm":      { "provider": "rules", "model": null, "ready": true }
   },
@@ -67,6 +71,15 @@ Reports **every operating mode explicitly**, because the one thing that must nev
 ```
 
 `degraded` rather than `down` when a dependency is missing — the fixture modes exist so a full proposal still completes.
+
+**PVGIS reports no mode, because it has none.** It reports the endpoint that will
+be called and whether that endpoint could back a proposal at all. The probe makes
+**no outbound call** — a readiness check must not — but it does validate the
+configuration, which costs nothing and catches the faults that would otherwise
+first surface when a customer runs an analysis: an unparseable URL, an untrusted
+endpoint in a production environment, nonsensical retry settings, or
+`ALLOW_REPLAY_PROPOSALS` set outside a test environment. Each sets
+`ready: false` with a stated `detail`.
 
 ### `GET /health/case-location`
 

@@ -509,3 +509,30 @@ def test_monthly_specific_yield_is_normalised_to_one_kwp(captured_payload) -> No
     assert sum(result.monthly_specific_yield_kwh_per_kwp) == pytest.approx(
         result.specific_yield_kwh_per_kwp, rel=0.02
     )
+
+
+@pytest.mark.live
+async def test_live_production_scales_linearly_with_installed_power(settings) -> None:
+    """The assumption the whole normalised-probe design rests on.
+
+    Every facet is probed once at 1 kWp and production is then computed as
+    `installed kWp x specific yield` - arithmetic, not a second call. That is
+    only sound if PVGIS itself is linear in `peakpower`, and only the real
+    service can confirm it. If it ever stops being linear, every production
+    figure in every proposal is wrong by whatever the non-linearity is, and no
+    offline test could tell.
+    """
+    client = PvgisClient(settings)
+    one = await client.pvcalc(
+        lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.378845
+    )
+    six = await client.pvcalc(
+        lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=6.0, angle_deg=25.0, aspect_deg=-169.378845
+    )
+
+    assert six.annual_kwh == pytest.approx(one.annual_kwh * 6.0, rel=1e-3)
+    assert six.specific_yield_kwh_per_kwp == pytest.approx(
+        one.specific_yield_kwh_per_kwp, rel=1e-3
+    )
+    for a, b in zip(six.monthly_kwh, one.monthly_kwh, strict=True):
+        assert a == pytest.approx(b * 6.0, rel=2e-3)

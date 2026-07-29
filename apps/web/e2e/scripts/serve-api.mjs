@@ -44,12 +44,10 @@ const python =
 
 /** Settings shared by every E2E stack. */
 const common = {
+  // Named, not inherited: several guards are only permitted in a test
+  // environment and check this rather than trusting a flag. `ALLOW_REPLAY_
+  // PROPOSALS` below is refused at start-up without it.
   APP_ENV: "test",
-  // Explicit, not left to the field default: a developer's own `.env` may say
-  // `fixture`, and if it does the stack silently reads captures off disk while
-  // still reporting the stub as its endpoint - which is exactly what the
-  // global-setup guard cannot see. Deleted with the setting itself.
-  PVGIS_MODE: "live",
   LOG_LEVEL: "WARNING",
   DATABASE_URL: sqliteUrl(dbPath),
   API_BASE_URL: `http://127.0.0.1:${port}`,
@@ -153,9 +151,6 @@ const pvgisDown = {
   PVGIS_TIMEOUT_SECONDS: "2",
   PVGIS_MAX_ATTEMPTS: "2",
   PVGIS_RETRY_BUDGET_SECONDS: "3",
-  // Explicit while the fallback setting still exists. It is deleted in the
-  // step that removes fixture mode, at which point there is nothing to switch.
-  PVGIS_FALLBACK_ENABLED: "false",
   FX_MODE: "fixture",
   LLM_PROVIDER: "rules",
 };

@@ -142,6 +142,12 @@ export class ApiClient {
   }
 
   /** The stored project, for asserting what a message did *not* write. */
+  /** Finalise, expecting a refusal. Returns the status and the error body. */
+  async finalizeExpectingFailure(projectId: string) {
+    const response = await this.request.post(`${this.base}/projects/${projectId}/finalize`);
+    return { status: response.status(), body: await response.json() };
+  }
+
   async project(projectId: string) {
     const response = await this.request.get(`${this.base}/projects/${projectId}`);
     if (response.status() !== 200) {

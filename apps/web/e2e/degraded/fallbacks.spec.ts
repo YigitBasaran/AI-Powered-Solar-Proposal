@@ -46,17 +46,6 @@ test.describe("@p0 degraded external services", () => {
     expect(shareToken.length).toBeGreaterThan(15);
   });
 
-  test.fixme(
-    "PVGIS falls back to captured data, and says so",
-    async () => {
-      // Removed behaviour, not a broken test. There is no fixture fallback for
-      // production any more: an unreachable PVGIS fails the analysis and blocks
-      // finalisation. That is asserted in `e2e/pvgis-failure.spec.ts` against a
-      // stack whose PVGIS genuinely never answers. Unfixme'd and deleted in the
-      // step that removes fixture mode.
-    },
-  );
-
   test("FX falls back without ever substituting parity", async ({ api, solarFlow }) => {
     const { analysis } = await api.analysedProject("6 kWp");
     const fx = analysis.exchangeRate;

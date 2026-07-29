@@ -85,6 +85,8 @@ export type ProjectResponse = {
   selectedSystemSizeKwp: number | null;
   requestedPanelCount: number | null;
   analysisStatus: string;
+  /** Why the last analysis failed. Present only when `analysisStatus` is `failed`. */
+  analysisError?: { code: string; message: string; details?: Record<string, unknown> } | null;
   progress: ProgressStep[];
   messages: ChatMessage[];
   analysis: Analysis | null;

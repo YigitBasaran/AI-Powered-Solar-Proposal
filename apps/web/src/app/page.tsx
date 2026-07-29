@@ -52,6 +52,7 @@ export default function Home() {
   const [health, setHealth] = useState<HealthReady | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<string>("pending");
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [proposal, setProposal] = useState<FinalizeResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -117,8 +118,15 @@ export default function Home() {
             createdAt: new Date().toISOString(),
           },
         ]);
+        setAnalysisError(null);
       } catch (caught) {
-        setError(caught instanceof Error ? caught.message : "Analysis failed.");
+        // The server has already recorded why and marked the project failed.
+        // Mirroring it here is what turns a transient toast into a state the
+        // page can explain and offer a retry from.
+        const message = caught instanceof Error ? caught.message : "Analysis failed.";
+        setError(message);
+        setAnalysisStatus("failed");
+        setAnalysisError(message);
       } finally {
         setBusy(null);
       }
@@ -132,6 +140,7 @@ export default function Home() {
       const project = await api.project(id);
       setAnalysis(project.analysis);
       setAnalysisStatus(project.analysisStatus);
+      setAnalysisError(project.analysisError?.message ?? null);
       setCurrentStep(project.currentStep);
       setProgress(project.progress);
     } catch (caught) {
@@ -366,6 +375,29 @@ export default function Home() {
                 stageRef.current = stage;
               }}
             />
+
+            {analysisStatus === "failed" ? (
+              <Callout
+                testId="failed-analysis"
+                title="The production model could not be retrieved."
+              >
+                {analysisError ??
+                  "Live solar production data was not available, so no figures were produced."}{" "}
+                Nothing is shown rather than an estimate, because a proposal has to state
+                a measured yield. Try again — the proposal cannot be created until it
+                succeeds.
+                <span className="mt-2.5 block">
+                  <Button
+                    variant="secondary"
+                    onClick={() => projectId && runAnalysis(projectId)}
+                    disabled={Boolean(busy)}
+                    testId="retry-analysis"
+                  >
+                    Retry the analysis
+                  </Button>
+                </span>
+              </Callout>
+            ) : null}
 
             {analysis ? (
               <>

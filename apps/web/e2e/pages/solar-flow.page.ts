@@ -116,6 +116,24 @@ export class SolarFlowPage {
     await expect(this.kpiRow).toBeVisible({ timeout: 90_000 });
   }
 
+  /**
+   * Intake without waiting for figures.
+   *
+   * `completeIntake` waits for the KPI row, which is the right default -
+   * every other test needs the analysis. A test about the analysis *failing*
+   * cannot use it, and would otherwise sit for ninety seconds waiting for a row
+   * that is deliberately never going to appear.
+   */
+  async completeIntakeExpectingNoFigures(size: 3.6 | 6 | 9.6 = 6): Promise<void> {
+    await this.enterLocation("-34.04658242871865, 18.46491476666948");
+    await this.enterMonthlyConsumption(1150);
+    await expect(this.systemSizeCards).toBeVisible();
+    const before = await this.assistantMessages.count();
+    await this.page.getByTestId(`system-size-${size}`).click();
+    await this.waitForReplyAfter(before);
+    await expect(this.busyOverlay).toBeHidden({ timeout: 90_000 });
+  }
+
   /** Walk the whole intake in one call. */
   async completeIntake(
     options: {

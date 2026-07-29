@@ -37,4 +37,31 @@ test.describe("@p0 PVGIS unavailable", () => {
     const project = await api.project(projectId);
     expect(project.analysis, "no snapshot may be stored").toBeNull();
   });
+
+  test("the project is marked failed and says why", async ({ api }) => {
+    // Not `running`, which is what an unguarded failure used to leave behind -
+    // and which reads as "still being recalculated", so it never resolves.
+    const { projectId } = await api.createProject();
+    await api.chat(projectId, CASE_COORD);
+    await api.chat(projectId, "1150 kWh");
+    await api.chat(projectId, "6 kWp");
+    await api.runAnalysisExpectingFailure(projectId);
+
+    const project = await api.project(projectId);
+    expect(project.analysisStatus).toBe("failed");
+    expect(project.analysisError?.code).toBe("PVGIS_UNAVAILABLE");
+    expect(project.analysisError?.message).toBeTruthy();
+  });
+
+  test("finalisation stays blocked", async ({ api }) => {
+    const { projectId } = await api.createProject();
+    await api.chat(projectId, CASE_COORD);
+    await api.chat(projectId, "1150 kWh");
+    await api.chat(projectId, "6 kWp");
+    await api.runAnalysisExpectingFailure(projectId);
+
+    const refused = await api.finalizeExpectingFailure(projectId);
+    expect(refused.status).toBe(409);
+    expect(refused.body.error.code).toBe("PROPOSAL_INCOMPLETE");
+  });
 });

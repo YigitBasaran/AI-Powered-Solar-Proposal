@@ -89,10 +89,36 @@ test.describe("@p1 changing a value", () => {
     const a = (await api.project(edited)).analysis;
     const b = (await api.project(fresh)).analysis;
     for (const section of ["roof", "layout", "energy", "financial"] as const) {
-      expect(JSON.stringify(a[section]), section).toBe(JSON.stringify(b[section]));
+      expect(JSON.stringify(withoutRetrievalTimes(a[section])), section).toBe(
+        JSON.stringify(withoutRetrievalTimes(b[section])),
+      );
     }
   });
 });
+
+/**
+ * The same value with every retrieval timestamp blanked.
+ *
+ * Two analyses of identical inputs must produce identical figures. They cannot
+ * produce identical *timestamps* - one observation happened after the other,
+ * and `energy.pvgis` records when. Only the moment an observation was made is
+ * normalised; endpoint, source, radiation database, request parameters and
+ * every yield stay under comparison, which is the same rule the backend's
+ * `VOLATILE_SNAPSHOT_PATHS` applies.
+ */
+function withoutRetrievalTimes(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutRetrievalTimes);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>).map(([key, inner]) =>
+        key === "retrievedAt" || key === "batchCompletedAt"
+          ? [key, "<when>"]
+          : [key, withoutRetrievalTimes(inner)],
+      ),
+    );
+  }
+  return value;
+}
 
 test.describe("@p1 a change the client must not ignore", () => {
   test("a corrected consumption updates the KPIs on screen", async ({ solarFlow }) => {

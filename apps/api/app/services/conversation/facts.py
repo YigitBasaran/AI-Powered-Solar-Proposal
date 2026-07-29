@@ -176,14 +176,20 @@ def build_facts(
                 selected_system_size_kwp=getattr(project, "selected_system_size_kwp", None),
             )
 
-            if status == "recalculating" and section in _blast_radius(project):
+            # Both statuses are scoped to the sections the change could reach.
+            # Withholding the roof because a *financial* recomputation failed
+            # would be theatre: no project input can move a roof measurement,
+            # and the test suite asserts that field by field.
+            at_risk = section in _blast_radius(project)
+
+            if status == "recalculating" and at_risk:
                 return FactBundle(
                     topic=topic,
                     state=AnswerState.RECALCULATING,
                     source=AnswerSource.NONE,
                     stale_inputs=staleness.stale_inputs,
                 )
-            if status == "stale" or staleness.affects(section):
+            if (status == "stale" and at_risk) or staleness.affects(section):
                 return FactBundle(
                     topic=topic,
                     state=AnswerState.NOT_CALCULATED_YET,
@@ -191,7 +197,7 @@ def build_facts(
                     stale_inputs=staleness.stale_inputs,
                 )
 
-        if section is not None and status not in {"complete", "recalculating"}:
+        if section is not None and status not in {"complete", "recalculating", "stale"}:
             snapshot = None
 
     if section is not None and snapshot:

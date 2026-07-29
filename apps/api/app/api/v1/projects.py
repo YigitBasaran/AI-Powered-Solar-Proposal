@@ -89,6 +89,10 @@ class ChatResponse(BaseModel):
     interpretation: dict[str, Any] | None = None
     #: Set when this reply came from a revision the change forked.
     revisionOfProjectId: str | None = None
+    #: Which inputs this message recalculated, so the client knows to re-read
+    #: the analysis. Sending the whole snapshot on every chat reply would be a
+    #: large payload for the one message in fifty that changes it.
+    recalculated: list[str] | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -166,7 +170,7 @@ def _apply(project: Project, updates: dict[str, object]) -> None:
 
 
 async def _recalculate(
-    project: Project, outcome: StepOutcome, settings: Settings
+    session: AsyncSession, project: Project, outcome: StepOutcome, settings: Settings
 ) -> list[str] | None:
     """Recompute exactly what the change reached, and nothing more.
 
@@ -181,6 +185,13 @@ async def _recalculate(
 
     snapshot = dict(project.analysis_json)
     project.analysis_status = "recalculating"
+    # Committed before the slow part, for the same reason `run-analysis`
+    # commits its "running" marker: a size change re-runs PVGIS, and holding
+    # SQLite's write lock across that queues every other writer behind it. It
+    # also means a process that dies mid-recompute leaves the project honestly
+    # marked as recalculating rather than as complete over the old figures.
+    await commit_before_response(session)
+
     try:
         if outcome.changed_inputs == frozenset({"monthly_consumption_kwh"}):
             updated = analysis_service.recompute_for_consumption(
@@ -352,7 +363,7 @@ async def chat(
     _apply(project, outcome.updates)
     project.current_step = outcome.next_step.value
 
-    recalculated = await _recalculate(project, outcome, settings)
+    recalculated = await _recalculate(session, project, outcome, settings)
 
     message = notice + outcome.assistant_message
     session.add(
@@ -408,6 +419,7 @@ async def chat(
         analysisStatus=project.analysis_status,
         interpretation=routed.interpretation.to_payload(),
         revisionOfProjectId=project.revision_of_project_id,
+        recalculated=recalculated,
     )
 
 
@@ -430,7 +442,16 @@ async def run_project_analysis(
         )
 
     project.analysis_status = "running"
-    await session.flush()
+    # Commit, not flush. A flush opens SQLite's write transaction and holds it
+    # for the whole of what follows - three PVGIS calls and an FX lookup, which
+    # on a degraded or slow network is several seconds. Every other writer then
+    # queues behind it, and one that exceeds `busy_timeout` fails with
+    # "database is locked", surfacing as a 500 on an unrelated request. Found
+    # by two E2E files running concurrently against the degraded stack.
+    #
+    # Committing here also makes "running" *visible* to a concurrent reader,
+    # which is what the status is for.
+    await commit_before_response(session)
 
     result = await run_analysis(
         monthly_consumption_kwh=project.monthly_consumption_kwh,

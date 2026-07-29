@@ -79,7 +79,7 @@ def test_an_unusable_figure_is_distinguishable_from_an_unreadable_message() -> N
         ("-34.04658242871865, 18.46491476666948", VALID, True),
         ("lat -34.04658 lon 18.46491", VALID, True),
         ("34.04658242871865, 18.46491476666948", VALID, True),
-        ("London", VALID, False),
+        ("London", VALID, False),  # a place, but not one anything here can verify
         ("10 Downing Street, London", VALID, False),
         ("41.0082, 28.9784", VALID, True),
         ("999.9, 18.4", ABSENT, False),
@@ -134,6 +134,16 @@ def test_a_bare_adjective_is_not_a_selection() -> None:
     assert extract_system_size(normalise("large")).status is ABSENT
     assert extract_system_size(normalise("the full roof")).status is ABSENT
     assert extract_system_size(normalise("largest")).values.system_size_kwp == 9.6
+
+
+def test_last_is_a_time_word_unless_it_names_a_choice() -> None:
+    """Found while writing the live probes: bare `last` was in the vocabulary,
+    so "about the same as we used last winter" selected 9.6 kWp."""
+    for time_phrase in ("last winter", "same as last month", "what we paid last year"):
+        assert extract_system_size(normalise(time_phrase)).status is ABSENT, time_phrase
+
+    for choice in ("the last one", "last option", "the last size"):
+        assert extract_system_size(normalise(choice)).values.system_size_kwp == 9.6, choice
 
 
 def test_a_panel_count_is_read_in_text_order() -> None:

@@ -87,6 +87,8 @@ export const api = {
 
   roofModel: () => request<RoofModel>("/roof/fixed-model"),
 
+  project: (projectId: string) => request<ProjectResponse>(`/projects/${projectId}`),
+
   proposal: (token: string) => request<Proposal>(`/proposals/${token}`),
 
   recordView: (token: string) =>

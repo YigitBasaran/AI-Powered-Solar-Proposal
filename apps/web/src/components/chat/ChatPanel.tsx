@@ -1,9 +1,10 @@
 "use client";
 
-import { Loader2, Send } from "lucide-react";
+import { AlertTriangle, Loader2, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/components/ui/primitives";
+import { FALLBACK_CHIP_LABEL, describeFallback, shouldShowFallbackChip } from "@/lib/telemetry";
 import type { ChatMessage, ProgressStep } from "@/types/api";
 
 export function ProgressRail({ steps }: { steps: ProgressStep[] }) {
@@ -24,6 +25,63 @@ export function ProgressRail({ steps }: { steps: ProgressStep[] }) {
         </li>
       ))}
     </ol>
+  );
+}
+
+/**
+ * Provenance, shown sparingly.
+ *
+ * The chip appears only when a model was genuinely reached and did not
+ * deliver — never merely because a model is configured. Everything else (which
+ * provider, which model, how long) sits behind a disclosure, because a customer
+ * asking "why did it answer like that?" is a rare and deliberate act, and model
+ * names on every bubble are noise dressed as transparency.
+ */
+function MessageTelemetry({ message }: { message: ChatMessage }) {
+  const interpretation = message.interpretation;
+  if (!interpretation) return null;
+
+  return (
+    <details className="mt-1.5 text-[11px] text-slate-muted" data-testid="message-telemetry">
+      <summary className="cursor-pointer list-none">
+        {shouldShowFallbackChip(interpretation) ? (
+          // Colour, an icon and the words together: the state has to survive a
+          // greyscale print and a colour-blind reader, and amber text on amber
+          // at 11px would not carry 4.5:1 on its own.
+          <span
+            data-testid="fallback-chip"
+            className="inline-flex items-center gap-1 rounded-full border border-solar-600/40 bg-solar-100 px-2 py-0.5 font-medium text-slate-ink"
+          >
+            <AlertTriangle className="size-3" aria-hidden />
+            {FALLBACK_CHIP_LABEL}
+          </span>
+        ) : (
+          <span className="underline decoration-dotted underline-offset-2">How this was read</span>
+        )}
+      </summary>
+      <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+        <dt>Configured</dt>
+        <dd data-testid="configured-provider">{interpretation.configuredProvider}</dd>
+        <dt>Attempted</dt>
+        <dd data-testid="attempted-provider">{interpretation.attemptedProvider ?? "none"}</dd>
+        <dt>Effective</dt>
+        <dd data-testid="effective-provider">{interpretation.effectiveProvider}</dd>
+        <dt>Reason</dt>
+        <dd data-testid="fallback-reason">{describeFallback(interpretation.fallbackReason)}</dd>
+        {interpretation.modelName ? (
+          <>
+            <dt>Model</dt>
+            <dd>{interpretation.modelName}</dd>
+          </>
+        ) : null}
+        {interpretation.latencyMs !== null ? (
+          <>
+            <dt>Latency</dt>
+            <dd className="tnum">{interpretation.latencyMs} ms</dd>
+          </>
+        ) : null}
+      </dl>
+    </details>
   );
 }
 
@@ -85,6 +143,7 @@ export function ChatPanel({
               )}
             >
               {message.content}
+              {message.role === "assistant" ? <MessageTelemetry message={message} /> : null}
             </div>
           </div>
         ))}

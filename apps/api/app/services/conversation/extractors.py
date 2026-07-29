@@ -57,10 +57,21 @@ PLACE_NAME_LETTERS = re.compile(r"[^\W\d_]")
 #: Bare `large` and `full` are deliberately absent. They are adjectives, not
 #: selections, and having them here is why "how large is the roof?" selected a
 #: 9.6 kWp system. `largest`, `biggest` and `maximum` carry the intent.
+#:
+#: Bare `last` is absent for the same reason, found the same way: "about the
+#: same as we used last winter" selected 9.6 kWp. `last` is far more often a
+#: time word than an ordinal, so it counts only when it names one of the
+#: choices.
 ORDINAL_SIZE_PHRASES: tuple[tuple[re.Pattern[str], float], ...] = (
     (re.compile(r"\b(smallest|lowest|cheapest|minimum|min|first|starter|small)\b"), 3.6),
     (re.compile(r"\b(middle|medium|mid|second|average|moderate)\b"), 6.0),
-    (re.compile(r"\b(largest|biggest|maximum|max|last|third|highest)\b"), 9.6),
+    (
+        re.compile(
+            r"\b(largest|biggest|maximum|max|third|highest)\b"
+            r"|\blast (?:one|option|size|choice)\b"
+        ),
+        9.6,
+    ),
 )
 
 PANEL_COUNT_TO_SIZE: dict[int, float] = {9: 3.6, 15: 6.0, 24: 9.6}

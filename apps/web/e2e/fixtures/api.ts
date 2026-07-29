@@ -129,6 +129,15 @@ export class ApiClient {
     return { status: response.status(), body: await response.json() };
   }
 
+  /** The stored project, for asserting what a message did *not* write. */
+  async project(projectId: string) {
+    const response = await this.request.get(`${this.base}/projects/${projectId}`);
+    if (response.status() !== 200) {
+      throw new Error(`project failed: ${response.status()} ${await response.text()}`);
+    }
+    return response.json();
+  }
+
   /**
    * Chat, insisting the step actually advanced.
    *

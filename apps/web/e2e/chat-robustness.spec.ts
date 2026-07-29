@@ -34,19 +34,30 @@ test.describe("@p0 input handling", () => {
     await solarFlow.open();
     await solarFlow.enterLocation(CASE_INPUTS.locationInput);
 
-    for (const bad of ["-500 kWh", "0", "banana", "  "]) {
-      if (bad.trim() === "") {
-        // The composer refuses to send whitespace at all — nothing to assert
-        // server-side, but the button must stay disabled.
-        await solarFlow.chatInput.fill(bad);
-        await expect(solarFlow.sendButton).toBeDisabled();
-        await solarFlow.chatInput.fill("");
-        continue;
-      }
+    // The refusals used to share one sentence — "I couldn't read a consumption
+    // figure" — for three different problems. "-500 kWh" is perfectly readable;
+    // the objection is that it is negative, and saying otherwise invites the
+    // customer to retype the same figure. Every case still ends with the same
+    // worked example, so the shared half is asserted once, below.
+    const cases: Array<[string, RegExp]> = [
+      ["-500 kWh", /greater than zero/i],
+      ["0", /greater than zero/i],
+      ["banana", /couldn't read a consumption figure/i],
+      ["quite a lot really", /rather not guess/i],
+    ];
+
+    // The composer refuses to send whitespace at all — nothing reaches the
+    // server, but the button must stay disabled.
+    await solarFlow.chatInput.fill("  ");
+    await expect(solarFlow.sendButton).toBeDisabled();
+    await solarFlow.chatInput.fill("");
+
+    for (const [bad, expected] of cases) {
       await solarFlow.send(bad);
-      await expect(solarFlow.lastAssistantMessage).toContainText(
-        /couldn't read a consumption figure/i,
-      );
+      await expect(solarFlow.lastAssistantMessage, bad).toContainText(expected);
+      // Whatever went wrong, the customer is told what a good answer looks like.
+      await expect(solarFlow.lastAssistantMessage, bad).toContainText(/1,150 kWh/);
+      await expect(solarFlow.systemSizeCards, bad).toBeHidden();
     }
 
     // Still on the consumption step; a valid answer then moves on.
@@ -117,16 +128,13 @@ test.describe("@p0 input handling", () => {
     }
   });
 
-  test("the location is always resolved to the verified case coordinate", async ({ api }) => {
-    // The case has one fixed property and geocoding is out of scope, so a
-    // written address is accepted, recorded verbatim, and openly resolved to
-    // the verified coordinate — including the note about the brief's missing
-    // minus sign.
-    for (const input of [
-      "10 Downing Street, London",
-      "Galway Road, Cape Town",
-      CASE_INPUTS.locationInput,
-    ]) {
+  test("only the calibrated coordinate is accepted as the location", async ({ api }) => {
+    // Behaviour change, deliberate. The case has one fixed property and no
+    // geocoder, so an address *cannot* be checked against it. Accepting one
+    // and echoing it back — which is what this used to do — attached a
+    // stranger's address to Cape Town's roof geometry, and every figure
+    // downstream then described a property it had never seen.
+    for (const input of [CASE_INPUTS.locationInput, "-34.04658, 18.46491"]) {
       const { projectId } = await api.createProject();
       const reply = await api.chat(projectId, input);
 
@@ -136,6 +144,16 @@ test.describe("@p0 input handling", () => {
       expect(reply.body.assistantMessage).toContain("-34.046582");
       expect(reply.body.assistantMessage).toContain("18.464915");
       expect(reply.body.assistantMessage.toLowerCase()).toContain("open sea");
+    }
+
+    for (const input of ["10 Downing Street, London", "Galway Road, Cape Town"]) {
+      const { projectId } = await api.createProject();
+      const reply = await api.chat(projectId, input);
+
+      expect(reply.body.accepted, `"${input}" was accepted`).toBe(false);
+      expect(reply.body.currentStep).toBe("location");
+      expect(reply.body.assistantMessage).toContain("-34.046582");
+      expect((await api.project(projectId)).rawLocationInput).toBeNull();
     }
   });
 

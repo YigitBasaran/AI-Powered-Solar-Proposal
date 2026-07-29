@@ -95,10 +95,17 @@ def is_question(message: Normalised) -> bool:
 
 
 #: Asking to see the choices, rather than asking about them.
+#:
+#: Matched on the *noun*, not on a well-formed interrogative in front of it.
+#: The message that prompted this redesign was "whicj options that we have?" -
+#: one typo away from every pattern keyed on `what|which`, and answered as an
+#: unreadable consumption figure because of it. This is only ever consulted for
+#: messages already classified as questions, so a bare `options` cannot capture
+#: anything that was not one.
 _OPTIONS = re.compile(
-    r"\b(?:what|which)\s+(?:are\s+)?(?:the\s+)?(?:options|choices|sizes|systems)\b"
-    r"|\bmy options\b|\bavailable options\b|\bwhat (?:can|could) i (?:choose|pick)\b"
-    r"|\bwhich options\b|\blist the (?:options|sizes)\b|\bwhat are my choices\b"
+    r"\boptions?\b|\bchoices\b"
+    r"|\b(?:what|which)\s+(?:are\s+)?(?:the\s+)?(?:sizes|systems)\b"
+    r"|\bwhat (?:can|could) i (?:choose|pick)\b|\blist the (?:options|sizes)\b"
 )
 
 #: Asking for the reasoning behind something already stated.
@@ -156,9 +163,12 @@ _TOPIC_PATTERNS: tuple[tuple[Topic, re.Pattern[str]], ...] = (
     (Topic.ROOF, re.compile(
         r"\b(roof|facet|facets|pitch|azimuth|ridge|hip|hips|eave|eaves|edge|edges|tilt|"
         r"orientation|slope|square met|area|measurement|satellite|imagery)\b")),
+    # `option` and `choice` land here: the only thing this workflow offers a
+    # choice of is the system size. PROPOSAL, FX and FINANCE are checked first,
+    # so "what are my options for sharing the proposal" still goes there.
     (Topic.SYSTEM_SIZE, re.compile(
         r"\b(system size|kwp|panel count|how many panels|which size|which option|"
-        r"the three|three sizes|3\.6|9\.6)\b")),
+        r"options?|choices?|the three|three sizes|3\.6|9\.6)\b")),
     (Topic.CONSUMPTION, re.compile(
         r"\b(consumption|usage|use per|my bill|units a month|monthly use|kwh|kilowatt hour|"
         r"annual|monthly)\b")),

@@ -58,12 +58,20 @@ test.describe("@live Ollama parser", () => {
     const probe = await probeOllama();
     test.skip(!probe.installed, SKIP.ollamaAbsent(MODEL));
 
-    // Phrases with no digits and no ordinal keyword, so the rules parser
-    // returns UNKNOWN and the model is genuinely consulted.
+    // Phrases the deterministic router genuinely cannot settle: no digits, no
+    // number words, no unit, no ordinal keyword, and not shaped like a
+    // question.
+    //
+    // Two earlier probes were retired here rather than weakened. "we usually
+    // get through about eleven hundred and fifty units a month" and "the one
+    // that fits fifteen panels" are now parsed deterministically by
+    // `conversation/numbers.py`, so they never reach the model at all. That is
+    // a win in the parser; keeping them would have recorded it as a regression
+    // in this test.
     const beyondRules = [
-      "we usually get through about eleven hundred and fifty units a month",
       "whichever one my neighbour got",
-      "the one that fits fifteen panels",
+      "about the same as we used last winter",
+      "roughly what the previous tenants were paying",
     ];
 
     const sources: string[] = [];

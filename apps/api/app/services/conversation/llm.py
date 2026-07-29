@@ -28,7 +28,12 @@ from pydantic import BaseModel, ValidationError
 from app.core.config import Settings
 from app.core.errors import LlmUnavailableError
 from app.domain.models import ExtractedValues, ProjectStep
-from app.services.conversation.actions import ActionKind, ConversationAction, Topic
+from app.services.conversation.actions import (
+    ActionKind,
+    ConversationAction,
+    ExtractionStatus,
+    Topic,
+)
 from app.services.conversation.normalise import Normalised
 from app.services.conversation.telemetry import FallbackReason, Interpretation
 
@@ -119,13 +124,29 @@ def build_prompt(message: Normalised, *, step: ProjectStep, known: dict[str, Any
     ) + "\n" + FEW_SHOTS
 
 
-def _to_action(llm: LlmAction, *, fallback_topic: Topic) -> ConversationAction:
+#: The value each step is actually waiting for. A model that says
+#: "provide_value" while naming a different field has not answered the question.
+_EXPECTED_FIELD = {
+    ProjectStep.LOCATION: ("latitude", "longitude"),
+    ProjectStep.CONSUMPTION: ("monthly_consumption_kwh",),
+    ProjectStep.SYSTEM_SIZE: ("system_size_kwp",),
+}
+
+
+def _to_action(llm: LlmAction, *, fallback_topic: Topic, step: ProjectStep) -> ConversationAction:
     """Re-validate what the model said against the domain, then narrow it.
 
     `values` is re-checked by `ExtractedValues` on the way in, so a size the
     whitelist forbids or a consumption outside the plausible band never gets
-    this far. What is done here is the *shape* narrowing: a question carries no
-    values, whatever the model attached to it.
+    this far. Two narrowings happen here.
+
+    A question carries no values, whatever the model attached to it.
+
+    And `extraction` is derived from the values rather than taken on trust:
+    the model has no field for it, so a supplied value is VALID only when the
+    step's own field is actually populated. Defaulting it to VALID would let
+    "provide_value with an empty object" reach the state machine as though a
+    figure had been given.
     """
     action = ConversationAction(
         kind=llm.kind,
@@ -134,7 +155,20 @@ def _to_action(llm: LlmAction, *, fallback_topic: Topic) -> ConversationAction:
     )
     if not action.wants_mutation:
         return action.model_copy(update={"values": ExtractedValues()})
-    return action
+
+    supplied = llm.values.model_dump(exclude_none=True)
+    expected = _EXPECTED_FIELD.get(step, ())
+    named = (
+        any(field in supplied for field in expected)
+        if expected
+        # Past intake, a correction may name either changeable value.
+        else bool(supplied)
+    )
+    return action.model_copy(
+        update={
+            "extraction": ExtractionStatus.VALID if named else ExtractionStatus.ABSENT,
+        }
+    )
 
 
 async def classify_with_model(
@@ -193,7 +227,14 @@ async def classify_with_model(
         logger.info("conversation: model output was not JSON (%s); rules answered", exc)
         return fallback, _fell_back(FallbackReason.INVALID_JSON, latency_ms)
 
-    action = _to_action(parsed, fallback_topic=fallback.topic)
+    action = _to_action(parsed, fallback_topic=fallback.topic, step=step)
+    if action.kind is ActionKind.PROVIDE_VALUE and action.extraction is not ExtractionStatus.VALID:
+        # The model said the customer supplied a value and then named none.
+        # Passing that on would produce a refusal worded as though a figure had
+        # been read, so the honest report is that its answer was not usable.
+        logger.info("conversation: model claimed a value and supplied none; rules answered")
+        return fallback, _fell_back(FallbackReason.DOMAIN_REJECTED, latency_ms)
+
     interpretation = Interpretation(
         configured_provider=settings.llm_provider.value,
         attempted_provider="ollama",

@@ -124,6 +124,18 @@ export default function Home() {
     [],
   );
 
+  /** Re-read the stored analysis after the server changed or cleared it. */
+  const refreshAnalysis = useCallback(async (id: string) => {
+    try {
+      const project = await api.project(id);
+      setAnalysis(project.analysis);
+      setCurrentStep(project.currentStep);
+      setProgress(project.progress);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not reload the analysis.");
+    }
+  }, []);
+
   const send = useCallback(
     async (message: string) => {
       if (!projectId) return;
@@ -151,17 +163,31 @@ export default function Home() {
             content: response.assistantMessage,
             step: response.currentStep,
             parserSource: response.parserSource,
+            interpretation: response.interpretation ?? null,
             createdAt: new Date().toISOString(),
           },
         ]);
-        if (response.readyForAnalysis) await runAnalysis(projectId);
+        // A change to a finalised project forks a revision and the conversation
+        // moves with it. Without this the next message would land on the parent,
+        // which is immutable — the edit would appear to be silently ignored.
+        if (response.projectId !== projectId) setProjectId(response.projectId);
+
+        if (response.readyForAnalysis) {
+          await runAnalysis(response.projectId);
+        } else if (response.recalculated?.length || response.analysisStatus === "pending") {
+          // A correction recomputes only the dependent sections server-side,
+          // and a reset clears the analysis outright. Either way the KPIs on
+          // screen now describe inputs the project no longer has, so they are
+          // re-read rather than left to look current.
+          await refreshAnalysis(response.projectId);
+        }
       } catch (caught) {
         setError(caught instanceof Error ? caught.message : "Message failed.");
       } finally {
         setPending(false);
       }
     },
-    [projectId, runAnalysis],
+    [projectId, runAnalysis, refreshAnalysis],
   );
 
   const finalize = useCallback(async () => {

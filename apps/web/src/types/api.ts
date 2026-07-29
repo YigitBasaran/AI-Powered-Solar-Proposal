@@ -20,6 +20,8 @@ export type ChatMessage = {
   step: string | null;
   parserSource: string | null;
   createdAt: string;
+  /** Present on replies received in this session; absent on reloaded history. */
+  interpretation?: Interpretation | null;
 };
 
 export type CreateProjectResponse = {
@@ -29,14 +31,47 @@ export type CreateProjectResponse = {
   progress: ProgressStep[];
 };
 
+/**
+ * Why a fallback happened. The first two are ordinary operation; the rest mean
+ * a model was reached and could not deliver.
+ */
+export type FallbackReason =
+  | "rules_sufficient"
+  | "not_configured"
+  | "unreachable"
+  | "timeout"
+  | "http_error"
+  | "empty_response"
+  | "invalid_json"
+  | "schema_rejected"
+  | "domain_rejected";
+
+/** How one message came to be understood. */
+export type Interpretation = {
+  configuredProvider: string;
+  /** Non-null only when an HTTP call was actually issued. */
+  attemptedProvider: string | null;
+  effectiveProvider: string;
+  fallbackReason: FallbackReason | null;
+  modelName: string | null;
+  latencyMs: number | null;
+};
+
 export type ChatResponse = {
   projectId: string;
   currentStep: string;
   assistantMessage: string;
   accepted: boolean;
+  /** Derived from `interpretation.effectiveProvider`; kept for compatibility. */
   parserSource: string;
   progress: ProgressStep[];
   readyForAnalysis: boolean;
+  analysisStatus?: string;
+  interpretation?: Interpretation | null;
+  /** Set when the reply came from a revision this change forked. */
+  revisionOfProjectId?: string | null;
+  /** Which inputs this message recalculated, if any. */
+  recalculated?: string[] | null;
 };
 
 export type ProjectResponse = {
@@ -53,6 +88,9 @@ export type ProjectResponse = {
   progress: ProgressStep[];
   messages: ChatMessage[];
   analysis: Analysis | null;
+  revisionOfProjectId?: string | null;
+  revisionProjectId?: string | null;
+  hasProposal?: boolean;
 };
 
 export type MapConfig = {

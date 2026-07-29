@@ -308,8 +308,19 @@ def test_the_north_facet_is_used_and_the_south_facet_is_not(analysis) -> None:
     assert {"facet_e", "facet_w"} <= used
 
 
-def test_fixture_data_is_labelled_as_fixture(analysis) -> None:
-    assert analysis["energy"]["dataSource"] in ("fixture", "live_fallback_fixture")
+def test_production_provenance_is_recorded(analysis) -> None:
+    """Production is now always a real HTTP call, so there is no fixture label.
+
+    Deliberate behaviour change: the suite answers that call from a local replay
+    stub rather than reading captures off disk, so `dataSource` reflects the
+    transport rather than a mode. Step 6 splits this into `live` vs `replay` by
+    the trustworthiness of the endpoint; until then the honest assertion is that
+    provenance is recorded at all.
+
+    FX still has a fixture mode and is unaffected.
+    """
+    assert analysis["energy"]["dataSource"] in ("live", "cache")
+    assert analysis["energy"]["radiationDatabase"] == "PVGIS-SARAH3"
     assert analysis["exchangeRate"]["isFixture"] is True
     assert analysis["exchangeRate"]["isLive"] is False
 
@@ -389,7 +400,9 @@ def test_roof_endpoint_publishes_source_pixel_geometry(client) -> None:
 def test_health_ready_reports_every_operating_mode(client) -> None:
     checks = client.get("/api/v1/health/ready").json()["checks"]
     assert checks["maps"]["mode"] == "fixture"
-    assert checks["pvgis"]["mode"] == "fixture"
+    # PVGIS has no mode any more - it is always a live call. What matters is
+    # which endpoint will be called, which step 2 makes the reported field.
+    assert checks["pvgis"]["mode"] == "live"
     assert checks["fx"]["mode"] == "fixture"
     assert checks["llm"]["provider"] == "rules"
     assert checks["llm"]["ready"] is True

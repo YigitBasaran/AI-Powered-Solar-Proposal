@@ -51,7 +51,19 @@ def captured_payload() -> dict:
 
 @pytest.fixture
 def settings():
-    return get_settings().model_copy(update={"pvgis_mode": PvgisMode.LIVE})
+    """Pinned at the canonical PVGIS URL, because respx mocks that transport.
+
+    The rest of the suite points `PVGIS_BASE_URL` at the local replay stub.
+    This file is the one place where the *client itself* is the unit under
+    test, so it needs per-attempt control that only a transport mock gives -
+    `side_effect=[503, 503, 200]` is the point of several tests below.
+    """
+    return get_settings().model_copy(
+        update={
+            "pvgis_mode": PvgisMode.LIVE,
+            "pvgis_base_url": "https://re.jrc.ec.europa.eu/api/v5_3",
+        }
+    )
 
 
 @pytest.fixture

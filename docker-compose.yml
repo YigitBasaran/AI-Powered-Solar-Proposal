@@ -21,6 +21,11 @@ services:
       DATABASE_URL: sqlite+aiosqlite:////data/solarvis.db
       FIXTURES_DIR_OVERRIDE: /fixtures
       OLLAMA_BASE_URL: http://ollama:11434
+      # Stated here rather than inherited from `.env`, so it is visible that
+      # this stack cannot issue a proposal backed by a replayed capture. The
+      # API refuses to start if it is true outside a test environment, so
+      # setting it here would fail the container rather than quietly permit it.
+      ALLOW_REPLAY_PROPOSALS: "false"
     ports:
       - "8000:8000"
     volumes:

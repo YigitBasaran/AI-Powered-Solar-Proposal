@@ -61,7 +61,15 @@ def _data_mode_notes(snapshot: dict[str, Any], settings: Settings) -> list[str]:
         notes.append("The USD/EUR rate was taken from cache rather than retrieved live.")
 
     energy_source = snapshot.get("energy", {}).get("dataSource", "")
-    if energy_source in ("fixture", "live_fallback_fixture"):
+    if energy_source == "replay":
+        notes.append(
+            "Production figures come from a replayed PVGIS capture, not a live retrieval. "
+            "This document is not proposal-grade."
+        )
+    elif energy_source in ("fixture", "live_fallback_fixture"):
+        # Legacy snapshots only. Nothing produces these values any more; a
+        # proposal issued before PVGIS became mandatory still has to render,
+        # and still has to say what it was built on.
         notes.append("Production figures come from captured PVGIS fixtures, not a live call.")
 
     if settings.maps_mode.value == "fixture":

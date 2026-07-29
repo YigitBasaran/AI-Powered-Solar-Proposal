@@ -428,3 +428,27 @@ def _upgrade_through_the_app(path, monkeypatch) -> None:
     finally:
         db_session._engine = None
         db_session._sessionmaker = None
+
+
+# ---------------------------------------------------------------------------
+# Row timestamps order insertions, so they have to be unique
+# ---------------------------------------------------------------------------
+
+
+def test_two_rows_written_in_the_same_tick_get_distinct_timestamps() -> None:
+    """The system clock is not fine-grained enough to order rows by itself.
+
+    On Windows a whole chat turn lands inside one tick, so four messages shared
+    a `created_at` and "the previous assistant message" was decided by the
+    tiebreak - a random UUID. `_pending_confirmation` reads that message to
+    decide what a bare "yes" answers, and one of the things it can answer is
+    "start over", so a customer asking a question could have their project
+    reset. Observed as an intermittent failure in
+    `test_a_yes_that_answers_nothing_does_not_reset`.
+    """
+    from app.models.tables import _utcnow
+
+    stamps = [_utcnow() for _ in range(500)]
+
+    assert len(set(stamps)) == len(stamps), "row timestamps collided"
+    assert stamps == sorted(stamps), "row timestamps went backwards"

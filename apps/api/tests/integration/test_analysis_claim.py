@@ -246,9 +246,11 @@ async def test_a_chat_message_does_not_extend_an_analysis_lease(client, offline_
         project = (
             await session.execute(select(Project).where(Project.id == project_id))
         ).scalar_one()
-        # SQLite stores these without an offset, so both sides are normalised
-        # before comparison rather than one of them being trusted to carry one.
-        assert _naive(project.updated_at) > _naive(before), "the chat turn did not touch the row"
+        # That the chat turn wrote is asserted on what it wrote, not on a
+        # timestamp: the location it carried is now stored. A `updated_at`
+        # comparison would be asserting the clock's resolution.
+        assert project.raw_location_input, "the chat turn did not touch the row"
+        assert _naive(project.updated_at) >= _naive(before)
         assert project.analysis_lease_until is not None
         drift = abs((_naive(project.analysis_lease_until) - _naive(deadline)).total_seconds())
         assert drift < 1.0, "the chat turn moved the analysis lease"

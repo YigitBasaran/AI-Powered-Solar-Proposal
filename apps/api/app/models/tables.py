@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import threading
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import (
@@ -31,8 +32,38 @@ def _uuid_str() -> str:
     return str(uuid.uuid4())
 
 
+#: The last timestamp handed out, and the lock that keeps it single-valued.
+_last_stamp = datetime.min.replace(tzinfo=UTC)
+_stamp_lock = threading.Lock()
+
+
 def _utcnow() -> datetime:
-    return datetime.now(UTC)
+    """Now, but never the same instant twice.
+
+    The system clock is not fine-grained enough to order rows written in quick
+    succession - on Windows a whole chat turn can land inside one tick, so four
+    messages share a `created_at`. Ordering then falls to the tiebreak, and the
+    tiebreak is a random UUID, so "the previous assistant message" is decided by
+    a coin flip.
+
+    That is not a cosmetic ordering problem. `_pending_confirmation` reads the
+    immediately preceding assistant message to decide what a bare "yes" answers;
+    picking the wrong one honours an offer from an earlier turn, and one of the
+    offers is "start over". A customer answering a question could have their
+    project reset.
+
+    So a timestamp is never re-issued: a colliding read is bumped by a
+    microsecond, which keeps insertion order strictly increasing. Within one
+    process, which is where it matters - a project's turns are handled one at a
+    time, and the `id` tiebreak remains as a last resort across processes.
+    """
+    global _last_stamp
+    with _stamp_lock:
+        now = datetime.now(UTC)
+        if now <= _last_stamp:
+            now = _last_stamp + timedelta(microseconds=1)
+        _last_stamp = now
+        return now
 
 
 class Project(Base):

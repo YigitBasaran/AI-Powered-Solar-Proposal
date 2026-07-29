@@ -1,0 +1,915 @@
+{
+  "shareToken": "VtkG70YaclLwY-yZ24lMFlkf2qxwTD1s",
+  "createdAt": "2026-07-29T19:25:27.326962",
+  "capacityWarning": null,
+  "aiSummary": "This 6 kWp system places 15 panels across 3 roof facets, generating an estimated 9,502 kWh per year. That covers 68.9% of your 13,800 kWh annual usage and saves about EUR 2,376 a year at EUR 0.25 per kWh. The capital cost of USD 10,000 converts to EUR 8,789.70 at the ECB reference rate of 0.87897. The system pays for itself in about 3.7 years, with a cumulative net benefit of EUR 38,721 over 20 years.",
+  "layoutSnapshotUrl": null,
+  "roof": {
+    "id": "case_fixed_roof",
+    "pitchDeg": 25.0,
+    "groundMetresPerSourcePixel": 0.06185,
+    "totalProjectedAreaM2": 80.12,
+    "totalSlopedAreaM2": 88.4,
+    "cosPitch": 0.906308,
+    "facets": [
+      {
+        "id": "facet_n",
+        "label": "North facet",
+        "shape": "trapezoid",
+        "compassAzimuthDeg": 10.62,
+        "pvgisAspectDeg": -169.38,
+        "projectedAreaM2": 27.3,
+        "slopedAreaM2": 30.12
+      },
+      {
+        "id": "facet_s",
+        "label": "South facet",
+        "shape": "trapezoid",
+        "compassAzimuthDeg": 190.63,
+        "pvgisAspectDeg": 10.63,
+        "projectedAreaM2": 27.3,
+        "slopedAreaM2": 30.12
+      },
+      {
+        "id": "facet_w",
+        "label": "West facet",
+        "shape": "triangle",
+        "compassAzimuthDeg": 280.62,
+        "pvgisAspectDeg": 100.62,
+        "projectedAreaM2": 12.76,
+        "slopedAreaM2": 14.08
+      },
+      {
+        "id": "facet_e",
+        "label": "East facet",
+        "shape": "triangle",
+        "compassAzimuthDeg": 100.62,
+        "pvgisAspectDeg": -79.38,
+        "projectedAreaM2": 12.76,
+        "slopedAreaM2": 14.07
+      }
+    ],
+    "edges": [
+      {
+        "id": "eave_0",
+        "type": "eave",
+        "projectedLengthM": 11.216,
+        "true3dLengthM": 11.216
+      },
+      {
+        "id": "eave_1",
+        "type": "eave",
+        "projectedLengthM": 7.143,
+        "true3dLengthM": 7.143
+      },
+      {
+        "id": "eave_2",
+        "type": "eave",
+        "projectedLengthM": 11.216,
+        "true3dLengthM": 11.216
+      },
+      {
+        "id": "eave_3",
+        "type": "eave",
+        "projectedLengthM": 7.143,
+        "true3dLengthM": 7.143
+      },
+      {
+        "id": "hip_0",
+        "type": "hip",
+        "projectedLengthM": 5.051,
+        "true3dLengthM": 5.319
+      },
+      {
+        "id": "hip_1",
+        "type": "hip",
+        "projectedLengthM": 5.051,
+        "true3dLengthM": 5.318
+      },
+      {
+        "id": "hip_2",
+        "type": "hip",
+        "projectedLengthM": 5.051,
+        "true3dLengthM": 5.318
+      },
+      {
+        "id": "hip_3",
+        "type": "hip",
+        "projectedLengthM": 5.051,
+        "true3dLengthM": 5.318
+      },
+      {
+        "id": "ridge_0",
+        "type": "ridge",
+        "projectedLengthM": 4.073,
+        "true3dLengthM": 4.073
+      }
+    ],
+    "facetGeometry": [
+      {
+        "id": "facet_n",
+        "sourcePixelPolygon": [
+          {
+            "x": 556.03,
+            "y": 597.82
+          },
+          {
+            "x": 734.27,
+            "y": 631.24
+          },
+          {
+            "x": 666.87,
+            "y": 677.35
+          },
+          {
+            "x": 602.15,
+            "y": 665.22
+          }
+        ]
+      },
+      {
+        "id": "facet_s",
+        "sourcePixelPolygon": [
+          {
+            "x": 712.98,
+            "y": 744.75
+          },
+          {
+            "x": 534.75,
+            "y": 711.33
+          },
+          {
+            "x": 602.15,
+            "y": 665.22
+          },
+          {
+            "x": 666.87,
+            "y": 677.35
+          }
+        ]
+      },
+      {
+        "id": "facet_w",
+        "sourcePixelPolygon": [
+          {
+            "x": 534.75,
+            "y": 711.33
+          },
+          {
+            "x": 556.03,
+            "y": 597.82
+          },
+          {
+            "x": 602.15,
+            "y": 665.22
+          }
+        ]
+      },
+      {
+        "id": "facet_e",
+        "sourcePixelPolygon": [
+          {
+            "x": 734.27,
+            "y": 631.24
+          },
+          {
+            "x": 712.98,
+            "y": 744.75
+          },
+          {
+            "x": 666.87,
+            "y": 677.35
+          }
+        ]
+      }
+    ]
+  },
+  "layout": {
+    "requestedSystemSizeKwp": 6.0,
+    "requestedPanelCount": 15,
+    "placedPanelCount": 15,
+    "feasibleSystemSizeKwp": 6.0,
+    "capacityWarning": null,
+    "facets": [
+      {
+        "facetId": "facet_n",
+        "orientation": "landscape",
+        "panelCount": 9,
+        "panels": [
+          {
+            "id": "facet_n_panel_00",
+            "sourcePixelPolygon": [
+              {
+                "x": 588.13,
+                "y": 603.84
+              },
+              {
+                "x": 619.91,
+                "y": 609.8
+              },
+              {
+                "x": 617.21,
+                "y": 624.2
+              },
+              {
+                "x": 585.43,
+                "y": 618.24
+              }
+            ]
+          },
+          {
+            "id": "facet_n_panel_01",
+            "sourcePixelPolygon": [
+              {
+                "x": 620.23,
+                "y": 609.86
+              },
+              {
+                "x": 652.01,
+                "y": 615.82
+              },
+              {
+                "x": 649.31,
+                "y": 630.22
+              },
+              {
+                "x": 617.53,
+                "y": 624.26
+              }
+            ]
+          },
+          {
+            "id": "facet_n_panel_02",
+            "sourcePixelPolygon": [
+              {
+                "x": 652.33,
+                "y": 615.88
+              },
+              {
+                "x": 684.11,
+                "y": 621.84
+              },
+              {
+                "x": 681.41,
+                "y": 636.24
+              },
+              {
+                "x": 649.63,
+                "y": 630.28
+              }
+            ]
+          },
+          {
+            "id": "facet_n_panel_03",
+            "sourcePixelPolygon": [
+              {
+                "x": 684.43,
+                "y": 621.9
+              },
+              {
+                "x": 716.21,
+                "y": 627.85
+              },
+              {
+                "x": 713.51,
+                "y": 642.26
+              },
+              {
+                "x": 681.73,
+                "y": 636.3
+              }
+            ]
+          },
+          {
+            "id": "facet_n_panel_04",
+            "sourcePixelPolygon": [
+              {
+                "x": 585.38,
+                "y": 618.53
+              },
+              {
+                "x": 617.16,
+                "y": 624.49
+              },
+              {
+                "x": 614.46,
+                "y": 638.89
+              },
+              {
+                "x": 582.68,
+                "y": 632.93
+              }
+            ]
+          },
+          {
+            "id": "facet_n_panel_05",
+            "sourcePixelPolygon": [
+              {
+                "x": 617.48,
+                "y": 624.55
+              },
+              {
+                "x": 649.26,
+                "y": 630.51
+              },
+              {
+                "x": 646.56,
+                "y": 644.91
+              },
+              {
+                "x": 614.78,
+                "y": 638.95
+              }
+            ]
+          },
+          {
+            "id": "facet_n_panel_06",
+            "sourcePixelPolygon": [
+              {
+                "x": 649.58,
+                "y": 630.57
+              },
+              {
+                "x": 681.36,
+                "y": 636.53
+              },
+              {
+                "x": 678.66,
+                "y": 650.93
+              },
+              {
+                "x": 646.88,
+                "y": 644.97
+              }
+            ]
+          },
+          {
+            "id": "facet_n_panel_07",
+            "sourcePixelPolygon": [
+              {
+                "x": 614.72,
+                "y": 639.24
+              },
+              {
+                "x": 646.5,
+                "y": 645.2
+              },
+              {
+                "x": 643.8,
+                "y": 659.6
+              },
+              {
+                "x": 612.02,
+                "y": 653.64
+              }
+            ]
+          },
+          {
+            "id": "facet_n_panel_08",
+            "sourcePixelPolygon": [
+              {
+                "x": 646.82,
+                "y": 645.26
+              },
+              {
+                "x": 678.6,
+                "y": 651.22
+              },
+              {
+                "x": 675.9,
+                "y": 665.62
+              },
+              {
+                "x": 644.12,
+                "y": 659.66
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "facetId": "facet_w",
+        "orientation": "landscape",
+        "panelCount": 3,
+        "panels": [
+          {
+            "id": "facet_w_panel_00",
+            "sourcePixelPolygon": [
+              {
+                "x": 540.77,
+                "y": 679.23
+              },
+              {
+                "x": 546.73,
+                "y": 647.45
+              },
+              {
+                "x": 561.13,
+                "y": 650.15
+              },
+              {
+                "x": 555.17,
+                "y": 681.93
+              }
+            ]
+          },
+          {
+            "id": "facet_w_panel_01",
+            "sourcePixelPolygon": [
+              {
+                "x": 546.79,
+                "y": 647.13
+              },
+              {
+                "x": 552.74,
+                "y": 615.35
+              },
+              {
+                "x": 567.15,
+                "y": 618.05
+              },
+              {
+                "x": 561.19,
+                "y": 649.83
+              }
+            ]
+          },
+          {
+            "id": "facet_w_panel_02",
+            "sourcePixelPolygon": [
+              {
+                "x": 555.46,
+                "y": 681.98
+              },
+              {
+                "x": 561.42,
+                "y": 650.2
+              },
+              {
+                "x": 575.82,
+                "y": 652.9
+              },
+              {
+                "x": 569.86,
+                "y": 684.68
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "facetId": "facet_e",
+        "orientation": "landscape",
+        "panelCount": 3,
+        "panels": [
+          {
+            "id": "facet_e_panel_00",
+            "sourcePixelPolygon": [
+              {
+                "x": 728.25,
+                "y": 663.34
+              },
+              {
+                "x": 722.29,
+                "y": 695.12
+              },
+              {
+                "x": 707.89,
+                "y": 692.42
+              },
+              {
+                "x": 713.85,
+                "y": 660.64
+              }
+            ]
+          },
+          {
+            "id": "facet_e_panel_01",
+            "sourcePixelPolygon": [
+              {
+                "x": 722.23,
+                "y": 695.44
+              },
+              {
+                "x": 716.27,
+                "y": 727.22
+              },
+              {
+                "x": 701.87,
+                "y": 724.52
+              },
+              {
+                "x": 707.83,
+                "y": 692.74
+              }
+            ]
+          },
+          {
+            "id": "facet_e_panel_02",
+            "sourcePixelPolygon": [
+              {
+                "x": 713.56,
+                "y": 660.58
+              },
+              {
+                "x": 707.6,
+                "y": 692.37
+              },
+              {
+                "x": 693.2,
+                "y": 689.67
+              },
+              {
+                "x": 699.16,
+                "y": 657.88
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "energy": {
+    "totalAnnualProductionKwh": 9502.2,
+    "totalMonthlyProductionKwh": [
+      1095.67,
+      947.5,
+      893.3,
+      710.83,
+      540.01,
+      451.27,
+      509.34,
+      599.42,
+      723.73,
+      934.96,
+      995.2,
+      1100.93
+    ],
+    "installedPowerKwp": 6.0,
+    "dataSource": "live",
+    "radiationDatabase": "PVGIS-SARAH3",
+    "pvgis": {
+      "source": "live",
+      "endpoint": "https://re.jrc.ec.europa.eu/api/v5_3/PVcalc",
+      "origin": "https://re.jrc.ec.europa.eu",
+      "apiVersion": "v5_3",
+      "batchCompletedAt": "2026-07-29T19:25:26.145138+00:00",
+      "radiationDatabase": "PVGIS-SARAH3",
+      "request": {
+        "lat": -34.04658242871865,
+        "lon": 18.46491476666948,
+        "peakPowerKwp": 1.0,
+        "lossPercent": 14.0,
+        "pvTechChoice": "crystSi",
+        "mountingPlace": "building"
+      },
+      "probes": [
+        {
+          "facetId": "facet_n",
+          "compassAzimuthDeg": 10.621155,
+          "pvgisAspectDeg": -169.378845,
+          "angleDeg": 25.0,
+          "specificYieldKwhPerKwp": 1678.66,
+          "monthlySpecificYieldKwhPerKwp": [
+            182.56,
+            162.31,
+            158.95,
+            131.93,
+            103.2,
+            88.21,
+            98.65,
+            112.23,
+            129.62,
+            161.93,
+            167.21,
+            181.85
+          ],
+          "radiationDatabase": "PVGIS-SARAH3",
+          "retrievedAt": "2026-07-29T19:25:26.129434+00:00",
+          "losses": {
+            "angleOfIncidencePercent": -2.68,
+            "spectralPercent": 0.65,
+            "temperatureAndIrradiancePercent": -9.02,
+            "totalPercent": -23.36
+          }
+        },
+        {
+          "facetId": "facet_s",
+          "compassAzimuthDeg": 190.626442,
+          "pvgisAspectDeg": 10.626442,
+          "angleDeg": 25.0,
+          "specificYieldKwhPerKwp": 1119.83,
+          "monthlySpecificYieldKwhPerKwp": [
+            177.98,
+            133.3,
+            98.82,
+            54.04,
+            29.2,
+            18.9,
+            23.54,
+            42.36,
+            75.53,
+            124.26,
+            156.21,
+            185.69
+          ],
+          "radiationDatabase": "PVGIS-SARAH3",
+          "retrievedAt": "2026-07-29T19:25:26.145138+00:00",
+          "losses": {
+            "angleOfIncidencePercent": -5.77,
+            "spectralPercent": 0.34,
+            "temperatureAndIrradiancePercent": -7.74,
+            "totalPercent": -24.98
+          }
+        },
+        {
+          "facetId": "facet_w",
+          "compassAzimuthDeg": 280.622093,
+          "pvgisAspectDeg": 100.622093,
+          "angleDeg": 25.0,
+          "specificYieldKwhPerKwp": 1515.29,
+          "monthlySpecificYieldKwhPerKwp": [
+            187.19,
+            156.77,
+            140.94,
+            105.7,
+            77.27,
+            62.12,
+            71.74,
+            87.67,
+            114.45,
+            153.42,
+            168.41,
+            189.62
+          ],
+          "radiationDatabase": "PVGIS-SARAH3",
+          "retrievedAt": "2026-07-29T19:25:26.145138+00:00",
+          "losses": {
+            "angleOfIncidencePercent": -2.96,
+            "spectralPercent": 0.56,
+            "temperatureAndIrradiancePercent": -8.63,
+            "totalPercent": -23.32
+          }
+        },
+        {
+          "facetId": "facet_e",
+          "compassAzimuthDeg": 100.623008,
+          "pvgisAspectDeg": -79.376992,
+          "angleDeg": 25.0,
+          "specificYieldKwhPerKwp": 1367.23,
+          "monthlySpecificYieldKwhPerKwp": [
+            178.19,
+            145.88,
+            126.63,
+            90.87,
+            63.14,
+            49.31,
+            56.76,
+            75.16,
+            99.8,
+            139.92,
+            159.29,
+            182.27
+          ],
+          "radiationDatabase": "PVGIS-SARAH3",
+          "retrievedAt": "2026-07-29T19:25:26.129434+00:00",
+          "losses": {
+            "angleOfIncidencePercent": -3.49,
+            "spectralPercent": 0.52,
+            "temperatureAndIrradiancePercent": -8.51,
+            "totalPercent": -23.67
+          }
+        }
+      ]
+    },
+    "facets": [
+      {
+        "facetId": "facet_n",
+        "panelCount": 9,
+        "installedPowerKwp": 3.6,
+        "pitchDeg": 25.0,
+        "compassAzimuthDeg": 10.62,
+        "pvgisAspectDeg": -169.38,
+        "annualProductionKwh": 6043.18,
+        "specificYieldKwhPerKwp": 1678.66,
+        "monthlyProductionKwh": [
+          657.22,
+          584.32,
+          572.22,
+          474.95,
+          371.52,
+          317.56,
+          355.14,
+          404.03,
+          466.63,
+          582.95,
+          601.96,
+          654.66
+        ],
+        "dataSource": "live"
+      },
+      {
+        "facetId": "facet_w",
+        "panelCount": 3,
+        "installedPowerKwp": 1.2000000000000002,
+        "pitchDeg": 25.0,
+        "compassAzimuthDeg": 280.62,
+        "pvgisAspectDeg": 100.62,
+        "annualProductionKwh": 1818.35,
+        "specificYieldKwhPerKwp": 1515.29,
+        "monthlyProductionKwh": [
+          224.63,
+          188.12,
+          169.13,
+          126.84,
+          92.72,
+          74.54,
+          86.09,
+          105.2,
+          137.34,
+          184.1,
+          202.09,
+          227.54
+        ],
+        "dataSource": "live"
+      },
+      {
+        "facetId": "facet_e",
+        "panelCount": 3,
+        "installedPowerKwp": 1.2000000000000002,
+        "pitchDeg": 25.0,
+        "compassAzimuthDeg": 100.62,
+        "pvgisAspectDeg": -79.38,
+        "annualProductionKwh": 1640.68,
+        "specificYieldKwhPerKwp": 1367.23,
+        "monthlyProductionKwh": [
+          213.83,
+          175.06,
+          151.96,
+          109.04,
+          75.77,
+          59.17,
+          68.11,
+          90.19,
+          119.76,
+          167.9,
+          191.15,
+          218.72
+        ],
+        "dataSource": "live"
+      }
+    ]
+  },
+  "exchangeRate": {
+    "rate": "0.87897",
+    "rateDate": "2026-07-24",
+    "baseCurrency": "USD",
+    "quoteCurrency": "EUR",
+    "sourceApi": "Frankfurter",
+    "dataProvider": "ECB",
+    "retrievalSource": "fixture",
+    "isLive": false,
+    "isFixture": true,
+    "retrievedAt": "2026-07-29T19:25:27.299840+00:00"
+  },
+  "financial": {
+    "annualConsumptionKwh": 13800.0,
+    "annualProductionKwh": 9502.2,
+    "coveredEnergyKwh": 9502.2,
+    "coveragePercent": 68.86,
+    "electricityPriceEurPerKwh": "0.25",
+    "annualSavingsEur": "2375.55",
+    "originalCapex": {
+      "amount": "10000.00",
+      "currency": "USD"
+    },
+    "convertedCapex": {
+      "amount": "8789.70",
+      "currency": "EUR"
+    },
+    "simplePaybackYears": 3.7000694575992927,
+    "twentyYearNetBenefitEur": "38721.30",
+    "cashFlow": [
+      {
+        "year": 0,
+        "annualSavingsEur": "0.00",
+        "cumulativeCashFlowEur": "-8789.70"
+      },
+      {
+        "year": 1,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "-6414.15"
+      },
+      {
+        "year": 2,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "-4038.60"
+      },
+      {
+        "year": 3,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "-1663.05"
+      },
+      {
+        "year": 4,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "712.50"
+      },
+      {
+        "year": 5,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "3088.05"
+      },
+      {
+        "year": 6,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "5463.60"
+      },
+      {
+        "year": 7,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "7839.15"
+      },
+      {
+        "year": 8,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "10214.70"
+      },
+      {
+        "year": 9,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "12590.25"
+      },
+      {
+        "year": 10,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "14965.80"
+      },
+      {
+        "year": 11,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "17341.35"
+      },
+      {
+        "year": 12,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "19716.90"
+      },
+      {
+        "year": 13,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "22092.45"
+      },
+      {
+        "year": 14,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "24468.00"
+      },
+      {
+        "year": 15,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "26843.55"
+      },
+      {
+        "year": 16,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "29219.10"
+      },
+      {
+        "year": 17,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "31594.65"
+      },
+      {
+        "year": 18,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "33970.20"
+      },
+      {
+        "year": 19,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "36345.75"
+      },
+      {
+        "year": 20,
+        "annualSavingsEur": "2375.55",
+        "cumulativeCashFlowEur": "38721.30"
+      }
+    ]
+  },
+  "meta": {
+    "projectId": "87b9ac24-7d41-4c31-a5a8-89b1d501c16d",
+    "rawLocationInput": "-34.04658242871865, 18.46491476666948",
+    "location": {
+      "latitude": -34.04658242871865,
+      "longitude": 18.46491476666948
+    },
+    "monthlyConsumptionKwh": 1150.0,
+    "annualConsumptionKwh": 13800.0,
+    "finalisedAt": "2026-07-29T19:25:27.316213+00:00"
+  },
+  "views": {
+    "viewCount": 0,
+    "lastOpenedAt": null
+  }
+}

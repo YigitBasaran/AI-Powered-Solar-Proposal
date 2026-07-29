@@ -394,3 +394,31 @@ def test_the_lowercase_form_of_the_same_question_is_unchanged() -> None:
         project=project,
     )
     assert answer.help_topic == "panel_power"
+
+
+@pytest.mark.parametrize(
+    "kind",
+    [ActionKind.OFF_TOPIC, ActionKind.ASK_QUESTION],
+)
+def test_a_reply_with_nothing_to_say_still_says_what_went_wrong(kind) -> None:
+    """Found against a live model: "banana" came back as a bare prompt.
+
+    Off-topic reaches the state machine only from the model, and the route
+    builds no answer for it — so sharing the question branch produced an empty
+    reply followed by the restated prompt, and nothing else. From the
+    customer's side, off-topic and unreadable are the same event: what they
+    typed could not be used, and the reply has to say so.
+    """
+    from app.services.workflow import handle_message
+
+    outcome = handle_message(
+        project=ProjectState(current_step=ProjectStep.CONSUMPTION),
+        action=ConversationAction(kind=kind, topic=Topic.GENERAL),
+        raw_text="banana",
+        answer=None,
+    )
+
+    assert "couldn't read a consumption figure" in outcome.assistant_message
+    assert "1,150 kWh" in outcome.assistant_message, "and what a good answer looks like"
+    assert outcome.updates == {}
+    assert outcome.next_step is ProjectStep.CONSUMPTION

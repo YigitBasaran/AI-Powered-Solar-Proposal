@@ -82,6 +82,22 @@ def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
     return _sessionmaker
 
 
+def _alembic_config(connection: Any) -> Any | None:
+    """An Alembic config bound to an open connection, or None if stripped out."""
+    from alembic.config import Config
+
+    api_root = Path(__file__).resolve().parents[2]
+    ini = api_root / "alembic.ini"
+    if not ini.is_file():  # pragma: no cover - only if migrations were stripped
+        logger.warning("alembic.ini not found; skipping schema versioning")
+        return None
+
+    config = Config(str(ini))
+    config.set_main_option("script_location", str(api_root / "migrations"))
+    config.attributes["connection"] = connection
+    return config
+
+
 def _stamp_alembic_head(connection: Any) -> None:
     """Record that this database is already at the latest revision.
 
@@ -92,44 +108,72 @@ def _stamp_alembic_head(connection: Any) -> None:
     on one built by migrations.
     """
     from alembic import command
-    from alembic.config import Config
 
-    api_root = Path(__file__).resolve().parents[2]
-    ini = api_root / "alembic.ini"
-    if not ini.is_file():  # pragma: no cover - only if migrations were stripped
-        logger.warning("alembic.ini not found; skipping version stamp")
-        return
+    config = _alembic_config(connection)
+    if config is not None:
+        command.stamp(config, "head")
 
-    config = Config(str(ini))
-    config.set_main_option("script_location", str(api_root / "migrations"))
-    config.attributes["connection"] = connection
-    command.stamp(config, "head")
+
+def _upgrade_to_head(connection: Any) -> None:
+    """Apply whatever migrations this database has not seen yet."""
+    from alembic import command
+
+    config = _alembic_config(connection)
+    if config is not None:
+        command.upgrade(config, "head")
 
 
 async def init_db() -> None:
-    """Create tables if they do not exist, and mark the schema version.
+    """Bring the database to the current schema, whatever state it is in.
 
-    Alembic remains the source of truth for schema evolution; this exists so a
-    fresh clone runs with no migration step. `tests/unit/test_schema_parity.py`
-    asserts the two descriptions of the schema cannot drift.
+    Two paths, and the second one was missing.
+
+    A **fresh** database is built by `create_all` and stamped at head, so a
+    clean clone runs with no migration step.
+
+    An **existing** database is upgraded. `create_all` creates missing *tables*
+    and can never alter one that already exists, so a new column on an existing
+    table is invisible to it - and the stamp was skipped, because the version
+    table was already there. Nothing ran the migration. The ORM then expected a
+    column the database did not have and every insert failed with
+    ``table projects has no column named revision_of_project_id``. Observed on
+    2026-07-29 the first time a schema change met a container with a persistent
+    volume, which is every real deployment's first migration.
+
+    `tests/unit/test_schema_parity.py` proves the ORM and the migrations
+    describe the same schema. It cannot prove anything *runs* them; that is
+    what this function and `test_an_existing_database_is_upgraded_in_place`
+    are for.
     """
     engine = get_engine()
+
+    # Checked before `create_all` for readability only: `alembic_version` is not
+    # in the ORM metadata, so `create_all` never creates it either way.
     async with engine.begin() as conn:
+        managed = await conn.run_sync(
+            lambda sync_conn: sync_conn.dialect.has_table(sync_conn, "alembic_version")
+        )
         await conn.run_sync(Base.metadata.create_all)
+
+    if managed:
+        # Deliberately *not* wrapped in a swallow-everything. A failed upgrade
+        # leaves the schema genuinely wrong, and booting into that state means
+        # every write fails at runtime instead of the container failing to
+        # start - which is far harder to diagnose and far worse to serve.
+        async with engine.begin() as conn:
+            await conn.run_sync(_upgrade_to_head)
+        logger.info("database upgraded to alembic head")
+        return
 
     # Stamping needs its own transaction: it opens a second Alembic-managed
     # context over the same connection.
     try:
         async with engine.begin() as conn:
-            already = await conn.run_sync(
-                lambda sync_conn: sync_conn.dialect.has_table(sync_conn, "alembic_version")
-            )
-            if not already:
-                await conn.run_sync(_stamp_alembic_head)
-                logger.info("stamped database at alembic head")
+            await conn.run_sync(_stamp_alembic_head)
+        logger.info("stamped database at alembic head")
     except Exception:
-        # A failure here must not stop the application booting: the schema is
-        # already correct, only the version marker is missing.
+        # This one is safe to survive: `create_all` has just built the current
+        # schema, so only the version marker is missing.
         logger.warning("could not stamp the alembic version", exc_info=True)
 
 

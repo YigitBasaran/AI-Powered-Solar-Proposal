@@ -234,3 +234,177 @@ def test_a_database_built_by_the_app_is_stamped_at_head(tmp_path, monkeypatch) -
         session_module._engine = None
         session_module._sessionmaker = None
         get_settings.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Something has to actually run the migrations
+# ---------------------------------------------------------------------------
+
+
+def test_an_existing_database_is_upgraded_in_place(tmp_path, monkeypatch) -> None:
+    """The gap the parity test cannot see.
+
+    Parity proves the ORM and the migrations *describe* the same schema. It
+    proves nothing about whether either one is ever applied. `create_all`
+    creates missing tables and can never alter an existing one, and the version
+    stamp was skipped whenever `alembic_version` was already present - so on a
+    container with a persistent volume, a new column landed nowhere and every
+    insert failed with `table projects has no column named ...`.
+
+    This builds a database at the *previous* revision and asserts start-up
+    brings it to head with the new column present.
+    """
+
+
+    path = tmp_path / "existing.db"
+    url = f"sqlite:///{path.as_posix()}"
+
+    # A database as it stood before the newest migration.
+    previous = _previous_revision()
+    command.upgrade(_alembic_config(url), previous)
+
+    engine = create_engine(url)
+    try:
+        before = {c["name"] for c in inspect(engine).get_columns("projects")}
+    finally:
+        engine.dispose()
+    assert "revision_of_project_id" not in before, "the fixture is not actually behind head"
+
+    # Start up against it, exactly as the container does.
+    _upgrade_through_the_app(path, monkeypatch)
+
+    engine = create_engine(url)
+    try:
+        after = {c["name"] for c in inspect(engine).get_columns("projects")}
+        version = engine.connect().execute(
+            __import__("sqlalchemy").text("select version_num from alembic_version")
+        ).scalar_one()
+    finally:
+        engine.dispose()
+
+    assert "revision_of_project_id" in after, "start-up did not apply the pending migration"
+    assert version != previous, "the recorded version is still the old one"
+
+
+def _previous_revision() -> str:
+    """The revision immediately before head, from the migration scripts."""
+    from alembic.script import ScriptDirectory
+
+    script = ScriptDirectory(str(MIGRATIONS_DIR))
+    head = script.get_current_head()
+    assert head is not None
+    down = script.get_revision(head).down_revision
+    assert isinstance(down, str), "this test needs at least two migrations"
+    return down
+
+
+def _settings_for(database_url: str):
+    from app.core.config import get_settings
+
+    return get_settings().model_copy(update={"database_url": database_url})
+
+
+def test_a_migration_never_deletes_dependent_rows(tmp_path, monkeypatch) -> None:
+    """The trap that cost fifteen proposals.
+
+    SQLite cannot alter a constraint in place, so Alembic's batch mode rebuilds
+    the table: create, copy, **drop the old one**, rename. `proposals` and
+    `chat_messages` reference `projects` with ON DELETE CASCADE and the
+    application enables `PRAGMA foreign_keys` on every connection, so the drop
+    cascades and empties them.
+
+    Migrating a database that has real rows in it is the only way to see that.
+    A migration run against an empty schema - which is all the parity fixtures
+    do - passes happily while destroying every customer's proposal.
+    """
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+
+    path = tmp_path / "populated.db"
+    url = f"sqlite:///{path.as_posix()}"
+
+    command.upgrade(_alembic_config(url), _previous_revision())
+
+    engine = create_engine(url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+            conn.execute(
+                text(
+                    "insert into projects (id, current_step, analysis_status, created_at, "
+                    "updated_at) values ('p1', 'completed', 'complete', "
+                    "'2026-01-01', '2026-01-01')"
+                )
+            )
+            conn.execute(
+                text(
+                    "insert into chat_messages (id, project_id, role, content, created_at) "
+                    "values ('m1', 'p1', 'user', 'hello', '2026-01-01')"
+                )
+            )
+            conn.execute(
+                text(
+                    "insert into proposals (id, project_id, share_token, "
+                    "requested_system_size_kwp, feasible_system_size_kwp, requested_panel_count, "
+                    "panel_count, annual_production_kwh, annual_savings_eur, original_capex_usd, "
+                    "converted_capex_eur, exchange_rate, exchange_rate_date, "
+                    "exchange_rate_source, exchange_rate_provider, proposal_data_json, "
+                    "created_at) values ('r1', 'p1', 'tok', 6.0, 6.0, 15, 15, 9502.2, 2375.55, "
+                    "10000, 8789.70, 0.87897, '2026-07-24', 'fixture', 'ECB', '{}', "
+                    "'2026-01-01')"
+                )
+            )
+    finally:
+        engine.dispose()
+
+    # Upgraded the way the container does it: through `init_db`, over the
+    # application's own engine. That is the path that matters, because
+    # `db/session.py` turns `PRAGMA foreign_keys` ON for every application
+    # connection - and a bare `alembic upgrade` does not, so running the
+    # migration that way hides the cascade entirely.
+    _upgrade_through_the_app(path, monkeypatch)
+
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            projects = conn.execute(text("select count(*) from projects")).scalar_one()
+            proposals = conn.execute(text("select count(*) from proposals")).scalar_one()
+            messages = conn.execute(text("select count(*) from chat_messages")).scalar_one()
+
+        # And the constraint still bites afterwards - suspending enforcement
+        # for the rebuild must not leave the schema without it. (The pragma is
+        # per-connection and off by default in SQLite, so it is set here the
+        # same way `db/session.py` sets it for the application.)
+        with engine.begin() as conn:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+            with pytest.raises(IntegrityError):
+                conn.execute(
+                    text(
+                        "insert into chat_messages (id, project_id, role, content, created_at) "
+                        "values ('m2', 'nonexistent', 'user', 'x', '2026-01-01')"
+                    )
+                )
+    finally:
+        engine.dispose()
+
+    assert projects == 1, "the table being rebuilt lost its own rows"
+    assert proposals == 1, "the rebuild cascade-deleted every proposal"
+    assert messages == 1, "the rebuild cascade-deleted every transcript"
+
+
+def _upgrade_through_the_app(path, monkeypatch) -> None:
+    """Run start-up against `path`, exactly as the container does."""
+    import asyncio
+
+    import app.db.session as db_session
+
+    monkeypatch.setattr(
+        db_session, "get_settings", lambda: _settings_for(f"sqlite+aiosqlite:///{path.as_posix()}")
+    )
+    db_session._engine = None
+    db_session._sessionmaker = None
+    try:
+        asyncio.run(db_session.init_db())
+    finally:
+        db_session._engine = None
+        db_session._sessionmaker = None

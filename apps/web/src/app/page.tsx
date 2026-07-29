@@ -15,7 +15,7 @@ import {
 } from "@/components/proposal/AnalysisPanels";
 import { RoofWorkspace } from "@/components/roof/RoofWorkspace";
 import { Button, Callout, Card, SourceBadge, Spinner, cn } from "@/components/ui/primitives";
-import { api } from "@/lib/api";
+import { ApiRequestError, api } from "@/lib/api";
 import { dataSourceLabel } from "@/lib/format";
 import type {
   Analysis,
@@ -205,7 +205,19 @@ export default function Home() {
     if (!projectId) return;
     setBusy("Creating your proposal…");
     try {
-      const result = await api.finalize(projectId);
+      // Retried once on a transport failure, because finalisation is
+      // idempotent server-side: it returns the proposal it already issued
+      // without touching the model. The failure this recovers from is a lost
+      // *response* rather than lost work — a proxy that gave up while the
+      // request was still open leaves a proposal that exists and a customer
+      // looking at an error.
+      let result: FinalizeResponse;
+      try {
+        result = await api.finalize(projectId);
+      } catch (first) {
+        if (first instanceof ApiRequestError) throw first;
+        result = await api.finalize(projectId);
+      }
       setProposal(result);
 
       // Export the completed stage so the PDF shows the real satellite layout.

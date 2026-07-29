@@ -202,6 +202,15 @@ Ten of eleven are settled deterministically in single-digit milliseconds, includ
 
 So on this case's phrasings the deterministic layer does nearly all of the useful work, and it is exactly why the workflow was built to be correct on `LLM_PROVIDER=rules` rather than to depend on a model. A larger model would need re-measuring, not re-coding.
 
+**Finalisation will not wait for it.** The executive summary runs inside the
+request that issues a proposal, and on this hardware the model frequently
+exceeds the 15-second budget — so `summarySource` is usually `deterministic`
+here. That is the designed outcome, not a degradation: the template is written
+from the same values by code, and the alternative is holding a customer's
+request open long enough to lose the response to it. Measured on 2026-07-29
+with `OLLAMA_TIMEOUT_SECONDS=120` and no budget: the web container logged
+`socket hang up` on a finalize whose proposal row was written anyway.
+
 See [`known-limitations.md`](known-limitations.md).
 
 ---

@@ -17,6 +17,7 @@ figures that nobody re-reads.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from decimal import Decimal
@@ -188,6 +189,18 @@ async def generate_summary(
 
     The model is only ever an improvement on the fallback, never a dependency:
     any failure, timeout, or unvalidatable output falls through to the template.
+
+    That includes taking too long. This call sits inside the request that
+    finalises a proposal, so every second it spends is a second the customer
+    watches a spinner and an intermediate proxy counts towards its own idle
+    timeout. A proxy that gives up first loses the *response* to work that has
+    already been done: the proposal exists, and the customer is looking at an
+    error. Observed on 2026-07-29 with `OLLAMA_TIMEOUT_SECONDS=120` — the web
+    container logged `socket hang up` for a finalize whose proposal row was
+    written seconds later.
+
+    So the budget here is separate from, and shorter than, the transport
+    timeout, and it bounds the whole attempt rather than one read.
     """
     settings = settings or get_settings()
     fallback = deterministic_summary(snapshot)
@@ -198,7 +211,14 @@ async def generate_summary(
     from app.integrations.ollama import OllamaClient
 
     try:
-        text = await OllamaClient(settings).explain(_prompt_values(snapshot))
+        async with asyncio.timeout(settings.summary_timeout_seconds):
+            text = await OllamaClient(settings).explain(_prompt_values(snapshot))
+    except TimeoutError:
+        logger.warning(
+            "summary: model exceeded the %.0fs budget; using deterministic text",
+            settings.summary_timeout_seconds,
+        )
+        return fallback, "deterministic"
     except LlmUnavailableError as exc:
         logger.info("summary: model unavailable (%s); using deterministic text", exc)
         return fallback, "deterministic"

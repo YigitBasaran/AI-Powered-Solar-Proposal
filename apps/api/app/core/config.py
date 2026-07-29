@@ -204,6 +204,16 @@ class Settings(BaseSettings):
     ollama_model: str = "qwen3.5:2b"
     ollama_timeout_seconds: float = 20.0
 
+    #: How long finalisation will wait for the optional executive summary.
+    #:
+    #: Deliberately separate from, and shorter than, the transport timeout. The
+    #: deterministic template is always ready and is what ships whenever the
+    #: model fails any gate, so a customer's proposal must never be held open
+    #: for two minutes waiting on prose that is an improvement rather than a
+    #: requirement. Exceeded, the template is used and the source is reported
+    #: as "deterministic" - the same outcome as any other failed gate.
+    summary_timeout_seconds: float = 15.0
+
     # --- email -------------------------------------------------------------
     email_mode: EmailMode = EmailMode.CONSOLE
     smtp_host: str = ""

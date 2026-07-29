@@ -238,11 +238,16 @@ def _answered_outcome(
     project: ProjectState, answer: Answer | None, settings: Settings
 ) -> StepOutcome:
     """A question. Same step, no updates, and the pending prompt restated."""
-    text = answer.text if answer is not None else ""
+    if answer is None or not answer.text.strip():
+        # A question routed here with nothing to say is a bug upstream, not a
+        # reason to reply with a bare prompt. Say what happened instead.
+        return _unknown(project, settings)
+
+    text = answer.text
     prompt = restate(project.current_step, settings)
     if prompt and prompt not in text:
-        text = f"{text}\n\n{prompt}" if text else prompt
-    return _stay(project, text, accepted=True, answered=answer is not None)
+        text = f"{text}\n\n{prompt}"
+    return _stay(project, text, accepted=True, answered=True)
 
 
 def _handle_location(
@@ -497,9 +502,20 @@ def handle_message(
             ActionKind.ASK_QUESTION
             | ActionKind.REQUEST_OPTIONS
             | ActionKind.REQUEST_EXPLANATION
-            | ActionKind.OFF_TOPIC
         ):
             return _answered_outcome(project, answer, settings)
+
+        case ActionKind.OFF_TOPIC:
+            # Handled like UNKNOWN rather than shared with the question
+            # branch. Off-topic reaches here only from the model, and the
+            # route does not build an answer for it - so sharing the branch
+            # produced an *empty* reply followed by the restated prompt.
+            # "banana" at the consumption step came back as a bare "What is
+            # your monthly electricity consumption?", which tells a customer
+            # nothing about what went wrong. From their side, off-topic and
+            # unreadable are the same event: the assistant could not use what
+            # they typed.
+            return _unknown(project, settings)
 
         case ActionKind.UNSUPPORTED_REQUEST:
             return _stay(

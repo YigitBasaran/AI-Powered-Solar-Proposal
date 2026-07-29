@@ -188,7 +188,7 @@ Full design: [`docs/conversation.md`](docs/conversation.md).
 ## Testing
 
 ```bash
-cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 1,059 tests
+cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 1,065 tests
 cd apps/api && ./.venv/Scripts/python -m ruff check app tests
 cd apps/api && ./.venv/Scripts/python -m mypy app                  # strict
 cd apps/web && npm run typecheck && npm run test && npm run build  # 51 tests

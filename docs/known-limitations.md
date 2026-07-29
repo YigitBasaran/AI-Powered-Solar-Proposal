@@ -96,6 +96,12 @@ Tokens carry 192 bits of entropy and are unguessable, but there is no expiry, no
 ### SQLite
 One file, one writer. The engine runs in WAL mode with a 5-second `busy_timeout`, so concurrent writers queue instead of failing instantly — verified by the E2E concurrency specs — but the write path is still serialised. Correct for this workload; a real deployment would want Postgres. The SQLAlchemy layer is portable and Alembic migrations use batch mode, so the move is mechanical.
 
+Schema changes need care beyond the parity test. SQLite rebuilds a table to
+alter a constraint, and a rebuild of a table other rows reference will cascade
+their deletion unless foreign keys are suspended for the migration —
+`migrations/env.py` does that, and `test_a_migration_never_deletes_dependent_rows`
+holds it there. Postgres would not need the rebuild at all.
+
 The serialised write path also makes *how long a transaction is held* load-bearing. Both slow paths — the first analysis and a selective recompute — commit their in-progress status marker **before** the network work rather than flushing it, so the write lock is not held across three PVGIS calls and an FX lookup. Holding it there queued every other writer behind the analysis and, past `busy_timeout`, produced "database is locked" as a 500 on an unrelated request. Found on 2026-07-29 by two E2E files running concurrently against the degraded stack; a second replica would surface the same class of problem elsewhere.
 
 ---

@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated 2026-07-29: **1,059 API + 51 web + 117 E2E passing**; Ruff and strict MyPy clean over 54 source files; the `@live` LLM tier re-run against a locally pulled `qwen3.5:2b` (4 passed, 3 skipped). The conversational layer was rebuilt this day — see the phase 9 entry below and [`conversation.md`](conversation.md)._
+_Last updated 2026-07-29: **1,065 API + 51 web + 117 E2E passing**; Ruff and strict MyPy clean over 54 source files; the `@live` LLM tier re-run against a locally pulled `qwen3.5:2b` (4 passed, 3 skipped). The conversational layer was rebuilt this day — see the phase 9 entry below and [`conversation.md`](conversation.md)._
 
 ---
 
@@ -453,6 +453,33 @@ for routing while `raw` stays verbatim.
 | A `request_options` answered in full was then told *"I don't have that yet"* | The same probe |
 | A model claiming `provide_value` and naming no value produced a refusal worded as though a figure had been read | Writing the telemetry integration tests |
 | Withholding **every** computed section on a `stale` status, including the roof — which no project input can reach | `test_a_stale_project_withholds_the_affected_figures_from_answers` |
+
+### Three defects the first container deployment found — one destructive
+
+Rebuilding the running stack onto this schema change is what exposed them, and
+none could have been found any other way: all three need a container with a
+**persistent volume that already has data in it**.
+
+| Defect | What happened |
+|---|---|
+| **`init_db` never applied a pending migration** | `create_all` creates missing *tables* and can never alter an existing one, so the new column landed nowhere; the version stamp was skipped because `alembic_version` was already present. Nothing ran the migration. Every insert then failed with `table projects has no column named revision_of_project_id`. This is every real deployment's first migration. |
+| **The migration then deleted every proposal** | SQLite cannot alter a constraint in place, so batch mode rebuilds the table — create, copy, **drop the old one**, rename. `proposals` and `chat_messages` reference `projects` with `ON DELETE CASCADE`, and the application enables `PRAGMA foreign_keys` on every connection. The drop cascaded. 45 projects were copied across intact and all 15 proposals were destroyed. The migration reported success. |
+| **A slow model could lose a finalised proposal's response** | With `OLLAMA_TIMEOUT_SECONDS=120`, the summary call held the finalize request open long enough for the web container's proxy to give up: it logged `socket hang up`, the browser showed an error, and the proposal row was written seconds later. The work landed; the answer did not. |
+
+The fixes: `init_db` now upgrades an existing database and **raises** rather than
+booting into a wrong schema; `migrations/env.py` suspends foreign-key
+enforcement for the whole migration run, where it protects every future batch
+operation rather than one file; and the executive summary has its own wall-clock
+budget, separate from and shorter than the transport timeout, because the
+deterministic template is always ready.
+
+Two regression tests, each verified to fail against the old behaviour before
+being kept: `test_an_existing_database_is_upgraded_in_place` and
+`test_a_migration_never_deletes_dependent_rows`. The second only reproduces the
+destruction when the upgrade runs **through `init_db`** — a bare
+`alembic upgrade` opens its own connection, where SQLite defaults
+`foreign_keys` to off, and the cascade never fires. A first version of that test
+passed against the unguarded code for exactly that reason and was rewritten.
 
 ### Two E2E assertions corrected, and why
 

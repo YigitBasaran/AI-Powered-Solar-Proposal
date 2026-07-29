@@ -271,3 +271,53 @@ async def test_the_summary_never_becomes_a_hard_dependency(ollama_settings) -> N
         text, _ = await generate_summary(SNAPSHOT, ollama_settings)
         assert text
         assert unsupported_numbers(text, allowed_values(SNAPSHOT)) == []
+
+
+async def test_a_slow_model_does_not_hold_the_proposal_open(offline_env, monkeypatch) -> None:
+    """The sixth gate, added after a real lost response.
+
+    Finalisation runs inside the customer's request. With
+    `OLLAMA_TIMEOUT_SECONDS=120` a slow model held that request open long
+    enough for the web container's proxy to give up: it logged `socket hang
+    up`, the browser showed an error, and the proposal row was written anyway.
+    The work landed and the answer did not.
+
+    The deterministic template is always ready, so waiting minutes for prose
+    that is an improvement rather than a requirement is the wrong trade.
+    """
+    import asyncio
+
+    from app.core.config import LlmProvider, get_settings
+    from app.services.summary import deterministic_summary, generate_summary
+
+    settings = get_settings().model_copy(
+        update={
+            "llm_provider": LlmProvider.OLLAMA,
+            "ollama_timeout_seconds": 120.0,
+            "summary_timeout_seconds": 0.05,
+        }
+    )
+
+    async def _slow(self, values):
+        await asyncio.sleep(5)
+        return "never arrives"
+
+    monkeypatch.setattr("app.integrations.ollama.OllamaClient.explain", _slow)
+
+    started = asyncio.get_running_loop().time()
+    summary, source = await generate_summary(SNAPSHOT, settings)
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert source == "deterministic"
+    assert summary == deterministic_summary(SNAPSHOT)
+    assert elapsed < 1.0, f"waited {elapsed:.2f}s; the budget was 0.05s"
+
+
+def test_the_summary_budget_is_shorter_than_the_transport_timeout() -> None:
+    """Otherwise the setting cannot do the only job it has."""
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    assert settings.summary_timeout_seconds < settings.ollama_timeout_seconds or (
+        settings.summary_timeout_seconds <= 30.0
+    )

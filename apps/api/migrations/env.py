@@ -8,10 +8,12 @@ short synchronous operation and do not need the async stack.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import Connection, engine_from_config, pool
 
 from app.core.config import get_settings
 from app.models.tables import Base
@@ -52,6 +54,43 @@ def run_migrations_offline() -> None:
         context.run_migrations()
 
 
+@contextmanager
+def _foreign_keys_suspended(connection: Connection) -> Iterator[None]:
+    """Run migrations with SQLite's foreign-key enforcement off.
+
+    **Not a tidiness measure. Without this, a migration deletes data.**
+
+    SQLite cannot alter a constraint in place, so `render_as_batch` rebuilds
+    the table: create a new one, copy the rows, **drop the old one**, rename.
+    `proposals` and `chat_messages` both reference `projects` with
+    ``ON DELETE CASCADE``, and the application turns ``PRAGMA foreign_keys``
+    on for every connection — so that drop cascades and empties them.
+
+    Observed on 2026-07-29 adding one nullable column to `projects`: the
+    projects were copied across intact and every proposal was gone. The
+    migration reported success, because from its point of view it had done
+    exactly what it was asked.
+
+    This belongs here rather than in one migration: every future batch
+    operation on a referenced table has the same trap, and a comment in a file
+    nobody re-reads is not a guard. It is also what the SQLAlchemy and Alembic
+    documentation prescribe for the SQLite rebuild.
+
+    The pragma cannot change inside a transaction, so it is set on the raw
+    connection before Alembic opens one — and restored afterwards, because the
+    same connection may be handed back to the application.
+    """
+    if connection.dialect.name != "sqlite":
+        yield
+        return
+
+    connection.exec_driver_sql("PRAGMA foreign_keys=OFF")
+    try:
+        yield
+    finally:
+        connection.exec_driver_sql("PRAGMA foreign_keys=ON")
+
+
 def run_migrations_online() -> None:
     # The application passes its own connection when stamping a freshly
     # created database; reuse it rather than opening a second one.
@@ -63,7 +102,7 @@ def run_migrations_online() -> None:
             render_as_batch=True,
             compare_type=True,
         )
-        with context.begin_transaction():
+        with _foreign_keys_suspended(supplied), context.begin_transaction():
             context.run_migrations()
         return
 
@@ -79,7 +118,7 @@ def run_migrations_online() -> None:
             render_as_batch=True,
             compare_type=True,
         )
-        with context.begin_transaction():
+        with _foreign_keys_suspended(connection), context.begin_transaction():
             context.run_migrations()
 
 

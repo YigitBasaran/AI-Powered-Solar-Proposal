@@ -33,8 +33,12 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # SQLite cannot add a constraint to an existing table, so the batch context
-    # rebuilds it. Harmless on engines that can.
+    # Foreign-key enforcement is suspended for the whole migration run by
+    # `migrations/env.py`, and it has to be. SQLite cannot add a constraint to
+    # an existing table, so the batch context rebuilds it — create, copy, *drop
+    # the old one*, rename — and `proposals` and `chat_messages` both reference
+    # `projects` with ON DELETE CASCADE. With the pragma on, that drop takes
+    # every proposal and every transcript with it.
     with op.batch_alter_table("projects", schema=None) as batch_op:
         batch_op.add_column(sa.Column("revision_of_project_id", sa.String(length=36), nullable=True))
         batch_op.create_unique_constraint(

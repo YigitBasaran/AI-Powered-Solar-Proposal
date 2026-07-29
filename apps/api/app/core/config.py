@@ -145,6 +145,12 @@ def meters_per_source_pixel(latitude_deg: float, zoom: int, scale: int) -> float
     return float(logical / scale)
 
 
+#: Environments where a replay-backed proposal may be issued at all. Named here
+#: rather than in the route or the health check, because the *settings* are what
+#: refuse to construct outside them.
+TEST_ENVIRONMENTS = frozenset({"test", "e2e", "verification"})
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=(REPO_ROOT / ".env", API_ROOT / ".env"),
@@ -195,6 +201,17 @@ class Settings(BaseSettings):
     pvgis_retry_budget_seconds: float = 30.0
     pvgis_retry_base_delay_seconds: float = 0.5
     pvgis_retry_max_delay_seconds: float = 8.0
+
+    #: Permit a proposal backed by a replayed capture rather than a live PVGIS
+    #: observation.
+    #:
+    #: **False everywhere but the test harnesses**, and mechanically so: the
+    #: validator below refuses to construct these settings if it is true outside
+    #: a recognised test environment, so turning it on in a production profile
+    #: fails start-up rather than quietly issuing replay-backed documents. It
+    #: exists only because the stub-backed suites still have to exercise
+    #: finalisation end to end.
+    allow_replay_proposals: bool = False
 
     # --- fx ----------------------------------------------------------------
     fx_mode: FxMode = FxMode.LIVE
@@ -287,6 +304,25 @@ class Settings(BaseSettings):
         if len(parts) != 2 or not all(p.isdigit() for p in parts):
             raise ValueError("GOOGLE_MAPS_SIZE must look like 640x640")
         return v
+
+    @model_validator(mode="after")
+    def _replay_proposals_are_confined_to_test_environments(self) -> Settings:
+        """Refuse to start rather than quietly issue a replay-backed proposal.
+
+        `ALLOW_REPLAY_PROPOSALS` exists so the stub-backed harnesses can still
+        exercise finalisation. Left as a convention it would eventually be set
+        somewhere it should not be, and the symptom - a proposal citing a
+        replayed capture as a live observation - is exactly the thing this
+        whole change exists to make impossible. So it is mechanical: outside a
+        recognised test environment, enabling it is a start-up failure.
+        """
+        if self.allow_replay_proposals and self.app_env.lower() not in TEST_ENVIRONMENTS:
+            raise ValueError(
+                f"ALLOW_REPLAY_PROPOSALS is only permitted when APP_ENV is one of "
+                f"{sorted(TEST_ENVIRONMENTS)}; APP_ENV is {self.app_env!r}. A proposal "
+                f"must be backed by a live PVGIS observation."
+            )
+        return self
 
     @property
     def maps_size_wh(self) -> tuple[int, int]:

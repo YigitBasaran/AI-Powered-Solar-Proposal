@@ -24,6 +24,7 @@ from app.core.errors import (
 )
 from app.domain.models import (
     CapexConversion,
+    DataSource,
     ExchangeRate,
     ExchangeRateSource,
     FacetYieldResult,
@@ -33,7 +34,14 @@ from app.domain.models import (
     YieldResult,
 )
 from app.integrations.exchange_rates import ExchangeRateService
-from app.integrations.pvgis import PvgisClient, PvgisProbeSet, probe_facets
+from app.integrations.pvgis import (
+    FacetProbe,
+    PvgisClient,
+    PvgisProbeSet,
+    PvgisResult,
+    classify_endpoint,
+    probe_facets,
+)
 from app.services.financial import calculate_financials, convert_capex
 from app.services.layout import assert_layout_valid, generate_layout
 from app.services.roof import build_roof_model, roof_summary
@@ -423,6 +431,138 @@ def exchange_rate_from_snapshot(snapshot: dict[str, object]) -> ExchangeRate:
     )
 
 
+#: How close two angles must be to count as the same observation. Six decimal
+#: degrees is under a tenth of a millimetre of arc - far tighter than any real
+#: calibration change, and far looser than float noise.
+ANGLE_TOLERANCE_DEG = 1e-6
+
+
+def probe_set_from_snapshot(snapshot: dict[str, object]) -> PvgisProbeSet | None:
+    """Rebuild the probe batch a snapshot already recorded.
+
+    Mirrors `exchange_rate_from_snapshot`: an observation already made, carried
+    forward rather than made again. Returns `None` for a snapshot written
+    before provenance existed, which is then simply not reusable.
+    """
+    energy = _section(snapshot, "energy")
+    block = energy.get("pvgis")
+    if not isinstance(block, dict) or not block.get("probes"):
+        return None
+
+    request = block.get("request") or {}
+    probes: dict[str, FacetProbe] = {}
+    for entry in block["probes"]:
+        monthly = [float(v) for v in entry["monthlySpecificYieldKwhPerKwp"]]
+        specific = float(entry["specificYieldKwhPerKwp"])
+        probes[str(entry["facetId"])] = FacetProbe(
+            facet_id=str(entry["facetId"]),
+            compass_azimuth_deg=float(entry["compassAzimuthDeg"]),
+            pvgis_aspect_deg=float(entry["pvgisAspectDeg"]),
+            angle_deg=float(entry["angleDeg"]),
+            result=PvgisResult(
+                annual_kwh=specific,
+                monthly_kwh=list(monthly),
+                specific_yield_kwh_per_kwp=specific,
+                monthly_specific_yield_kwh_per_kwp=monthly,
+                peak_power_kwp=1.0,
+                aspect_deg=float(entry["pvgisAspectDeg"]),
+                angle_deg=float(entry["angleDeg"]),
+                radiation_database=str(entry["radiationDatabase"]),
+                data_source=DataSource(str(block["source"])),
+                retrieved_at=datetime.fromisoformat(str(entry["retrievedAt"])),
+                losses_percent=entry.get("losses"),
+            ),
+        )
+
+    return PvgisProbeSet(
+        probes=probes,
+        endpoint=str(block["endpoint"]),
+        origin=str(block.get("origin") or ""),
+        api_version=block.get("apiVersion"),
+        batch_completed_at=datetime.fromisoformat(str(block["batchCompletedAt"])),
+        data_source=DataSource(str(block["source"])),
+        request_params={
+            "lat": request.get("lat"),
+            "lon": request.get("lon"),
+            "peakpower": request.get("peakPowerKwp"),
+            "loss": request.get("lossPercent"),
+            "pvtechchoice": request.get("pvTechChoice"),
+            "mountingplace": request.get("mountingPlace"),
+        },
+    )
+
+
+def reusable_probes(
+    snapshot: dict[str, object], roof: RoofModel, settings: Settings
+) -> PvgisProbeSet | None:
+    """The stored probes, if they still describe this roof and configuration.
+
+    A system size change moves the layout and the production; it moves nothing
+    about *where the yields came from*, because the probes are taken at 1 kWp
+    before any size is chosen. So the same observation answers every size - as
+    long as nothing that was sent to PVGIS has changed since.
+
+    Returns `None` whenever reuse would be a guess, and the caller then makes a
+    fresh batch. Every check below is a way the stored figures could be about
+    something other than the question now being asked.
+    """
+    probes = probe_set_from_snapshot(snapshot)
+    if probes is None:
+        return None
+
+    # Trust first. A replay observation is not proposal-grade, so carrying one
+    # forward would launder it into a document. Permitted only where a test
+    # environment has explicitly said so.
+    if not probes.is_trusted and not settings.allow_replay_proposals:
+        logger.info("stored PVGIS probes are %s, not reusable", probes.data_source.value)
+        return None
+
+    # Endpoint identity. A live observation from another origin or another API
+    # version is a different service, not the same one on a new port. For a
+    # permitted replay the port legitimately moves between runs, so only the
+    # API version is compared.
+    current = classify_endpoint(settings.pvgis_base_url)
+    if probes.api_version != current.api_version:
+        return None
+    if probes.is_trusted and probes.origin != current.origin:
+        return None
+
+    request = probes.request_params
+    if request.get("peakpower") != 1.0:
+        return None
+    if not _close(request.get("lat"), settings.case_resolved_latitude):
+        return None
+    if not _close(request.get("lon"), settings.case_resolved_longitude):
+        return None
+    if not _close(request.get("loss"), settings.pvgis_system_loss_percent):
+        return None
+    if request.get("pvtechchoice") != settings.pvgis_technology:
+        return None
+    if request.get("mountingplace") != settings.pvgis_mounting_place:
+        return None
+
+    # Every current facet must be covered, at the geometry it has now.
+    for facet in roof.facets:
+        probe = probes.probes.get(facet.id)
+        if probe is None:
+            return None
+        if not _close(probe.angle_deg, facet.pitch_deg):
+            return None
+        if not _close(probe.pvgis_aspect_deg, facet.pvgis_aspect_deg):
+            return None
+
+    return probes
+
+
+def _close(value: Any, expected: float) -> bool:
+    if value is None:
+        return False
+    try:
+        return abs(float(value) - expected) <= ANGLE_TOLERANCE_DEG
+    except (TypeError, ValueError):
+        return False
+
+
 def _capex_from(rate: ExchangeRate, settings: Settings) -> CapexConversion:
     return convert_capex(
         amount=Decimal(str(settings.case_capex_amount)),
@@ -475,7 +615,13 @@ async def recompute_for_system_size(
     settings = settings or get_settings()
     roof = build_roof_model(settings)
 
-    probes = probes or await probe_facets(roof.facets, settings=settings, client=pvgis_client)
+    # The stored observation answers every size, so a size change normally
+    # costs no PVGIS traffic at all. `reusable_probes` returns None the moment
+    # reuse would be a guess, and then a fresh batch is made.
+    probes = probes or reusable_probes(snapshot, roof, settings)
+    if probes is None:
+        logger.info("stored PVGIS probes are not reusable; re-probing every facet")
+        probes = await probe_facets(roof.facets, settings=settings, client=pvgis_client)
 
     layout = generate_layout(roof, system_size_kwp, probes.yields(), settings)
     assert_layout_valid(roof, layout, settings)

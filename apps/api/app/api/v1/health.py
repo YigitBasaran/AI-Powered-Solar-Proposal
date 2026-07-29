@@ -20,7 +20,13 @@ from typing import Any, Literal
 
 from fastapi import APIRouter
 
-from app.core.config import LlmProvider, MapsMode, Settings, get_settings
+from app.core.config import (
+    TEST_ENVIRONMENTS,
+    LlmProvider,
+    MapsMode,
+    Settings,
+    get_settings,
+)
 from app.integrations.pvgis import classify_endpoint
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -54,10 +60,6 @@ def _maps_status(settings: Settings) -> dict[str, Any]:
     }
 
 
-#: Environments in which a replay-backed proposal may be issued at all.
-TEST_ENVIRONMENTS = frozenset({"test", "e2e", "verification"})
-
-
 def _pvgis_status(settings: Settings) -> dict[str, Any]:
     """Which endpoint will be called, and whether it could back a proposal.
 
@@ -72,6 +74,12 @@ def _pvgis_status(settings: Settings) -> dict[str, Any]:
         reasons.append("PVGIS_BASE_URL does not name a host")
     elif not trust.is_trusted and not is_test_env:
         reasons.append(f"PVGIS endpoint is not proposal-grade: {trust.reason}")
+
+    if settings.allow_replay_proposals and not is_test_env:
+        # Start-up already refuses this, so reaching it means something bypassed
+        # the settings. Reported anyway - it is the one signal an operator sees
+        # without reading logs.
+        reasons.append("ALLOW_REPLAY_PROPOSALS is set outside a test environment")
 
     if settings.pvgis_max_attempts < 1:
         reasons.append("PVGIS_MAX_ATTEMPTS must be at least 1")

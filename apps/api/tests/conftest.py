@@ -48,6 +48,7 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
         "MAPS_MODE",
         "PVGIS_MODE",
         "PVGIS_BASE_URL",
+        "ALLOW_REPLAY_PROPOSALS",
         "FX_MODE",
         "LLM_PROVIDER",
     )
@@ -67,6 +68,11 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
             # setting disappears entirely once fixture mode is deleted.
             "PVGIS_MODE": "live",
             "PVGIS_BASE_URL": f"{stub_url}/api/v5_3",
+            # The stub is not the canonical PVGIS origin, so what it produces
+            # is labelled `replay` and is not proposal-grade. Permitted here,
+            # and only here, because APP_ENV says this is a test environment -
+            # the settings themselves refuse it anywhere else.
+            "ALLOW_REPLAY_PROPOSALS": "true",
             "FX_MODE": "fixture",
             "LLM_PROVIDER": "rules",
         }

@@ -102,9 +102,17 @@ def test_the_default_configuration_is_trusted() -> None:
 
 
 def _status(**overrides):
+    """A health report for a hypothetical configuration.
+
+    `allow_replay_proposals` defaults to False here because the *session*
+    settings have it on - this suite runs against a stub - and a production
+    profile would not. Leaving it on would make every "production" case report
+    unready for a reason the case is not about.
+    """
     from app.api.v1.health import _pvgis_status
 
-    return _pvgis_status(get_settings().model_copy(update=overrides))
+    base = {"allow_replay_proposals": False}
+    return _pvgis_status(get_settings().model_copy(update={**base, **overrides}))
 
 
 def test_health_reports_the_endpoint_that_will_be_called() -> None:
@@ -153,3 +161,65 @@ def test_readiness_makes_no_outbound_request(stub_requests) -> None:
     """A readiness probe that called PVGIS would be a way to get rate-limited."""
     _status(pvgis_base_url="https://re.jrc.ec.europa.eu/api/v5_3")
     assert stub_requests == []
+
+
+# ---------------------------------------------------------------------------
+# The replay override is confined to test environments, mechanically
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("app_env", ["test", "e2e", "verification"])
+def test_replay_proposals_may_be_enabled_in_a_test_environment(app_env) -> None:
+    from app.core.config import Settings
+
+    settings = Settings(app_env=app_env, allow_replay_proposals=True)
+    assert settings.allow_replay_proposals is True
+
+
+@pytest.mark.parametrize("app_env", ["production", "development", "staging", ""])
+def test_enabling_replay_proposals_anywhere_else_fails_startup(app_env) -> None:
+    """Not a convention. The settings refuse to construct, so the process dies.
+
+    Left as a convention this would eventually be set somewhere it should not
+    be, and the symptom - a proposal citing a replayed capture as a live
+    observation - is precisely what this change exists to make impossible.
+    """
+    import pydantic
+
+    from app.core.config import Settings
+
+    with pytest.raises(pydantic.ValidationError, match="ALLOW_REPLAY_PROPOSALS"):
+        Settings(app_env=app_env, allow_replay_proposals=True)
+
+
+def test_the_default_is_false_so_a_normal_profile_is_unaffected() -> None:
+    """Asserted on the field default, not on a constructed instance.
+
+    Constructing one here would read this suite's own environment, which turns
+    the override on - so the assertion would be about the test harness rather
+    than about what a clean deployment gets.
+    """
+    from app.core.config import Settings
+
+    assert Settings.model_fields["allow_replay_proposals"].default is False
+
+
+def test_health_reports_replay_enabled_outside_a_test_environment() -> None:
+    """Defence in depth: start-up already refuses this configuration.
+
+    Reaching it means something bypassed the settings, and this is the one
+    signal an operator sees without reading logs.
+    """
+    from app.api.v1.health import _pvgis_status
+
+    settings = get_settings().model_copy(
+        update={
+            "pvgis_base_url": "https://re.jrc.ec.europa.eu/api/v5_3",
+            "app_env": "production",
+            "allow_replay_proposals": True,
+        }
+    )
+    status = _pvgis_status(settings)
+
+    assert status["ready"] is False
+    assert "ALLOW_REPLAY_PROPOSALS" in status["detail"]

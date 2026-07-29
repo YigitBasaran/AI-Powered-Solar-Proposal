@@ -198,7 +198,7 @@ cd apps/web && npm run typecheck && npm run test && npm run build  # 51 tests
 # End-to-end. Nothing to start first — the suite starts its own stacks.
 cd apps/web
 npx playwright test --grep "@p0"            # 84 mandatory
-npx playwright test --grep-invert "@live"   # 116: deterministic + degraded
+npx playwright test --grep-invert "@live"   # 117: deterministic + degraded
 npx playwright test --grep "@live"          # 7, opt-in; skips on a fixture stack
 ```
 

@@ -14,7 +14,7 @@ import {
   RoofSection,
 } from "@/components/proposal/AnalysisPanels";
 import { RoofWorkspace } from "@/components/roof/RoofWorkspace";
-import { Button, Card, SourceBadge, Spinner, cn } from "@/components/ui/primitives";
+import { Button, Callout, Card, SourceBadge, Spinner, cn } from "@/components/ui/primitives";
 import { api } from "@/lib/api";
 import { dataSourceLabel } from "@/lib/format";
 import type {
@@ -51,6 +51,7 @@ export default function Home() {
   const [mapConfig, setMapConfig] = useState<MapConfig | null>(null);
   const [health, setHealth] = useState<HealthReady | null>(null);
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
+  const [analysisStatus, setAnalysisStatus] = useState<string>("pending");
   const [proposal, setProposal] = useState<FinalizeResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
@@ -104,6 +105,7 @@ export default function Home() {
       try {
         const result = await api.runAnalysis(id);
         setAnalysis(result.analysis);
+        setAnalysisStatus("complete");
         setCurrentStep(result.currentStep);
         setMessages((current) => [
           ...current,
@@ -129,6 +131,7 @@ export default function Home() {
     try {
       const project = await api.project(id);
       setAnalysis(project.analysis);
+      setAnalysisStatus(project.analysisStatus);
       setCurrentStep(project.currentStep);
       setProgress(project.progress);
     } catch (caught) {
@@ -172,13 +175,21 @@ export default function Home() {
         // which is immutable — the edit would appear to be silently ignored.
         if (response.projectId !== projectId) setProjectId(response.projectId);
 
+        setAnalysisStatus(response.analysisStatus ?? analysisStatus);
+
         if (response.readyForAnalysis) {
           await runAnalysis(response.projectId);
-        } else if (response.recalculated?.length || response.analysisStatus === "pending") {
-          // A correction recomputes only the dependent sections server-side,
-          // and a reset clears the analysis outright. Either way the KPIs on
-          // screen now describe inputs the project no longer has, so they are
-          // re-read rather than left to look current.
+        } else if (
+          response.recalculated?.length ||
+          (analysis !== null && response.analysisStatus !== "complete")
+        ) {
+          // Three cases, one rule: whenever the server says the stored analysis
+          // no longer describes the project's current inputs, re-read it rather
+          // than leave figures on screen that look current. A correction
+          // recomputes the dependent sections; a reset clears the analysis
+          // outright; a *failed* recompute leaves it stale, and that is the one
+          // where doing nothing would be worst — the old numbers are still
+          // there, still plausible, and now describe something else.
           await refreshAnalysis(response.projectId);
         }
       } catch (caught) {
@@ -187,7 +198,7 @@ export default function Home() {
         setPending(false);
       }
     },
-    [projectId, runAnalysis, refreshAnalysis],
+    [projectId, runAnalysis, refreshAnalysis, analysis, analysisStatus],
   );
 
   const finalize = useCallback(async () => {
@@ -346,6 +357,13 @@ export default function Home() {
 
             {analysis ? (
               <>
+                {analysisStatus === "stale" ? (
+                  <Callout testId="stale-analysis" title="These figures are out of date.">
+                    The recalculation after your last change did not complete, so what
+                    follows still describes the previous inputs. Re-run the analysis
+                    before relying on it — the proposal cannot be created until then.
+                  </Callout>
+                ) : null}
                 <CapacityWarning warning={analysis.layout.capacityWarning} />
                 <KpiRow analysis={analysis} />
                 <FxRow analysis={analysis} />
@@ -390,7 +408,10 @@ export default function Home() {
                     ) : (
                       <Button
                         onClick={finalize}
-                        disabled={Boolean(busy) || !analysis}
+                        // Refused server-side too; disabling here means the
+                        // customer is not offered a document built from figures
+                        // that do not describe their project.
+                        disabled={Boolean(busy) || !analysis || analysisStatus !== "complete"}
                         testId="create-proposal"
                       >
                         Create proposal

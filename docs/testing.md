@@ -126,15 +126,15 @@ Per-worker databases were the first preference and are not practical here: Next 
 
 ### Inventory
 
-123 tests across three Playwright projects and 20 spec files, from the run on 2026-07-29.
+124 tests across three Playwright projects and 20 spec files, from the run on 2026-07-29.
 
 | Tag | Count | What runs it |
 |---|---:|---|
 | `@p0` | 84 | 69 chromium · 13 degraded · 2 mobile-chromium |
-| `@p1` | 32 | chromium |
+| `@p1` | 33 | chromium |
 | `@live` | 7 | opt-in; skipped on a fixture stack, with the reason printed |
 
-`npx playwright test --grep-invert "@live"` → **116 passed**, 3.9 min, from a clean `.next` build. (2026-07-29; 91 before the conversational layer added `conversation.spec.ts`, `conversation-changes.spec.ts` and `degraded/llm-telemetry.spec.ts`.)
+`npx playwright test --grep-invert "@live"` → **117 passed**, 4.1 min, from a clean `.next` build. (2026-07-29; 91 before the conversational layer added `conversation.spec.ts`, `conversation-changes.spec.ts` and `degraded/llm-telemetry.spec.ts`.)
 
 `E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"` → **6 passed, 1 skipped**, 38.9 s, against real PVGIS, the real ECB feed and a locally pulled `qwen3.5:2b`. The skip is live Google Static Maps, which has no API key. That run is what caught the `think: false` defect — see [`local-ai.md`](local-ai.md).
 

@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated 2026-07-29: **1,059 API + 51 web + 116 E2E passing**; Ruff and strict MyPy clean over 54 source files; the `@live` LLM tier re-run against a locally pulled `qwen3.5:2b` (4 passed, 3 skipped). The conversational layer was rebuilt this day — see the phase 9 entry below and [`conversation.md`](conversation.md)._
+_Last updated 2026-07-29: **1,059 API + 51 web + 117 E2E passing**; Ruff and strict MyPy clean over 54 source files; the `@live` LLM tier re-run against a locally pulled `qwen3.5:2b` (4 passed, 3 skipped). The conversational layer was rebuilt this day — see the phase 9 entry below and [`conversation.md`](conversation.md)._
 
 ---
 
@@ -496,7 +496,7 @@ by a test. ⬜ means not implemented.
 |---|---|---|---|---|
 | 1 | Chat-driven flow | `services/workflow.py`, `api/v1/projects.py` | `test_workflow_api.py` · E2E `workflow.spec.ts` (9) drives chat→analysis→proposal in the browser for all three sizes | ✅ |
 | 1a | Questions answered at **every** step without moving the workflow | `services/conversation/` | `test_chat_questions_api.py` (58): ten questions × five steps, step unchanged, no column written, analysis byte-identical · E2E `conversation.spec.ts` (9) | ✅ |
-| 1b | Corrections recalculate only their dependents | `services/analysis.py`, `conversation/invalidation.py` | `test_corrections.py` (differential map, safety + tightness) · `test_chat_change_and_reset_api.py` (12) · E2E `conversation-changes.spec.ts` (10) | ✅ |
+| 1b | Corrections recalculate only their dependents | `services/analysis.py`, `conversation/invalidation.py` | `test_corrections.py` (differential map, safety + tightness) · `test_chat_change_and_reset_api.py` (12) · E2E `conversation-changes.spec.ts` (11) | ✅ |
 | 1c | A finalised proposal never drifts | `services/revisions.py`, migration `4a1f7c2b9e30` | `test_corrections_api.py` (9): the parent's proposal and link untouched, the revision finalises to a new token, a repeated change reuses the one child | ✅ |
 | 2 | Local LLM, structured output | `integrations/ollama.py`, `conversation/llm.py` | `test_ollama.py` + `test_chat.py` + `test_conversation_llm.py` · **verified live against a pulled `qwen3.5:2b`, 2026-07-28 and again 2026-07-29**: schema-constrained output validates and reaches the state machine, and no engineering figure changes | ✅ |
 | 2a | A degraded model run is distinguishable from a healthy one | `conversation/telemetry.py` | `test_chat_telemetry_api.py` (7) · E2E `degraded/llm-telemetry.spec.ts` (6) against a stack whose Ollama host does not resolve | ✅ |

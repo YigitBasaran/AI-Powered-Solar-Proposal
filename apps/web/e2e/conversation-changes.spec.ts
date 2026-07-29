@@ -94,6 +94,28 @@ test.describe("@p1 changing a value", () => {
   });
 });
 
+test.describe("@p1 a change the client must not ignore", () => {
+  test("a corrected consumption updates the KPIs on screen", async ({ solarFlow }) => {
+    // The server recomputes; the client has to re-read. Leaving the previous
+    // figures on screen is the same failure as never recomputing at all — the
+    // customer sees plausible numbers describing inputs they have corrected.
+    await solarFlow.open();
+    await solarFlow.completeIntake({ size: 6 });
+    await solarFlow.waitForAnalysis();
+
+    const before = await solarFlow.kpi("annual-saving").textContent();
+    expect(before).toBeTruthy();
+
+    // 400 kWh a month is below what the system produces, so the saving is
+    // consumption-limited and genuinely moves. 900 would not: at 6 kWp both
+    // 1,150 and 900 are production-limited and the saving is identical.
+    await solarFlow.send("actually make it 400 kWh a month");
+    await expect(solarFlow.kpi("annual-saving")).not.toHaveText(before!, { timeout: 90_000 });
+    // The system itself did not change, which is the other half of the claim.
+    await expect(solarFlow.kpi("system-size")).toHaveText("6 kWp");
+  });
+});
+
 test.describe("@p1 changing a finalised proposal", () => {
   test("the issued proposal and its link never change", async ({ api }) => {
     const { projectId, shareToken } = await api.finalisedProposal("6 kWp");

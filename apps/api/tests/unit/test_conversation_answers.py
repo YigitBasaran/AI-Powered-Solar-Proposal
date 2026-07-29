@@ -367,3 +367,30 @@ async def test_the_model_never_receives_the_snapshot(offline_env) -> None:
     body = captured["prompt"] + captured["system"]
     for forbidden in ("cashFlow", "sourcePixelPolygon", "retrievedAt", "radiationDatabase"):
         assert forbidden not in body
+
+
+def test_a_capitalised_question_still_reaches_the_right_help_entry() -> None:
+    """Found by live probing: the registry was searched with the raw message.
+
+    `action.question` is the text exactly as typed, because the transcript
+    needs it that way. The triggers are lowercase, so every capitalised
+    question matched nothing and fell through to the topic default - and
+    "Why does a 6 kWp system have 15 panels?" was answered with the list of
+    sizes rather than with how the panel count is derived.
+    """
+    project = ProjectState(current_step=ProjectStep.SYSTEM_SIZE)
+    answer = answer_question(
+        action=_ask("Why does a 6 kWp system have 15 panels?", Topic.SYSTEM_SIZE),
+        project=project,
+    )
+    assert answer.help_topic == "panel_power"
+    assert "400 Wp" in answer.text
+
+
+def test_the_lowercase_form_of_the_same_question_is_unchanged() -> None:
+    project = ProjectState(current_step=ProjectStep.SYSTEM_SIZE)
+    answer = answer_question(
+        action=_ask("why does a 6 kwp system have 15 panels?", Topic.SYSTEM_SIZE),
+        project=project,
+    )
+    assert answer.help_topic == "panel_power"

@@ -88,7 +88,7 @@ In-memory for tests, SQLAlchemy-backed in the app. The FX service does not know 
 
 ```
 POST /projects                    create, greet
-POST /projects/{id}/chat          rules parser → (LLM) → state machine → persist
+POST /projects/{id}/chat          router → answer service or state machine → persist
 POST /projects/{id}/run-analysis  roof → layout → PVGIS → FX → financials
 POST /projects/{id}/finalize      validate → summarise → snapshot → share token
 GET  /proposals/{token}           read-only projection of the snapshot
@@ -103,14 +103,15 @@ Analysis order is not arbitrary: PVGIS is called with the capacity that **actual
 
 ```
 user message
-   ├─ step-aware deterministic parser ──► validated intent
+   ├─ deterministic router (question · extractor · confirm) ──► ConversationAction
    └─ (only if that fails) Ollama ──► JSON schema ──► Pydantic ──► domain whitelist
 ```
 
 The model may **parse intent** and **write prose**. It may not produce a number that reaches the domain:
 
-- `ParsedChatMessage` has no field for money, production or exchange rates — there is no channel to express one.
+- `LlmAction` has no field for money, production, geometry or exchange rates, and none for the next workflow step — there is no channel to express one.
 - Model-supplied values are re-checked against the same whitelist the rules parser uses.
+- The router never mutates; the state machine never composes an answer; the route may write only the columns in its `ASSIGNABLE` whitelist. See [`conversation.md`](conversation.md).
 - The executive summary is validated: every number in the generated prose must be one the backend computed, or the summary is discarded.
 
 `LLM_PROVIDER=rules` is a complete implementation, not a degraded one. See [`local-ai.md`](local-ai.md).

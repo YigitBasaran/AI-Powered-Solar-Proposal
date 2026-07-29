@@ -38,6 +38,7 @@ from app.services.conversation.actions import (
 )
 from app.services.conversation.facts import FactBundle, build_facts
 from app.services.conversation.knowledge import HelpEntry, find_entry
+from app.services.conversation.normalise import normalise
 from app.services.summary import ALWAYS_ALLOWED, unsupported_numbers
 
 logger = logging.getLogger("solarvis.conversation.answers")
@@ -424,7 +425,11 @@ def answer_question(
     """The deterministic answer to one question. Reads state, changes none."""
     settings = settings or get_settings()
     facts = build_facts(project=project, settings=settings, topic=action.topic)
-    entry = find_entry(action.question or "", action.topic)
+    # Normalised, not raw. `action.question` is the message exactly as typed,
+    # because that is what the transcript needs; the registry's triggers are
+    # lowercase. Passing the raw form matched nothing for any capitalised
+    # question, and every one of them quietly fell through to the topic default.
+    entry = find_entry(normalise(action.question or "").text, action.topic)
     return compose(action=action, facts=facts, entry=entry, settings=settings)
 
 

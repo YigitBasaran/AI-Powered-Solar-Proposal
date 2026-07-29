@@ -126,17 +126,19 @@ Per-worker databases were the first preference and are not practical here: Next 
 
 ### Inventory
 
-98 tests across three Playwright projects and 17 spec files, from the run on 2026-07-28.
+123 tests across three Playwright projects and 20 spec files, from the run on 2026-07-29.
 
 | Tag | Count | What runs it |
 |---|---:|---|
-| `@p0` | 69 | 60 chromium · 7 degraded · 2 mobile-chromium |
-| `@p1` | 22 | chromium |
+| `@p0` | 84 | 69 chromium · 13 degraded · 2 mobile-chromium |
+| `@p1` | 32 | chromium |
 | `@live` | 7 | opt-in; skipped on a fixture stack, with the reason printed |
 
-`npx playwright test --grep-invert "@live"` → **91 passed**, 4.8 min, from a clean `.next` build.
+`npx playwright test --grep-invert "@live"` → **116 passed**, 3.9 min, from a clean `.next` build. (2026-07-29; 91 before the conversational layer added `conversation.spec.ts`, `conversation-changes.spec.ts` and `degraded/llm-telemetry.spec.ts`.)
 
 `E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"` → **6 passed, 1 skipped**, 38.9 s, against real PVGIS, the real ECB feed and a locally pulled `qwen3.5:2b`. The skip is live Google Static Maps, which has no API key. That run is what caught the `think: false` defect — see [`local-ai.md`](local-ai.md).
+
+`E2E_LIVE=llm npx playwright test --grep "@live"` → **4 passed, 3 skipped**, 1.2 min, on 2026-07-29 (PVGIS and FX left on fixtures, so their live specs skip with a stated reason). Two probe phrases were retired from that run rather than weakened: `conversation/numbers.py` now parses *"eleven hundred and fifty units a month"* and *"the one that fits fifteen panels"* deterministically, so they never reach the model. That is a win in the parser; keeping them would have recorded it as a regression here. **Live results are recorded, never gated** — the deterministic flow completes entirely on `LLM_PROVIDER=rules`.
 
 ### Architecture
 
@@ -187,9 +189,17 @@ Both `@axe-core/playwright` and `pdfjs-dist` are **devDependencies**, injected b
 | `test_pvgis.py` | Request parameters, response parsing, monthly/annual consistency, retries, 429/529/5xx, cache, fixture fallback |
 | `test_exchange_rates.py` | Endpoint and ECB provider, every rejection case, the fallback chain, and that **parity is unreachable** |
 | `test_financial.py` | The case scenario end to end, the coverage cap, Decimal handling, degenerate inputs |
-| `test_rules_parser.py` | Every phrasing the brief demonstrates, step-awareness, refusal of unsupported sizes, and that **an energy unit decides which number is the consumption** |
+| `test_rules_parser.py` | Every phrasing the brief demonstrates, step-awareness, refusal of unsupported sizes, and that **an energy unit decides which number is the consumption**. All 80 cases pass unchanged over the rewritten router — the compatibility seam exists so this suite keeps testing the real classifier rather than a reimplementation of it |
 | `test_chat.py` | Rules-first ordering, model fallback, and that a model cannot supply a value the rules would refuse |
 | `test_ollama.py` | Schema-constrained requests, invalid JSON, timeouts, unavailable model |
+| `test_conversation_normalise.py` | Contraction expansion, punctuation folding, and that `raw` survives every transform verbatim |
+| `test_conversation_numbers.py` | The number-word state machine, the colloquial-pair rule (`eleven fifty` = 1150 but `twenty four` = 24), the four vagueness gates, and that `fifteen panels` is never 15 kWh |
+| `test_conversation_questions.py` | Q1–Q4 detection and topic classification, with **each of the five classification defects as a named regression** |
+| `test_conversation_extractors.py` | The tri-state matrix per step, the 10 m case-location tolerance, and that a bare adjective or a time word is not a size selection |
+| `test_conversation_router.py` | The priority order, and that a question carries no value and wants no mutation at any of the nine steps |
+| `test_conversation_knowledge.py` | That **no help entry contains a hardcoded engineering number** — every figure is a placeholder resolved from `Settings`, checked by rejecting any digit in a body and by re-checking every number in a rendered entry |
+| `test_conversation_answers.py` | The source hierarchy, the six answer states, and the five paraphrase gates — including that the model is never sent the snapshot |
+| `test_corrections.py` | The six review corrections, permanently. The dependency map is **derived by differential experiment** and asserted for both safety and tightness |
 | `test_summary.py` | That generated prose containing an invented, recalculated or altered number is **discarded** |
 | `test_config.py` | That `.env.example` actually loads, and that no exchange-rate setting exists |
 | `test_schema_parity.py` | Alembic migrations and ORM metadata describe an identical schema |
@@ -198,9 +208,18 @@ Both `@axe-core/playwright` and `pdfjs-dist` are **devDependencies**, injected b
 
 `test_workflow_api.py` drives the chat flow over HTTP. `test_proposal_api.py` covers finalisation, the public share route, the PDF, view tracking, **immutability**, and that finalising twice returns the same proposal.
 
+Three suites cover the conversational layer end to end:
+
+| Suite | What it pins |
+|---|---|
+| `test_chat_questions_api.py` | A question at every step: the step does not move, no column is written, and the stored analysis is **byte-identical** afterwards — `json.dumps(..., sort_keys=True)`, not merely equal-looking, because a recomputed snapshot with the same inputs would still be a recomputation that should not have happened |
+| `test_chat_change_and_reset_api.py` | A correction recomputes only its dependents, with the untouched sections compared byte for byte; a failed recompute leaves the project `stale` and unfinalisable; a stale project withholds the affected figures but still answers about the roof; reset asks first and honours the confirmation only when it answers the immediately preceding message |
+| `test_chat_telemetry_api.py` | That `rules_sufficient` and a genuine failure are distinguishable, that every `interpretation` key is present, and that a model-supplied value still faces the state machine |
+| `test_corrections_api.py` | The revision fork: the parent's proposal and link are untouched, the revision finalises to a new token, a repeated change reuses the one child |
+
 ### Web — unit
 
-`format.test.ts` (money as strings, provenance labels), `components.test.tsx` (chat, progress rail, accessible badges), `calibration.test.ts` (measurement, validation, JSON round-trip).
+`format.test.ts` (money as strings, provenance labels), `components.test.tsx` (chat, progress rail, accessible badges), `calibration.test.ts` (measurement, validation, JSON round-trip), `telemetry.test.ts` and `message-telemetry.test.tsx` (that the fallback chip appears **only** when a model was attempted and failed, and that provider detail stays behind a disclosure).
 
 ---
 
@@ -222,6 +241,11 @@ Each of these was written after a real defect, not in anticipation of one.
 | `test_request_is_schema_constrained_and_deterministic` (the `think` assertion) | Ollama puts a *reasoning* model's whole output in `thinking` and leaves `response` empty. The client read `response`, found it empty, and fell back to the rules parser — silently, every time, so the LLM layer contributed nothing while appearing to work. Only a live model could show it: a mock returns whatever the test author puts in `response`. |
 | `concurrency.spec.ts` (intermittently) | FastAPI runs a `yield` dependency's exit code **after the response is sent**, so the session commit landed after the client already had its 200. A caller that immediately issued a dependent request could read a database without its own write — surfacing as an intermittent 409 from `run-analysis` for intake that had just been accepted. Mutating handlers now commit before returning. |
 | `responsive.spec.ts` (both cases) | The Konva stage renders at a default 720 px until its `ResizeObserver` fires, which stretched the grid track and pushed a phone-width page 320 px sideways — permanently, because the observer then measured the widened container. |
+| `test_only_the_calibrated_property_is_accepted` | A 200 m acceptance radius spans several plots at this latitude, so a neighbour's roof would have passed as "the calibrated property". 10 m is consumer-GPS error and still covers every truncation of the coordinate in the repository. |
+| `test_the_declared_consumption_dependencies_are_the_real_ones` | "Only the section called `financial` depends on consumption" is plausible and was never checked. The test derives the set by experiment and asserts the declared map matches — for **safety** (nothing outside it moves) and **tightness** (everything in it moves for some pair), because either alone is satisfiable by a wrong map. |
+| `test_last_is_a_time_word_unless_it_names_a_choice` | Bare `last` was in the size vocabulary, so "about the same as we used last winter" selected 9.6 kWp — the same shape as the `large` defect, found while writing the live probes. |
+| `test_a_capitalised_question_still_reaches_the_right_help_entry` | The help registry was searched with the message exactly as typed, and its triggers are lowercase, so every capitalised question fell through to the topic default. "Why does a 6 kWp system have 15 panels?" was answered with the list of sizes. Found by live probing, not by any mocked test. |
+| `llm-telemetry.spec.ts` + the `run-analysis` commit | Flushing the "running" status marker instead of committing held SQLite's write lock across three PVGIS calls and an FX lookup. Concurrent writers queued behind it and one past `busy_timeout` failed with "database is locked", surfacing as a 500 on an unrelated request. Exposed by adding a second E2E file to the degraded project — the first time two tests genuinely ran concurrently against that stack. |
 
 ---
 

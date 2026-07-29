@@ -126,16 +126,38 @@ Full state: raw and resolved location, consumption, selected size, derived panel
 ```
 ```json
 {
+  "projectId": "1c77…",
   "currentStep": "roof_reconstruction",
   "assistantMessage": "Selected system size: 6 kWp…",
   "accepted": true,
   "parserSource": "rules",
   "readyForAnalysis": true,
-  "progress": [ … ]
+  "analysisStatus": "pending",
+  "progress": [ … ],
+  "interpretation": {
+    "configuredProvider": "ollama",
+    "attemptedProvider": null,
+    "effectiveProvider": "rules",
+    "fallbackReason": "rules_sufficient",
+    "modelName": null,
+    "latencyMs": null
+  },
+  "revisionOfProjectId": null,
+  "recalculated": null
 }
 ```
 
-The raw message is persisted verbatim **before** anything interprets it. `parserSource` is `rules` or `llm`. Messages are capped at 2,000 characters.
+The raw message is persisted verbatim **before** anything interprets it. Messages are capped at 2,000 characters.
+
+**`parserSource` is unchanged** (`"rules" | "llm"`) but is now **derived** from `interpretation.effectiveProvider` in one place, so the flat field can never contradict the object beside it.
+
+**`interpretation`** says who actually handled the message. The distinction that matters is between *the model was never needed* and *the model was asked and could not answer*: `attemptedProvider` is non-null only when an HTTP call was genuinely issued, and `fallbackReason` names the failure — `rules_sufficient`, `not_configured`, `unreachable`, `timeout`, `http_error`, `empty_response`, `invalid_json`, `schema_rejected`, `domain_rejected`. The first two are ordinary operation. See [`conversation.md`](conversation.md#provider-telemetry).
+
+**`projectId` may differ from the one you posted to.** Changing a value on a project whose proposal has been finalised forks a revision and moves the conversation to it; `revisionOfProjectId` names the parent. The issued proposal and its share link are untouched. A client that ignores this will send its next message to an immutable project.
+
+**`recalculated`** lists the inputs this message recomputed, if any, so a client knows to re-read `GET /projects/{id}`. The whole snapshot is not returned on every chat reply — that would be a large payload for the one message in fifty that changes it.
+
+`analysisStatus` is `pending` · `running` · `complete` · `recalculating` · `stale`. The last two mean the stored analysis does not describe the project's current inputs; `finalize` refuses both.
 
 ### `POST /projects/{id}/run-analysis`
 

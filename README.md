@@ -169,26 +169,36 @@ docker compose exec ollama ollama pull qwen3.5:2b
 # then set LLM_PROVIDER=ollama in .env and restart the api service
 ```
 
-The deterministic parser is step-aware and covers every phrasing the brief demonstrates — `1150`, `1,150`, `around 1150 per month`, `the middle option`, `twenty-four panels`. Step-awareness is what makes it *safe*: the bare token `6` is 6 kWp at the system-size step and 6 kWh/month at the consumption step. `LLM_PROVIDER=rules` is a complete implementation, not a degraded one.
+The deterministic parser is step-aware and covers every phrasing the brief demonstrates — `1150`, `1,150`, `around 1150 per month`, `the middle option`, `twenty-four panels`, `eleven hundred and fifty`. Step-awareness is what makes it *safe*: the bare token `6` is 6 kWp at the system-size step and 6 kWh/month at the consumption step. `LLM_PROVIDER=rules` is a complete implementation, not a degraded one.
 
-Model output is forced through a JSON schema, Pydantic-validated, then re-checked against the same whitelist the rules parser uses — so the model cannot reach the domain with a value the rules would have rejected.
+Model output is forced through a JSON schema, Pydantic-validated, then re-checked against the same whitelist the rules parser uses — so the model cannot reach the domain with a value the rules would have rejected. It has no field for money, production, geometry, an exchange rate, or the next workflow step, and it never sees the analysis snapshot.
+
+### A conversation, not a wizard
+
+You can ask a question at any step and the workflow does not move: the step stays, no value is written, and the stored analysis is byte-identical afterwards. *"How big is the roof?"* returns real measurements at the **first** step, because the roof is fixed and needs no analysis at all.
+
+Correcting a value recalculates only what depends on it — changing your consumption leaves the roof, the layout, the modelled production and the exchange rate exactly as they were, and the untouched sections are compared byte for byte to prove it. Correcting a value on a project whose proposal has been issued forks a **revision**: the old proposal and its link never change, and finalising the revision mints a new one.
+
+The location is the one place this build says no. There is no geocoder, so an address cannot be checked against the calibrated property; anything away from the case coordinate is refused, the case property is offered instead, and nothing is stored. Accepting it would label every figure downstream with a property the model had never seen.
+
+Full design: [`docs/conversation.md`](docs/conversation.md).
 
 ---
 
 ## Testing
 
 ```bash
-cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 459 tests
+cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 1,059 tests
 cd apps/api && ./.venv/Scripts/python -m ruff check app tests
 cd apps/api && ./.venv/Scripts/python -m mypy app                  # strict
-cd apps/web && npm run typecheck && npm run test && npm run build  # 38 tests
+cd apps/web && npm run typecheck && npm run test && npm run build  # 51 tests
 ```
 
 ```bash
 # End-to-end. Nothing to start first — the suite starts its own stacks.
 cd apps/web
-npx playwright test --grep "@p0"            # 69 mandatory
-npx playwright test --grep-invert "@live"   # 91: deterministic + degraded
+npx playwright test --grep "@p0"            # 84 mandatory
+npx playwright test --grep-invert "@live"   # 116: deterministic + degraded
 npx playwright test --grep "@live"          # 7, opt-in; skips on a fixture stack
 ```
 
@@ -208,11 +218,12 @@ Integration tests run fully offline against a throwaway database in fixture mode
 
 - **CI is committed but unexecuted.** There is no git remote, so `.github/workflows/ci.yml` has never run. Its commands are verified locally. It is not implied to be green.
 - No shading analysis, and no detection of chimneys, vents or other roof obstructions.
-- Geocoding is out of scope: any entered location resolves to the fixed case property.
+- Geocoding is out of scope, and there is no geocoder to check an address against the calibrated property — so a location away from the case coordinate is refused with the case property offered instead, rather than silently accepted.
 - Imagery date is unknown and may predate changes to the property.
 - The roof calibration derives from a minimum-area rectangle fit; a human should confirm it against current imagery before any commercial use.
 - 3D rendering was not attempted. The brief prioritises the 2D flow, and the chosen bonus is proposal-view tracking.
-- **Active Ollama is unverified.** The adapter is tested against a mocked transport and the fallback to the rules parser is tested against a genuinely unreachable daemon, but no real model has ever answered — the pull needs disk this machine did not have. The `@live` Ollama specs are implemented and skip with that reason; they never pull a model themselves.
+- **Ollama is verified reachable but is not doing much of the work.** `qwen3.5:2b` was pulled and the `@live` tier passes against it. Measured on 2026-07-29, ten of eleven probe messages are settled deterministically in single-digit milliseconds and the model is consulted once, for the one phrasing no rule covers, taking 2–7 s. It classifies reliably and invents values occasionally — recorded in [`docs/local-ai.md`](docs/local-ai.md) rather than papered over. That is a property of a 2.3 B model, which is why the workflow is built to be correct on `LLM_PROVIDER=rules`.
+- **Revisions chain, they do not branch.** There is no way to hold two alternative drafts of the same finalised proposal side by side, and no UI for browsing the chain.
 - **Accessibility is checked, not certified.** axe runs clean over three screens and the suite proves keyboard-only completion, heading order and text-not-colour provenance. That is a safety net, not a WCAG compliance claim.
 
 ---
@@ -226,7 +237,8 @@ Integration tests run fully offline against a throwaway database in fixture mode
 | [`docs/geometry.md`](docs/geometry.md) | Coordinate spaces, pixel-to-metre, **A-GEO-1**, azimuth |
 | [`docs/panel-placement.md`](docs/panel-placement.md) | Surface coordinates, tiling, the allocation DP |
 | [`docs/exchange-rates.md`](docs/exchange-rates.md) | Why the conversion exists and why parity is unreachable |
-| [`docs/local-ai.md`](docs/local-ai.md) | What the model may and may not do, and how it is constrained |
+| [`docs/conversation.md`](docs/conversation.md) | The routing pipeline, the answer service, invalidation, revisions, telemetry |
+| [`docs/local-ai.md`](docs/local-ai.md) | What the model may and may not do, how it is constrained, and how it measured |
 | [`docs/api.md`](docs/api.md) | Every endpoint, the error envelope, security posture |
 | [`docs/testing.md`](docs/testing.md) | What is tested, what deliberately is not, what broke |
 | [`docs/assumptions.md`](docs/assumptions.md) | Every assumption and what it costs if wrong |

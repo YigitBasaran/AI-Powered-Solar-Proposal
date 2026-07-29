@@ -11,7 +11,7 @@ An assumption stated is a decision the reader can check. An assumption buried in
 | Assumption | Consequence if wrong |
 |---|---|
 | The case coordinate's latitude is missing a minus sign, and the intended point is `−34.04658242871865, 18.46491476666948` (Cape Town) | Everything downstream is measured on the wrong building. Evidenced three ways in [`location-verification.md`](location-verification.md): the positive reading is open sea and does not reverse-geocode; PVGIS returns land at 17 m for the negative one; imagery matches the brief's reference photographs to 0.1° of roof rotation |
-| Geocoding is out of scope — any entered location resolves to the fixed case property | Stated to the user in the chat, and both raw and resolved values are stored |
+| Geocoding is out of scope, so an address cannot be checked against the calibrated property | A location away from the case coordinate is **refused** and the case property offered instead, with nothing stored. Accepting it — which an earlier build did — labelled every figure downstream with a property that had never been measured. Acceptance is a 10 m equirectangular tolerance, which covers consumer-GPS error and every truncation of the coordinate in this repository, and rejects a neighbouring plot |
 | The imagery shows the current state of the property | Imagery date is unknown. A recent extension, a new chimney or a removed tree would not appear |
 
 ## Raster and scale

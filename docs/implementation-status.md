@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated 2026-07-28: 459 API + 38 web + 91 E2E passing; the `@live` tier run for real against PVGIS, the ECB feed and a locally pulled `qwen3.5:2b` (6 passed, 1 skipped — Google Maps, no key); MyPy strict clean; Docker stack rebuilt, verified, exercised by the E2E suite and torn down clean._
+_Last updated 2026-07-29: **1,059 API + 51 web + 116 E2E passing**; Ruff and strict MyPy clean over 54 source files; the `@live` LLM tier re-run against a locally pulled `qwen3.5:2b` (4 passed, 3 skipped). The conversational layer was rebuilt this day — see the phase 9 entry below and [`conversation.md`](conversation.md)._
 
 ---
 
@@ -21,7 +21,7 @@ _Last updated 2026-07-28: 459 API + 38 web + 91 E2E passing; the `@live` tier ru
 | 6 | Financial service | ✅ |
 | 7 | Product shell and visualisation | ✅ |
 | 8 | Proposal, PDF, share route | ✅ |
-| 9 | Ollama conversational layer | ✅ |
+| 9 | Conversational layer — router, answer service, invalidation, telemetry | ✅ |
 | 10 | Tracking bonus, hardening, packaging | ✅ |
 
 ---
@@ -393,6 +393,90 @@ platform.
 
 ---
 
+## Phase 9 rebuilt — 2026-07-29
+
+The chat was welded to the workflow state machine: at each step it tried to
+extract one slot, and anything else became a slot-validation error. A customer
+who asked *"which options do we have?"* was told *"I couldn't read a consumption
+figure."* An audit found eight defects behind that symptom, listed in
+[`conversation.md`](conversation.md#the-problem-this-replaced).
+
+The replacement separates five responsibilities — normalisation, question
+detection, extraction, routing, answering — from the state machine, which keeps
+owning valid transitions and allowed mutations and never decides how a question
+is answered. New package `app/services/conversation/` (13 modules); the state
+machine's dispatch is now an exhaustive `match` ending in `assert_never`, so a
+new action kind fails type-checking rather than producing a runtime 409.
+
+### What is new
+
+| Piece | What it does |
+|---|---|
+| `router.py` | A 0–8 priority pipeline, deterministic all the way down; the model is reached only when steps 1–6 all decline |
+| `questions.py` | Q1–Q4 detection above every extractor — which is what stops *"how large is the roof?"* selecting 9.6 kWp |
+| `numbers.py` | Number-word parsing with a colloquial-pair rule and four vagueness gates |
+| `extractors.py` | Tri-state extraction, so `-500 kWh` is refused as negative rather than mistaken for a question |
+| `knowledge.py` | 31 curated entries, **no engineering number in any of them** — every figure is a placeholder resolved from `Settings` |
+| `facts.py` + `answers.py` | A six-state answer service over an enforced source hierarchy, with an LLM paraphrase gated the same way the executive summary is |
+| `invalidation.py` | A dependency map **derived by differential experiment** and asserted for both safety and tightness |
+| `revisions.py` | Editing a finalised project forks a revision; `revision_of_project_id` is UNIQUE, so a retried change cannot produce two drafts |
+| `telemetry.py` | `rules_sufficient` versus seven named failure reasons — the whole fix for a degraded run being indistinguishable from a healthy one |
+
+### Schema change
+
+`projects.revision_of_project_id` — a nullable self-referencing foreign key with
+a **UNIQUE** constraint — plus migration `4a1f7c2b9e30`. `test_schema_parity.py`
+is unedited and passes over the **new** schema; that is evidence the column
+landed in both the ORM metadata and the migration, not evidence that nothing
+changed.
+
+### Six corrections, applied before the implementation
+
+Review of the plan caught six ways this could have shipped something plausible
+and wrong. Each has a named test, written first, red before the code existed and
+kept permanently: a 10 m rather than 200 m location tolerance; genuinely
+dependency-aware recalculation verified field by field; never answering from a
+stale analysis; forking a revision rather than letting a finalised project drift;
+a fallback chip that means something actually failed; and contraction expansion
+for routing while `raw` stays verbatim.
+
+### Nine defects found by running the new code, not by reading it
+
+| Defect | How it surfaced |
+|---|---|
+| `run-analysis` flushed its "running" marker instead of committing, holding SQLite's write lock across three PVGIS calls and an FX lookup; a writer past `busy_timeout` failed with "database is locked" as a 500 on an unrelated request | Adding a second E2E file to the degraded project — the first time two tests genuinely ran concurrently against that stack |
+| Bare `last` was in the size vocabulary, so *"about the same as we used last winter"* selected 9.6 kWp | Writing the live probe list |
+| *"whicj options that we have?"* — the message that prompted the redesign — still missed, because the options detector keyed on a well-formed `what`/`which` | The first end-to-end run of `conversation.spec.ts` |
+| The help registry was searched with the message **exactly as typed**, so every capitalised question fell through to the topic default | Live probing against a real model |
+| A recalculation changed the stored analysis but the client never re-read it, so corrected KPIs stayed stale and a reset left them on screen | `conversation-changes.spec.ts` |
+| `"what will I save?"` classified as the step default rather than finance — the topic pattern had the noun but not the verb | Probing the new answer service |
+| A `request_options` answered in full was then told *"I don't have that yet"* | The same probe |
+| A model claiming `provide_value` and naming no value produced a refusal worded as though a figure had been read | Writing the telemetry integration tests |
+| Withholding **every** computed section on a `stale` status, including the roof — which no project input can reach | `test_a_stale_project_withholds_the_affected_figures_from_answers` |
+
+### Two E2E assertions corrected, and why
+
+Both for the same underlying reason. At 6 kWp the system produces 9,502 kWh a
+year, so 1,150 and 900 kWh a month are **both** production-limited and the annual
+saving is identical for the two. The consumption-change test now uses 400 kWh,
+where the figures genuinely move; the differential dependency test takes the
+union over pairs that straddle that cap. A single pair would have declared
+savings independent of consumption, which is false the moment a household uses
+less than its roof makes.
+
+### Two behaviour changes, deliberate
+
+A location away from the case coordinate is now **blocked and offered** rather
+than silently accepted and stored. And an instruction-shaped message whose only
+number belongs to the instruction is refused, rather than having that number read
+as an answer — checked by deleting the instruction clause and asking whether an
+answer survives, so a real coordinate pasted behind an injection still works.
+
+The tests that encoded the old behaviour were rewritten with the reason recorded
+in each docstring. No test was weakened to make an implementation pass.
+
+---
+
 ## Requirement traceability matrix
 
 **Rebuilt manually, row by row, on 2026-07-27. Re-walked row by row on
@@ -411,9 +495,13 @@ by a test. ⬜ means not implemented.
 | # | Requirement | Implementation | Evidence | Status |
 |---|---|---|---|---|
 | 1 | Chat-driven flow | `services/workflow.py`, `api/v1/projects.py` | `test_workflow_api.py` · E2E `workflow.spec.ts` (9) drives chat→analysis→proposal in the browser for all three sizes | ✅ |
-| 2 | Local LLM, structured output | `integrations/ollama.py` | `test_ollama.py` (18) + `test_chat.py` (22) · **verified live against a pulled `qwen3.5:2b` on 2026-07-28**: schema-constrained output validates and reaches the state machine, and no engineering figure changes | ✅ |
+| 1a | Questions answered at **every** step without moving the workflow | `services/conversation/` | `test_chat_questions_api.py` (58): ten questions × five steps, step unchanged, no column written, analysis byte-identical · E2E `conversation.spec.ts` (9) | ✅ |
+| 1b | Corrections recalculate only their dependents | `services/analysis.py`, `conversation/invalidation.py` | `test_corrections.py` (differential map, safety + tightness) · `test_chat_change_and_reset_api.py` (12) · E2E `conversation-changes.spec.ts` (10) | ✅ |
+| 1c | A finalised proposal never drifts | `services/revisions.py`, migration `4a1f7c2b9e30` | `test_corrections_api.py` (9): the parent's proposal and link untouched, the revision finalises to a new token, a repeated change reuses the one child | ✅ |
+| 2 | Local LLM, structured output | `integrations/ollama.py`, `conversation/llm.py` | `test_ollama.py` + `test_chat.py` + `test_conversation_llm.py` · **verified live against a pulled `qwen3.5:2b`, 2026-07-28 and again 2026-07-29**: schema-constrained output validates and reaches the state machine, and no engineering figure changes | ✅ |
+| 2a | A degraded model run is distinguishable from a healthy one | `conversation/telemetry.py` | `test_chat_telemetry_api.py` (7) · E2E `degraded/llm-telemetry.spec.ts` (6) against a stack whose Ollama host does not resolve | ✅ |
 | 3 | Location input step | `services/workflow.py` | `test_workflow_api.py::test_location_resolves…` | ✅ |
-| 4 | Fixed property resolution | location resolver in workflow | `test_any_location_still_resolves_to_the_case_property` | ✅ |
+| 4 | Fixed property resolution | `conversation/extractors.py`, `services/workflow.py` | `test_corrections.py::test_only_the_calibrated_property_is_accepted` (10 m tolerance, 8 coordinates) · `test_a_location_elsewhere_is_blocked_and_the_case_property_offered` · E2E `conversation.spec.ts` | ✅ |
 | 5 | Coordinate sign verified | `CaseLocationSettings` | `test_config.py::test_case_location_keeps_both_coordinates`; `docs/location-verification.md` | ✅ |
 | 6 | 1,150 kWh consumption | consumption step | `test_consumption_is_multiplied_out_deterministically` | ✅ |
 | 7 | Exactly three system sizes | whitelist in settings + workflow | `test_exactly_three_system_sizes_are_offered` | ✅ |
@@ -451,7 +539,7 @@ by a test. ⬜ means not implemented.
 | 39 | Alembic migrations (§22) | `migrations/`, `alembic.ini` | `test_schema_parity.py` (16); `alembic current` → `1c779d205bda (head)` in the container | ✅ |
 | 40 | AI executive summary (§24) | `services/summary.py` | `test_summary.py` (21); prose with an invented number is discarded | ✅ |
 | 41 | Docker Compose, no credentials | `docker-compose.yml` | `docker compose up --build` → 2 containers, api healthy, no Ollama; **60 @p0 E2E passed against the containers**, and again after `docker compose restart`; teardown with `--profile ollama` verified to leave no container, network or volume | ✅ |
-| 42 | Required documentation set (§18) | `docs/` | All 12 present | ✅ |
+| 42 | Required documentation set (§18) | `docs/` | All 13 present, including `conversation.md` | ✅ |
 | 43 | Panel geometry proven, not eyeballed | `services/layout.py` | E2E `panel-placement.spec.ts` (8): containment and non-overlap computed from the API's own polygons with independent ray-casting/SAT; worst excursion **0.0037 px = 0.23 mm**, pure 2 dp rounding | ✅ |
 | 44 | PDF *content* validated, not just its magic bytes | `services/pdf.py` | E2E `proposal-pdf.spec.ts` (6): text extracted with `pdfjs-dist` and asserted for location, panels, production, FX rate/date/provider, both CAPEX figures, savings, payback, 20-year result and four cash-flow rows | ✅ |
 | 45 | Degraded-mode behaviour under real failure | fallback chains | E2E `degraded/fallbacks.spec.ts` (7) against a **second stack** whose PVGIS, FX and Ollama hosts cannot resolve: full proposal still completes, every figure labelled, parity never substituted | ✅ |

@@ -21,20 +21,16 @@ import httpx
 import pytest
 import respx
 
-from app.core.config import PvgisMode, get_settings
+from app.core.config import get_settings
 from app.core.errors import PvgisUnavailableError
 from app.domain.models import DataSource
 from app.integrations.pvgis import (
     CAUTIOUS_STATUS_ATTEMPTS,
-    InMemoryPvgisCache,
     PvgisClient,
-    PvgisFacetYieldRankingProvider,
     RetryClock,
-    build_cache_key,
     parse_pvcalc,
     parse_retry_after,
 )
-from app.services.roof import build_roof_model
 
 
 @dataclass
@@ -91,16 +87,8 @@ def settings():
     `side_effect=[503, 503, 200]` is the point of several tests below.
     """
     return get_settings().model_copy(
-        update={
-            "pvgis_mode": PvgisMode.LIVE,
-            "pvgis_base_url": "https://re.jrc.ec.europa.eu/api/v5_3",
-        }
+        update={"pvgis_base_url": "https://re.jrc.ec.europa.eu/api/v5_3"}
     )
-
-
-@pytest.fixture
-def cache():
-    return InMemoryPvgisCache(ttl_seconds=3600)
 
 
 # ---------------------------------------------------------------------------
@@ -109,7 +97,7 @@ def cache():
 
 
 def test_parses_a_real_captured_response(captured_payload) -> None:
-    result = parse_pvcalc(captured_payload, source=DataSource.FIXTURE)
+    result = parse_pvcalc(captured_payload, source=DataSource.REPLAY)
     assert len(result.monthly_kwh) == 12
     assert result.annual_kwh > 0
     assert result.radiation_database == "PVGIS-SARAH3"
@@ -119,12 +107,12 @@ def test_parses_a_real_captured_response(captured_payload) -> None:
 
 
 def test_monthly_values_sum_to_the_annual_total(captured_payload) -> None:
-    result = parse_pvcalc(captured_payload, source=DataSource.FIXTURE)
+    result = parse_pvcalc(captured_payload, source=DataSource.REPLAY)
     assert sum(result.monthly_kwh) == pytest.approx(result.annual_kwh, rel=0.02)
 
 
 def test_captured_north_facet_yield_is_in_a_plausible_band(captured_payload) -> None:
-    result = parse_pvcalc(captured_payload, source=DataSource.FIXTURE)
+    result = parse_pvcalc(captured_payload, source=DataSource.REPLAY)
     assert 1600 < result.specific_yield_kwh_per_kwp < 1750
 
 
@@ -165,44 +153,14 @@ def test_non_positive_production_is_rejected(captured_payload) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Cache key
-# ---------------------------------------------------------------------------
-
-
-def test_cache_key_includes_every_parameter_that_changes_the_answer() -> None:
-    base = {
-        "lat": CASE_LAT,
-        "lon": CASE_LON,
-        "peak_power_kwp": 6.0,
-        "angle_deg": 25.0,
-        "aspect_deg": -169.4,
-        "loss_percent": 14.0,
-        "technology": "crystSi",
-        "mounting": "building",
-    }
-    key = build_cache_key(**base)
-    for field, changed in [
-        ("lat", 10.0),
-        ("lon", 10.0),
-        ("peak_power_kwp", 3.6),
-        ("angle_deg", 30.0),
-        ("aspect_deg", 0.0),
-        ("loss_percent", 10.0),
-        ("technology", "CIS"),
-        ("mounting", "free"),
-    ]:
-        assert build_cache_key(**{**base, field: changed}) != key, field
-
-
-# ---------------------------------------------------------------------------
 # Live request shape
 # ---------------------------------------------------------------------------
 
 
 @respx.mock
-async def test_live_call_sends_the_documented_parameters(settings, cache, captured_payload) -> None:
+async def test_live_call_sends_the_documented_parameters(settings, captured_payload) -> None:
     route = respx.get(PVCALC_URL).mock(return_value=httpx.Response(200, json=captured_payload))
-    client = PvgisClient(settings, cache=cache, retry_clock=fake_clock()[1])
+    client = PvgisClient(settings, retry_clock=fake_clock()[1])
     await client.pvcalc(
         lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=6.0, angle_deg=25.0, aspect_deg=-169.38
     )
@@ -223,20 +181,25 @@ async def test_live_call_sends_the_documented_parameters(settings, cache, captur
 
 
 @respx.mock
-async def test_result_is_marked_live(settings, cache, captured_payload) -> None:
+async def test_result_is_marked_live(settings, captured_payload) -> None:
     respx.get(PVCALC_URL).mock(return_value=httpx.Response(200, json=captured_payload))
-    result = await PvgisClient(settings, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
+    result = await PvgisClient(settings, retry_clock=fake_clock()[1]).pvcalc(
         lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
     )
     assert result.data_source is DataSource.LIVE
 
 
 @respx.mock
-async def test_second_identical_call_is_served_from_cache(
-    settings, cache, captured_payload
-) -> None:
+async def test_every_call_reaches_the_network(settings, captured_payload) -> None:
+    """There is no cache, deliberately.
+
+    A per-request cache could never hit: the four probes are at four distinct
+    aspects and all at 1 kWp, and nothing is reused across requests. What it did
+    do was relabel a result as `cache`, which meant a snapshot could report a
+    source that was not where the number came from.
+    """
     route = respx.get(PVCALC_URL).mock(return_value=httpx.Response(200, json=captured_payload))
-    client = PvgisClient(settings, cache=cache, retry_clock=fake_clock()[1])
+    client = PvgisClient(settings, retry_clock=fake_clock()[1])
     args = {
         "lat": CASE_LAT,
         "lon": CASE_LON,
@@ -244,11 +207,12 @@ async def test_second_identical_call_is_served_from_cache(
         "angle_deg": 25.0,
         "aspect_deg": -169.38,
     }
-    await client.pvcalc(**args)
+    first = await client.pvcalc(**args)
     second = await client.pvcalc(**args)
 
-    assert route.call_count == 1
-    assert second.data_source is DataSource.CACHE
+    assert route.call_count == 2
+    assert first.data_source is DataSource.LIVE
+    assert second.data_source is DataSource.LIVE
 
 
 # ---------------------------------------------------------------------------
@@ -258,16 +222,23 @@ async def test_second_identical_call_is_served_from_cache(
 
 @respx.mock
 @pytest.mark.parametrize("status", [429, 502, 503, 504, 529])
-async def test_retryable_statuses_fall_back_to_a_labelled_fixture(settings, cache, status) -> None:
+async def test_a_retryable_status_that_never_clears_raises(settings, status) -> None:
+    """Retried to the budget, then it fails. There is nothing to fall back to.
+
+    Until this change a captured payload was substituted here and labelled - so
+    an outage produced a proposal quoting a production figure that had never
+    been observed for this roof. The label was the only thing distinguishing it,
+    and nothing downstream read the label.
+    """
     respx.get(PVCALC_URL).mock(return_value=httpx.Response(status))
-    result = await PvgisClient(settings, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
-        lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
-    )
-    assert result.data_source is DataSource.LIVE_FALLBACK_FIXTURE
+    with pytest.raises(PvgisUnavailableError):
+        await PvgisClient(settings, retry_clock=fake_clock()[1]).pvcalc(
+            lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
+        )
 
 
 @respx.mock
-async def test_retries_before_giving_up(settings, cache, captured_payload) -> None:
+async def test_retries_before_giving_up(settings, captured_payload) -> None:
     route = respx.get(PVCALC_URL).mock(
         side_effect=[
             httpx.Response(503),
@@ -275,7 +246,7 @@ async def test_retries_before_giving_up(settings, cache, captured_payload) -> No
             httpx.Response(200, json=captured_payload),
         ]
     )
-    result = await PvgisClient(settings, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
+    result = await PvgisClient(settings, retry_clock=fake_clock()[1]).pvcalc(
         lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
     )
     assert route.call_count == 3
@@ -283,86 +254,12 @@ async def test_retries_before_giving_up(settings, cache, captured_payload) -> No
 
 
 @respx.mock
-async def test_timeout_falls_back_to_fixture(settings, cache) -> None:
+async def test_a_timeout_raises(settings) -> None:
     respx.get(PVCALC_URL).mock(side_effect=httpx.ConnectTimeout("slow"))
-    result = await PvgisClient(settings, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
-        lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
-    )
-    assert result.data_source is DataSource.LIVE_FALLBACK_FIXTURE
-
-
-@respx.mock
-async def test_failure_with_fallback_disabled_raises(settings, cache) -> None:
-    respx.get(PVCALC_URL).mock(side_effect=httpx.ConnectTimeout("slow"))
-    strict = settings.model_copy(update={"pvgis_fallback_enabled": False})
     with pytest.raises(PvgisUnavailableError):
-        await PvgisClient(strict, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
-            lat=CASE_LAT,
-            lon=CASE_LON,
-            peak_power_kwp=1.0,
-            angle_deg=25.0,
-            aspect_deg=-169.38,
+        await PvgisClient(settings, retry_clock=fake_clock()[1]).pvcalc(
+            lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
-
-
-# ---------------------------------------------------------------------------
-# Fixture mode
-# ---------------------------------------------------------------------------
-
-
-async def test_fixture_mode_is_labelled_and_makes_no_request(cache) -> None:
-    fixture_settings = get_settings().model_copy(update={"pvgis_mode": PvgisMode.FIXTURE})
-    with respx.mock:
-        route = respx.get(PVCALC_URL)
-        client = PvgisClient(fixture_settings, cache=cache, retry_clock=fake_clock()[1])
-        result = await client.pvcalc(
-            lat=CASE_LAT,
-            lon=CASE_LON,
-            peak_power_kwp=1.0,
-            angle_deg=25.0,
-            aspect_deg=-169.38,
-        )
-        assert not route.called
-    assert result.data_source is DataSource.FIXTURE
-
-
-async def test_fixture_scales_linearly_with_installed_power(cache) -> None:
-    """Production scales with kWp; specific yield does not."""
-    fixture_settings = get_settings().model_copy(update={"pvgis_mode": PvgisMode.FIXTURE})
-    client = PvgisClient(fixture_settings, cache=cache, retry_clock=fake_clock()[1])
-    one = await client.pvcalc(
-        lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
-    )
-    six = await client.pvcalc(
-        lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=6.0, angle_deg=25.0, aspect_deg=-169.38
-    )
-    assert six.annual_kwh == pytest.approx(one.annual_kwh * 6.0)
-    assert six.specific_yield_kwh_per_kwp == pytest.approx(one.specific_yield_kwh_per_kwp)
-
-
-async def test_fixture_and_live_share_the_same_parser(captured_payload) -> None:
-    """Fixture mode must not become a second implementation."""
-    live = parse_pvcalc(captured_payload, source=DataSource.LIVE)
-    fixture = parse_pvcalc(captured_payload, source=DataSource.FIXTURE)
-    assert live.annual_kwh == fixture.annual_kwh
-    assert live.monthly_kwh == fixture.monthly_kwh
-
-
-# ---------------------------------------------------------------------------
-# The live provider satisfies the same port as the fixture one
-# ---------------------------------------------------------------------------
-
-
-async def test_live_provider_satisfies_the_ranking_port(cache) -> None:
-
-    fixture_settings = get_settings().model_copy(update={"pvgis_mode": PvgisMode.FIXTURE})
-    client = PvgisClient(fixture_settings, cache=cache, retry_clock=fake_clock()[1])
-    provider = PvgisFacetYieldRankingProvider(client, settings=fixture_settings)
-    assert hasattr(provider, "specific_yield_kwh_per_kwp")
-
-    roof = build_roof_model()
-    value = await provider.specific_yield_kwh_per_kwp(roof.facet("facet_n"))
-    assert 1000 < value < 2000
 
 
 # ---------------------------------------------------------------------------
@@ -402,7 +299,7 @@ async def test_live_north_outperforms_south_in_the_southern_hemisphere(settings)
 
 
 @respx.mock
-async def test_a_server_error_gets_exactly_one_extra_attempt(settings, cache) -> None:
+async def test_a_server_error_gets_exactly_one_extra_attempt(settings) -> None:
     """500 is ambiguous, so it is cautiously retried - once, not four times.
 
     Plausibly a blip; plausibly a request PVGIS mishandled. One retry buys the
@@ -410,10 +307,9 @@ async def test_a_server_error_gets_exactly_one_extra_attempt(settings, cache) ->
     failure.
     """
     route = respx.get(PVCALC_URL).mock(return_value=httpx.Response(500))
-    strict = settings.model_copy(update={"pvgis_fallback_enabled": False})
 
     with pytest.raises(PvgisUnavailableError):
-        await PvgisClient(strict, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
+        await PvgisClient(settings, retry_clock=fake_clock()[1]).pvcalc(
             lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
 
@@ -422,12 +318,11 @@ async def test_a_server_error_gets_exactly_one_extra_attempt(settings, cache) ->
 
 @respx.mock
 @pytest.mark.parametrize("status", [400, 401, 403, 404, 422])
-async def test_a_permanent_status_is_not_retried(settings, cache, status) -> None:
+async def test_a_permanent_status_is_not_retried(settings, status) -> None:
     route = respx.get(PVCALC_URL).mock(return_value=httpx.Response(status))
-    strict = settings.model_copy(update={"pvgis_fallback_enabled": False})
 
     with pytest.raises(PvgisUnavailableError):
-        await PvgisClient(strict, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
+        await PvgisClient(settings, retry_clock=fake_clock()[1]).pvcalc(
             lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
 
@@ -435,28 +330,26 @@ async def test_a_permanent_status_is_not_retried(settings, cache, status) -> Non
 
 
 @respx.mock
-async def test_the_attempt_count_is_bounded(settings, cache) -> None:
+async def test_the_attempt_count_is_bounded(settings) -> None:
     route = respx.get(PVCALC_URL).mock(return_value=httpx.Response(503))
-    strict = settings.model_copy(update={"pvgis_fallback_enabled": False})
     fake, clock = fake_clock()
 
     with pytest.raises(PvgisUnavailableError, match="attempts"):
-        await PvgisClient(strict, cache=cache, retry_clock=clock).pvcalc(
+        await PvgisClient(settings, retry_clock=clock).pvcalc(
             lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
 
-    assert route.call_count == strict.pvgis_max_attempts
-    assert sum(fake.sleeps) <= strict.pvgis_retry_budget_seconds
+    assert route.call_count == settings.pvgis_max_attempts
+    assert sum(fake.sleeps) <= settings.pvgis_retry_budget_seconds
 
 
 
 @respx.mock
-async def test_the_wall_clock_budget_binds_before_the_attempt_count(settings, cache) -> None:
+async def test_the_wall_clock_budget_binds_before_the_attempt_count(settings) -> None:
     """Two bounds, whichever comes first. Here the budget is the tight one."""
     respx.get(PVCALC_URL).mock(return_value=httpx.Response(503))
-    strict = settings.model_copy(
+    tight = settings.model_copy(
         update={
-            "pvgis_fallback_enabled": False,
             "pvgis_max_attempts": 50,
             "pvgis_retry_budget_seconds": 3.0,
             "pvgis_retry_base_delay_seconds": 1.0,
@@ -465,7 +358,7 @@ async def test_the_wall_clock_budget_binds_before_the_attempt_count(settings, ca
     fake, clock = fake_clock()
 
     with pytest.raises(PvgisUnavailableError, match="budget"):
-        await PvgisClient(strict, cache=cache, retry_clock=clock).pvcalc(
+        await PvgisClient(tight, retry_clock=clock).pvcalc(
             lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
 
@@ -473,15 +366,13 @@ async def test_the_wall_clock_budget_binds_before_the_attempt_count(settings, ca
 
 
 @respx.mock
-async def test_backoff_is_exponential(settings, cache) -> None:
+async def test_backoff_is_exponential(settings) -> None:
     respx.get(PVCALC_URL).mock(return_value=httpx.Response(503))
-    strict = settings.model_copy(
-        update={"pvgis_fallback_enabled": False, "pvgis_retry_base_delay_seconds": 0.5}
-    )
+    laddered = settings.model_copy(update={"pvgis_retry_base_delay_seconds": 0.5})
     fake, clock = fake_clock()
 
     with pytest.raises(PvgisUnavailableError):
-        await PvgisClient(strict, cache=cache, retry_clock=clock).pvcalc(
+        await PvgisClient(laddered, retry_clock=clock).pvcalc(
             lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
 
@@ -490,7 +381,7 @@ async def test_backoff_is_exponential(settings, cache) -> None:
 
 
 @respx.mock
-async def test_retry_after_is_honoured(settings, cache, captured_payload) -> None:
+async def test_retry_after_is_honoured(settings, captured_payload) -> None:
     respx.get(PVCALC_URL).mock(
         side_effect=[
             httpx.Response(429, headers={"Retry-After": "7"}),
@@ -499,7 +390,7 @@ async def test_retry_after_is_honoured(settings, cache, captured_payload) -> Non
     )
     fake, clock = fake_clock()
 
-    await PvgisClient(settings, cache=cache, retry_clock=clock).pvcalc(
+    await PvgisClient(settings, retry_clock=clock).pvcalc(
         lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
     )
 
@@ -507,16 +398,14 @@ async def test_retry_after_is_honoured(settings, cache, captured_payload) -> Non
 
 
 @respx.mock
-async def test_retry_after_is_clamped_to_the_remaining_budget(settings, cache) -> None:
+async def test_retry_after_is_clamped_to_the_remaining_budget(settings) -> None:
     """A header cannot hold a customer's request open for five minutes."""
     respx.get(PVCALC_URL).mock(return_value=httpx.Response(503, headers={"Retry-After": "300"}))
-    strict = settings.model_copy(
-        update={"pvgis_fallback_enabled": False, "pvgis_retry_budget_seconds": 10.0}
-    )
+    bounded = settings.model_copy(update={"pvgis_retry_budget_seconds": 10.0})
     fake, clock = fake_clock()
 
     with pytest.raises(PvgisUnavailableError):
-        await PvgisClient(strict, cache=cache, retry_clock=clock).pvcalc(
+        await PvgisClient(bounded, retry_clock=clock).pvcalc(
             lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
 
@@ -540,7 +429,7 @@ def test_retry_after_parses_both_documented_forms() -> None:
 
 
 @respx.mock
-async def test_a_schema_invalid_success_is_not_retried(settings, cache) -> None:
+async def test_a_schema_invalid_success_is_not_retried(settings) -> None:
     """A 200 that parses as JSON but not as PVcalc is a permanent failure.
 
     Asking again produces the same body. Only a body that will not parse as
@@ -549,10 +438,9 @@ async def test_a_schema_invalid_success_is_not_retried(settings, cache) -> None:
     route = respx.get(PVCALC_URL).mock(
         return_value=httpx.Response(200, json={"outputs": {"totals": {"fixed": {}}}})
     )
-    strict = settings.model_copy(update={"pvgis_fallback_enabled": False})
 
     with pytest.raises(PvgisUnavailableError, match="could not be parsed"):
-        await PvgisClient(strict, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
+        await PvgisClient(settings, retry_clock=fake_clock()[1]).pvcalc(
             lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
 
@@ -560,15 +448,14 @@ async def test_a_schema_invalid_success_is_not_retried(settings, cache) -> None:
 
 
 @respx.mock
-async def test_a_redirect_is_refused_not_followed(settings, cache) -> None:
+async def test_a_redirect_is_refused_not_followed(settings) -> None:
     """A 3xx moves the request off the origin whose trust was just established."""
     route = respx.get(PVCALC_URL).mock(
         return_value=httpx.Response(302, headers={"Location": "https://evil.example/PVcalc"})
     )
-    strict = settings.model_copy(update={"pvgis_fallback_enabled": False})
 
     with pytest.raises(PvgisUnavailableError, match="refusing to"):
-        await PvgisClient(strict, cache=cache, retry_clock=fake_clock()[1]).pvcalc(
+        await PvgisClient(settings, retry_clock=fake_clock()[1]).pvcalc(
             lat=CASE_LAT, lon=CASE_LON, peak_power_kwp=1.0, angle_deg=25.0, aspect_deg=-169.38
         )
 

@@ -48,11 +48,6 @@ class MapsMode(StrEnum):
     FIXTURE = "fixture"
 
 
-class PvgisMode(StrEnum):
-    LIVE = "live"
-    FIXTURE = "fixture"
-
-
 class FxMode(StrEnum):
     LIVE = "live"
     FIXTURE = "fixture"
@@ -148,6 +143,15 @@ def meters_per_source_pixel(latitude_deg: float, zoom: int, scale: int) -> float
 #: Environments where a replay-backed proposal may be issued at all. Named here
 #: rather than in the route or the health check, because the *settings* are what
 #: refuse to construct outside them.
+#: Operational margin on top of the worst-case external-call window.
+#:
+#: The probes and the FX call are not the only things between claiming a project
+#: and releasing it - there is parsing, layout, the snapshot write and whatever
+#: the host is doing at the time. Thirty seconds is generous rather than tight,
+#: because the cost of an over-long lease is a delay and the cost of a short one
+#: is two batches racing.
+ANALYSIS_LEASE_MARGIN_SECONDS = 30.0
+
 TEST_ENVIRONMENTS = frozenset({"test", "e2e", "verification"})
 
 
@@ -182,14 +186,17 @@ class Settings(BaseSettings):
     google_maps_maptype: str = "satellite"
 
     # --- pvgis -------------------------------------------------------------
-    pvgis_mode: PvgisMode = PvgisMode.LIVE
-    pvgis_fallback_enabled: bool = True
+    #: There is no mode. PVGIS is always a real HTTP call to this URL.
+    #:
+    #: Tests point it at a local replay server, which is what keeps the suites
+    #: offline without the *application* having an offline path. Only the
+    #: canonical origin at the expected API version produces a `live`
+    #: observation; anything else is `replay` and is not proposal-grade.
     pvgis_base_url: str = "https://re.jrc.ec.europa.eu/api/v5_3"
     pvgis_system_loss_percent: float = 14.0
     pvgis_technology: str = "crystSi"
     pvgis_mounting_place: str = "building"
     pvgis_timeout_seconds: float = 15.0
-    pvgis_cache_ttl_hours: int = 168
 
     #: How hard a single facet probe tries before the whole analysis fails.
     #:
@@ -212,6 +219,13 @@ class Settings(BaseSettings):
     #: exists only because the stub-backed suites still have to exercise
     #: finalisation end to end.
     allow_replay_proposals: bool = False
+
+    #: How long one analysis batch may hold its claim on a project.
+    #:
+    #: Validated below against the worst case it protects. A lease shorter than
+    #: the work is worse than no lease: it hands the project to a second process
+    #: while the first is still running and still intending to write.
+    analysis_lease_seconds: float = 120.0
 
     # --- fx ----------------------------------------------------------------
     fx_mode: FxMode = FxMode.LIVE
@@ -304,6 +318,28 @@ class Settings(BaseSettings):
         if len(parts) != 2 or not all(p.isdigit() for p in parts):
             raise ValueError("GOOGLE_MAPS_SIZE must look like 640x640")
         return v
+
+    @model_validator(mode="after")
+    def _the_analysis_lease_outlasts_the_work_it_protects(self) -> Settings:
+        """A lease shorter than the batch it guards is worse than none at all.
+
+        It would expire while the holder is still probing, hand the project to
+        a second batch, and leave the first about to write a snapshot it no
+        longer owns. The fencing token catches that, but only after two batches
+        have already done the same work - so the lease is sized to cover the
+        worst case up front.
+        """
+        worst_case = self.pvgis_retry_budget_seconds + self.fx_timeout_seconds
+        required = worst_case + ANALYSIS_LEASE_MARGIN_SECONDS
+        if self.analysis_lease_seconds < required:
+            raise ValueError(
+                f"ANALYSIS_LEASE_SECONDS={self.analysis_lease_seconds:g} is shorter than the "
+                f"work it protects: a PVGIS retry budget of {self.pvgis_retry_budget_seconds:g}s "
+                f"plus an FX timeout of {self.fx_timeout_seconds:g}s plus "
+                f"{ANALYSIS_LEASE_MARGIN_SECONDS:g}s of operational margin needs at least "
+                f"{required:g}s."
+            )
+        return self
 
     @model_validator(mode="after")
     def _replay_proposals_are_confined_to_test_environments(self) -> Settings:

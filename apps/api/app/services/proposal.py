@@ -23,6 +23,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
 from app.core.errors import NotFoundError, ProposalIncompleteError
+from app.domain.models import DataSource
+from app.integrations.pvgis import classify_endpoint
 from app.models.tables import Project, Proposal, ProposalView
 from app.services.conversation.invalidation import detect_staleness
 
@@ -53,7 +55,41 @@ def _require(snapshot: dict[str, Any], *path: str) -> Any:
     return node
 
 
-def validate_ready(project: Project) -> dict[str, Any]:
+def _require_trusted_provenance(energy: dict[str, Any], settings: Settings) -> None:
+    """A proposal states a live observation, or it is not issued.
+
+    Two ways this refuses. A snapshot from before PVGIS became mandatory has no
+    `energy.pvgis` block at all - absent provenance is untrusted provenance, not
+    an exemption, so such a project needs a fresh analysis before it can be
+    finalised. (Proposals *already* issued are unaffected: they render from
+    their own frozen snapshot and never come back through here.)
+
+    And a snapshot produced against a replay endpoint says so. Labelling it is
+    not enough - the label would sit in a document that reads as a live
+    observation to everyone but its author - so the document is refused. The
+    only escape is `ALLOW_REPLAY_PROPOSALS`, which the settings themselves
+    refuse outside a test environment.
+    """
+    block = energy.get("pvgis")
+    if not isinstance(block, dict) or not block.get("probes"):
+        raise ProposalIncompleteError(
+            "This analysis predates live PVGIS provenance, so its production figures "
+            "cannot be attributed to a retrieval. Re-run the analysis before finalising."
+        )
+
+    if settings.allow_replay_proposals:
+        return
+
+    trust = classify_endpoint(str(block.get("endpoint") or ""))
+    if str(block.get("source")) != DataSource.LIVE.value or not trust.is_trusted:
+        raise ProposalIncompleteError(
+            "These production figures came from a replayed capture, not a live PVGIS "
+            f"retrieval ({trust.reason or 'endpoint not trusted'}). A proposal must state "
+            "a live observation."
+        )
+
+
+def validate_ready(project: Project, settings: Settings | None = None) -> dict[str, Any]:
     """Refuse to treat a half-finished analysis as final.
 
     Extracted so the route can check readiness *before* doing anything else -
@@ -79,6 +115,16 @@ def validate_ready(project: Project) -> dict[str, Any]:
             "The analysis no longer matches this project's inputs and could not be "
             "recalculated. Re-run the analysis before finalising."
         )
+    if project.analysis_status == "failed":
+        # Defence in depth, per this module's own policy: a failed analysis has
+        # no snapshot, so the guard above already refused. It is stated anyway
+        # because the two conditions are independent, and the day they diverge
+        # is the day this matters.
+        reason = (project.analysis_error_json or {}).get("message")
+        raise ProposalIncompleteError(
+            f"The last analysis failed and produced no figures{f': {reason}' if reason else ''}. "
+            "Re-run the analysis before finalising."
+        )
 
     staleness = detect_staleness(
         snapshot=snapshot,
@@ -98,6 +144,9 @@ def validate_ready(project: Project) -> dict[str, Any]:
 
     if not energy.get("facets"):
         raise ProposalIncompleteError("The analysis has no facet-level energy results.")
+
+    _require_trusted_provenance(energy, settings or get_settings())
+
     if len(financial.get("cashFlow", [])) != 21:
         raise ProposalIncompleteError("The analysis has an incomplete cash flow.")
     return snapshot

@@ -46,7 +46,6 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
         "APP_ENV",
         "DATABASE_URL",
         "MAPS_MODE",
-        "PVGIS_MODE",
         "PVGIS_BASE_URL",
         "ALLOW_REPLAY_PROPOSALS",
         "FX_MODE",
@@ -60,13 +59,12 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
             "APP_ENV": "test",
             "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
             "MAPS_MODE": "fixture",
-            # Set explicitly rather than left to the field default, because a
-            # developer's own `.env` may say `fixture` - and if it does, the
-            # whole suite silently goes back to reading captures off disk while
-            # still passing. That happened once; `test_the_suite_reaches_the
-            # _stub` below is what makes it impossible to miss again. The
-            # setting disappears entirely once fixture mode is deleted.
-            "PVGIS_MODE": "live",
+            # The one seam. There is no PVGIS mode any more: the application
+            # always makes a real HTTP call, and this points it at a local
+            # replay server rather than at Ispra. Which is why
+            # `test_pvgis_is_a_real_call.py` watches the transport - the
+            # figures are identical either way, so nothing else would notice
+            # if the call stopped happening.
             "PVGIS_BASE_URL": f"{stub_url}/api/v5_3",
             # The stub is not the canonical PVGIS origin, so what it produces
             # is labelled `replay` and is not proposal-grade. Permitted here,

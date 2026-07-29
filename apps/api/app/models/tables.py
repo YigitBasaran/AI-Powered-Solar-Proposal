@@ -49,13 +49,39 @@ class Project(Base):
     monthly_consumption_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     selected_system_size_kwp: Mapped[float | None] = mapped_column(Float, nullable=True)
 
-    #: "pending" | "running" | "complete" | "recalculating" | "stale".
+    #: "pending" | "running" | "complete" | "recalculating" | "stale" | "failed".
     #:
-    #: The last two exist so a snapshot can be known not to describe the
-    #: project's current inputs. Without them a changed value silently leaves
-    #: correct-looking figures in place that describe something else.
+    #: `stale` and `recalculating` exist so a snapshot can be known not to
+    #: describe the project's current inputs. Without them a changed value
+    #: silently leaves correct-looking figures in place that describe something
+    #: else.
+    #:
+    #: `failed` is different in kind: there is no usable analysis *at all*.
+    #: `stale` still means "the previous figures are here"; `failed` means the
+    #: first analysis never produced any, so `analysis_json` is null and there
+    #: is nothing to show, reuse or finalise.
     analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     analysis_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    #: Why the last analysis failed - a structured `{code, message, details}`.
+    #:
+    #: Not inside `analysis_json`, because `validate_ready` and the whole read
+    #: path key off that column's *presence*. A failure reason stored there
+    #: would read as a usable analysis.
+    analysis_error_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    #: The claim on this project's analysis: who holds it, and until when.
+    #:
+    #: Deliberately *not* `updated_at`. Any write to the row bumps that - every
+    #: chat turn does - so it would silently extend the lease of an analysis
+    #: that had already died, and it carries no identity, so it could not fence
+    #: anything. `analysis_run_id` is that identity: every terminal write
+    #: carries it in its WHERE clause, so a run whose lease expired while a
+    #: newer run took over cannot clobber the fresher result.
+    analysis_run_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    analysis_lease_until: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     #: The project this one is a revision of.
     #:

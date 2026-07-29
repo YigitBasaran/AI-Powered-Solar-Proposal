@@ -1,7 +1,7 @@
 """The suite must reach the replay stub, not read captures off disk.
 
 This file exists because the alternative failed silently. When `conftest.py`
-stopped setting `PVGIS_MODE` and left it to the field default, a developer's own
+stopped naming the PVGIS setting explicitly and left it to a default, a developer's own
 `.env` supplied `fixture` instead - and the entire suite went on passing while
 making **zero** HTTP requests. Every assertion still held, because the numbers
 are the same either way; only the transport was different, and nothing looked at
@@ -31,7 +31,7 @@ def test_the_suite_reaches_the_stub(client, stub_requests) -> None:
 
     assert stub_requests, (
         "an analysis made no HTTP request at all - the application is reading "
-        "captures off disk instead of calling PVGIS. Check PVGIS_MODE and "
+        "captures off disk instead of calling PVGIS. Check PVGIS_BASE_URL and "
         "PVGIS_BASE_URL in the test environment."
     )
 

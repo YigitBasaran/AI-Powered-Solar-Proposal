@@ -3,7 +3,7 @@
 These two providers used to live in `app/services/yield_ranking.py`. The
 fixture one interpolated specific yield between captured aspects for *any*
 aspect at all - a synthetic estimator sitting in the runtime, selected whenever
-`PVGIS_MODE` was not live. It is exactly the kind of thing "no synthetic
+PVGIS was not reachable. It is exactly the kind of thing "no synthetic
 fallback for production estimates" is about, and it was easy to miss because it
 was not in `pvgis.py`.
 

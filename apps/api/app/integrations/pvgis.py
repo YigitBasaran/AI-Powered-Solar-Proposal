@@ -26,13 +26,12 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import httpx
 
-from app.core.config import PvgisMode, Settings, get_settings
+from app.core.config import Settings, get_settings
 from app.core.errors import PvgisUnavailableError
 from app.domain.models import DataSource, RoofFacet
 
@@ -233,67 +232,6 @@ class PvgisProbeSet:
         return {p.result.radiation_database for p in self.probes.values()}
 
 
-@dataclass
-class _CacheEntry:
-    result: PvgisResult
-    stored_at: float
-
-
-@dataclass
-class InMemoryPvgisCache:
-    """Per-request cache.
-
-    Kept while fixture mode still exists. Once every probe is a 1 kWp call at a
-    distinct aspect, no two keys within a request can collide and there is no
-    cross-request reuse, so this becomes dead weight.
-    """
-
-    ttl_seconds: float
-    _entries: dict[str, _CacheEntry] = field(default_factory=dict)
-
-    def get(self, key: str) -> PvgisResult | None:
-        entry = self._entries.get(key)
-        if entry is None:
-            return None
-        if time.monotonic() - entry.stored_at > self.ttl_seconds:
-            del self._entries[key]
-            return None
-        return entry.result
-
-    def put(self, key: str, result: PvgisResult) -> None:
-        self._entries[key] = _CacheEntry(result, time.monotonic())
-
-    def clear(self) -> None:
-        self._entries.clear()
-
-
-def build_cache_key(
-    *,
-    lat: float,
-    lon: float,
-    peak_power_kwp: float,
-    angle_deg: float,
-    aspect_deg: float,
-    loss_percent: float,
-    technology: str,
-    mounting: str,
-    version: str = "v5_3",
-) -> str:
-    return "|".join(
-        [
-            version,
-            f"{lat:.6f}",
-            f"{lon:.6f}",
-            f"{peak_power_kwp:.4f}",
-            f"{angle_deg:.2f}",
-            f"{aspect_deg:.2f}",
-            f"{loss_percent:.2f}",
-            technology,
-            mounting,
-        ]
-    )
-
-
 # ---------------------------------------------------------------------------
 # Parsing
 # ---------------------------------------------------------------------------
@@ -400,68 +338,13 @@ class PvgisClient:
         self,
         settings: Settings | None = None,
         *,
-        cache: InMemoryPvgisCache | None = None,
         client: httpx.AsyncClient | None = None,
         retry_clock: RetryClock | None = None,
     ) -> None:
         self._settings = settings or get_settings()
         self._clock = retry_clock or DEFAULT_RETRY_CLOCK
-        self._cache = cache or InMemoryPvgisCache(
-            ttl_seconds=self._settings.pvgis_cache_ttl_hours * 3600
-        )
         self._client = client
         self._semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
-
-    # -- fixtures ---------------------------------------------------------
-
-    def _fixture_dir(self) -> Path:
-        return self._settings.fixtures_dir / "pvgis"
-
-    def _load_fixture(self, aspect_deg: float) -> dict[str, Any] | None:
-        """Nearest captured PVcalc payload by aspect."""
-        directory = self._fixture_dir()
-        if not directory.is_dir():
-            return None
-        best: tuple[float, Path] | None = None
-        for path in directory.glob("pvcalc*.json"):
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-                captured = float(payload["inputs"]["mounting_system"]["fixed"]["azimuth"]["value"])
-            except (json.JSONDecodeError, KeyError, TypeError, ValueError):
-                continue
-            delta = abs(((captured - aspect_deg + 180.0) % 360.0) - 180.0)
-            if best is None or delta < best[0]:
-                best = (delta, path)
-        if best is None:
-            return None
-        loaded: dict[str, Any] = json.loads(best[1].read_text(encoding="utf-8"))
-        return loaded
-
-    def _from_fixture(
-        self, *, aspect_deg: float, peak_power_kwp: float, source: DataSource
-    ) -> PvgisResult:
-        payload = self._load_fixture(aspect_deg)
-        if payload is None:
-            raise PvgisUnavailableError(
-                "No PVGIS fixture available. Run scripts/fetch_pvgis_fixtures.py, "
-                "or set PVGIS_MODE=live."
-            )
-        base = parse_pvcalc(payload, source=source)
-        # Production scales linearly with installed power, so a 1 kWp capture
-        # serves any requested size without pretending to be a fresh call.
-        factor = peak_power_kwp / base.peak_power_kwp
-        return PvgisResult(
-            annual_kwh=base.annual_kwh * factor,
-            monthly_kwh=[m * factor for m in base.monthly_kwh],
-            specific_yield_kwh_per_kwp=base.specific_yield_kwh_per_kwp,
-            monthly_specific_yield_kwh_per_kwp=base.monthly_specific_yield_kwh_per_kwp,
-            peak_power_kwp=peak_power_kwp,
-            aspect_deg=base.aspect_deg,
-            angle_deg=base.angle_deg,
-            radiation_database=base.radiation_database,
-            data_source=source,
-            losses_percent=base.losses_percent,
-        )
 
     # -- live -------------------------------------------------------------
 
@@ -576,30 +459,6 @@ class PvgisClient:
         aspect_deg: float,
     ) -> PvgisResult:
         s = self._settings
-        key = build_cache_key(
-            lat=lat,
-            lon=lon,
-            peak_power_kwp=peak_power_kwp,
-            angle_deg=angle_deg,
-            aspect_deg=aspect_deg,
-            loss_percent=s.pvgis_system_loss_percent,
-            technology=s.pvgis_technology,
-            mounting=s.pvgis_mounting_place,
-        )
-        cached = self._cache.get(key)
-        if cached is not None:
-            logger.debug("PVGIS cache hit for %s", key)
-            return PvgisResult(**{**cached.__dict__, "data_source": DataSource.CACHE})
-
-        if s.pvgis_mode is PvgisMode.FIXTURE:
-            result = self._from_fixture(
-                aspect_deg=aspect_deg,
-                peak_power_kwp=peak_power_kwp,
-                source=DataSource.FIXTURE,
-            )
-            self._cache.put(key, result)
-            return result
-
         params = {
             "lat": lat,
             "lon": lon,
@@ -613,32 +472,29 @@ class PvgisClient:
         }
 
         started = time.monotonic()
-        try:
-            async with self._semaphore:
-                payload = await self._fetch_live(params)
-            trust = classify_endpoint(s.pvgis_base_url)
-            result = parse_pvcalc(payload, source=trust.source, request_params=params)
-        except PvgisUnavailableError:
-            if not s.pvgis_fallback_enabled:
-                raise
-            logger.warning("PVGIS live failed; falling back to fixture (labelled)")
-            result = self._from_fixture(
-                aspect_deg=aspect_deg,
-                peak_power_kwp=peak_power_kwp,
-                source=DataSource.LIVE_FALLBACK_FIXTURE,
-            )
-            self._cache.put(key, result)
-            return result
+        # No `except` here, deliberately. A failed retrieval raises, and the
+        # analysis fails with it. There is no captured payload to fall back to,
+        # because a proposal built on one would state a production figure that
+        # was never observed for this roof.
+        async with self._semaphore:
+            payload = await self._fetch_live(params)
+
+        # The observation is classified by where it actually came from, not by
+        # what was configured: `_fetch_live` re-checks the final response URL,
+        # so a redirect cannot move a request off the canonical origin and keep
+        # the `live` label.
+        trust = classify_endpoint(s.pvgis_base_url)
+        result = parse_pvcalc(payload, source=trust.source, request_params=params)
 
         logger.info(
-            "PVGIS live | aspect=%.1f peak=%.2f kWp -> %.0f kWh (%.0f ms, %s)",
+            "PVGIS %s | aspect=%.1f peak=%.2f kWp -> %.0f kWh (%.0f ms, %s)",
+            trust.source.value,
             aspect_deg,
             peak_power_kwp,
             result.annual_kwh,
             (time.monotonic() - started) * 1000,
             result.radiation_database,
         )
-        self._cache.put(key, result)
         return result
 
 

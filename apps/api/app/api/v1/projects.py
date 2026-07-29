@@ -7,6 +7,7 @@ workflow rules live in `services/workflow.py` and all analysis in
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -16,7 +17,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
-from app.core.errors import InvalidStepTransitionError, NotFoundError
+from app.core.errors import (
+    AnalysisInProgressError,
+    AnalysisSupersededError,
+    AppError,
+    InvalidStepTransitionError,
+    NotFoundError,
+)
 from app.db.session import commit_before_response, get_session
 from app.domain.models import ProjectStep
 from app.integrations.exchange_rates import ExchangeRateService, SqlExchangeRateCache
@@ -27,6 +34,12 @@ from app.models.tables import ChatMessage, Project, Proposal
 # route always reaches the current definition rather than one bound at import.
 from app.services import analysis as analysis_service
 from app.services.analysis import run_analysis, serialise_analysis
+from app.services.analysis_claim import (
+    claim_analysis,
+    complete_analysis,
+    fail_analysis,
+    release_stale_claim,
+)
 from app.services.conversation.actions import ActionKind
 from app.services.conversation.answers import answer_question
 from app.services.conversation.router import route_message
@@ -106,6 +119,12 @@ class ProjectResponse(BaseModel):
     selectedSystemSizeKwp: float | None
     requestedPanelCount: int | None
     analysisStatus: str
+    #: `{code, message, details}` when the last analysis failed, else null.
+    #:
+    #: Carried on the project rather than inside `analysis`, because a failed
+    #: analysis has no `analysis` to carry it - which is the whole distinction
+    #: between `failed` and `stale`.
+    analysisError: dict[str, Any] | None = None
     progress: list[dict[str, Any]]
     messages: list[dict[str, Any]]
     analysis: dict[str, Any] | None
@@ -184,13 +203,22 @@ async def _recalculate(
         return None
 
     snapshot = dict(project.analysis_json)
-    project.analysis_status = "recalculating"
-    # Committed before the slow part, for the same reason `run-analysis`
-    # commits its "running" marker: a size change re-runs PVGIS, and holding
-    # SQLite's write lock across that queues every other writer behind it. It
-    # also means a process that dies mid-recompute leaves the project honestly
-    # marked as recalculating rather than as complete over the old figures.
-    await commit_before_response(session)
+    # The same claim as `run-analysis`, because a size change that cannot reuse
+    # its stored probes is also an analysis batch. Committed before the slow
+    # part for the same reasons: it makes the claim visible, and it releases
+    # SQLite's write lock. A process that dies mid-recompute leaves the project
+    # honestly marked as recalculating until its lease expires.
+    try:
+        claim = await claim_analysis(
+            session, project, status="recalculating", settings=settings
+        )
+    except AnalysisInProgressError:
+        # A chat turn is not worth failing over a busy analysis; the change is
+        # already stored, and the snapshot is correctly left describing the
+        # older inputs until something recomputes it.
+        logger.info("skipping recalculation for %s: an analysis holds the claim", project.id)
+        project.analysis_status = "stale"
+        return None
 
     try:
         if outcome.changed_inputs == frozenset({"monthly_consumption_kwh"}):
@@ -211,12 +239,24 @@ async def _recalculate(
         # the status at "complete" would present the old figures as though they
         # described the new ones, which is the failure this whole layer exists
         # to prevent.
-        project.analysis_status = "stale"
+        #
+        # `stale`, not `failed`: the previous figures are still here. `failed`
+        # is reserved for having no usable analysis at all.
         logger.exception("recalculation failed for project %s", project.id)
+        with contextlib.suppress(AnalysisSupersededError):
+            await release_stale_claim(session, claim, status="stale")
+        await session.refresh(project)
         return None
 
-    project.analysis_json = updated
-    project.analysis_status = "complete"
+    try:
+        await complete_analysis(session, claim, snapshot=updated)
+    except AnalysisSupersededError:
+        # A newer batch owns the project. Its result stands; this one is
+        # discarded rather than written over the top of it.
+        logger.info("recalculation for %s was superseded", project.id)
+        await session.refresh(project)
+        return None
+    await session.refresh(project)
     return sorted(outcome.changed_inputs)
 
 
@@ -253,6 +293,7 @@ def _to_response(
         selectedSystemSizeKwp=size,
         requestedPanelCount=settings.required_panel_count(size) if size else None,
         analysisStatus=project.analysis_status,
+        analysisError=project.analysis_error_json,
         progress=progress(step),
         messages=[
             {
@@ -441,31 +482,42 @@ async def run_project_analysis(
             "The project has no consumption or system size yet."
         )
 
-    project.analysis_status = "running"
-    # Commit, not flush. A flush opens SQLite's write transaction and holds it
-    # for the whole of what follows - three PVGIS calls and an FX lookup, which
-    # on a degraded or slow network is several seconds. Every other writer then
-    # queues behind it, and one that exceeds `busy_timeout` fails with
-    # "database is locked", surfacing as a 500 on an unrelated request. Found
-    # by two E2E files running concurrently against the degraded stack.
-    #
-    # Committing here also makes "running" *visible* to a concurrent reader,
-    # which is what the status is for.
-    await commit_before_response(session)
+    # Refused here if a batch already holds the claim, before any PVGIS call is
+    # made - two concurrent requests must cost four probes, not eight. The claim
+    # is committed inside, which also releases SQLite's write lock before the
+    # slow part: holding it across four PVGIS calls and an FX lookup queues
+    # every other writer behind it, and one that exceeds `busy_timeout` fails
+    # with "database is locked" on an unrelated request.
+    claim = await claim_analysis(session, project, status="running", settings=settings)
 
-    result = await run_analysis(
-        monthly_consumption_kwh=project.monthly_consumption_kwh,
-        system_size_kwp=project.selected_system_size_kwp,
-        settings=settings,
-        fx_service=ExchangeRateService(settings, cache=SqlExchangeRateCache(session)),
-    )
+    try:
+        result = await run_analysis(
+            monthly_consumption_kwh=project.monthly_consumption_kwh,
+            system_size_kwp=project.selected_system_size_kwp,
+            settings=settings,
+            fx_service=ExchangeRateService(settings, cache=SqlExchangeRateCache(session)),
+        )
+    except AppError as error:
+        # Without this the project would sit at "running" for ever, which
+        # `validate_ready` reads as "still being recalculated" - so a permanent
+        # failure would present as a temporary one. Record why, then re-raise so
+        # the structured 502 still reaches the client. Never a 200 with a
+        # degraded body: that is the fixture fallback in a new costume.
+        logger.warning("analysis failed for project %s: %s", project.id, error.message)
+        await fail_analysis(
+            session, claim, code=error.code, message=error.message, details=error.details
+        )
+        raise
+    except Exception as error:  # pragma: no cover - defensive
+        logger.exception("analysis failed for project %s", project.id)
+        await fail_analysis(session, claim, code="ANALYSIS_FAILED", message=str(error))
+        raise
 
     snapshot = serialise_analysis(result)
-    project.analysis_json = snapshot
-    project.analysis_status = "complete"
-    project.current_step = ProjectStep.PROPOSAL.value
-    await session.flush()
-    await commit_before_response(session)
+    await complete_analysis(
+        session, claim, snapshot=snapshot, current_step=ProjectStep.PROPOSAL.value
+    )
+    await session.refresh(project)
 
     return {
         "projectId": project.id,

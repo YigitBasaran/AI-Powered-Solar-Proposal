@@ -83,6 +83,32 @@ class PvgisUnavailableError(AppError):
     message = "Solar production data could not be retrieved from PVGIS."
 
 
+class AnalysisInProgressError(AppError):
+    """A batch already holds this project's analysis claim.
+
+    409 rather than 502: nothing is broken, the request simply arrived while an
+    equivalent one was in flight. The caller should wait rather than retry
+    immediately, and no PVGIS call is issued.
+    """
+
+    code = "ANALYSIS_IN_PROGRESS"
+    status_code = 409
+    message = "An analysis is already running for this project."
+
+
+class AnalysisSupersededError(AppError):
+    """This run's lease expired and a newer run owns the project.
+
+    The result is discarded rather than written. Overwriting would replace a
+    fresher analysis with a staler one - and silently, because both are
+    well-formed snapshots that differ only in which inputs they describe.
+    """
+
+    code = "ANALYSIS_SUPERSEDED"
+    status_code = 409
+    message = "This analysis was superseded by a newer one."
+
+
 class PvgisInconsistentProvenanceError(AppError):
     """The facet probes did not all come from the same radiation database.
 

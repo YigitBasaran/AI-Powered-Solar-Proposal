@@ -18,7 +18,7 @@ import httpx
 import pytest
 import respx
 
-from app.core.config import PvgisMode, get_settings
+from app.core.config import get_settings
 from app.core.errors import PvgisUnavailableError
 from app.integrations.pvgis import PvgisClient, RetryClock, probe_facets
 from app.services.roof import build_roof_model
@@ -52,9 +52,7 @@ def settings():
     # the canonical URL and no fixture path to fall back into.
     return get_settings().model_copy(
         update={
-            "pvgis_mode": PvgisMode.LIVE,
             "pvgis_base_url": "https://re.jrc.ec.europa.eu/api/v5_3",
-            "pvgis_fallback_enabled": False,
         }
     )
 

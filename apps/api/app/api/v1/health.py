@@ -96,6 +96,10 @@ def _pvgis_status(settings: Settings) -> dict[str, Any]:
         "timeoutSeconds": settings.pvgis_timeout_seconds,
         "maxAttempts": settings.pvgis_max_attempts,
         "retryBudgetSeconds": settings.pvgis_retry_budget_seconds,
+        # Reported because it is the single thing standing between a replayed
+        # capture and an issued proposal. An operator should be able to see it
+        # without reading the environment.
+        "allowReplayProposals": settings.allow_replay_proposals,
         "ready": not reasons,
         "detail": "; ".join(reasons) or None,
     }

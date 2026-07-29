@@ -268,7 +268,14 @@ def test_an_existing_database_is_upgraded_in_place(tmp_path, monkeypatch) -> Non
         before = {c["name"] for c in inspect(engine).get_columns("projects")}
     finally:
         engine.dispose()
-    assert "revision_of_project_id" not in before, "the fixture is not actually behind head"
+
+    # Derived, not named. Hard-coding the column the newest migration happens to
+    # add makes this test need an edit every time one lands - and an edit to a
+    # test is exactly how a test stops asserting what it was written for. This
+    # asks the schema instead, and covers *every* column head adds rather than
+    # one chosen by hand.
+    expected = _columns_added_by_head(tmp_path) - before
+    assert expected, "the fixture is not actually behind head"
 
     # Start up against it, exactly as the container does.
     _upgrade_through_the_app(path, monkeypatch)
@@ -282,8 +289,21 @@ def test_an_existing_database_is_upgraded_in_place(tmp_path, monkeypatch) -> Non
     finally:
         engine.dispose()
 
-    assert "revision_of_project_id" in after, "start-up did not apply the pending migration"
+    missing = expected - after
+    assert not missing, f"start-up did not apply the pending migration: {sorted(missing)} absent"
     assert version != previous, "the recorded version is still the old one"
+
+
+def _columns_added_by_head(tmp_path: Path) -> set[str]:
+    """Every `projects` column that exists at head, from a throwaway database."""
+    path = tmp_path / "head-reference.db"
+    url = f"sqlite:///{path.as_posix()}"
+    command.upgrade(_alembic_config(url), "head")
+    engine = create_engine(url)
+    try:
+        return {c["name"] for c in inspect(engine).get_columns("projects")}
+    finally:
+        engine.dispose()
 
 
 def _previous_revision() -> str:

@@ -104,8 +104,14 @@ def test_a_selective_recompute_matches_a_fresh_analysis_of_the_same_inputs(clien
 
     a = _project(client, edited)["analysis"]
     b = _project(client, fresh)["analysis"]
-    for section in ("roof", "layout", "energy", "financial"):
-        assert json.dumps(a[section], sort_keys=True) == json.dumps(b[section], sort_keys=True)
+
+    # Compared with the volatile list applied, not by raw JSON: the two
+    # snapshots record genuinely different retrieval instants for their PVGIS
+    # probes, and that difference is the one thing that is allowed to differ.
+    from app.services.conversation.invalidation import differing_paths
+
+    moved = differing_paths(a, b)
+    assert moved == set(), f"a selective recompute diverged from a fresh analysis: {sorted(moved)}"
 
 
 def test_a_stale_project_cannot_be_finalised(client, monkeypatch) -> None:

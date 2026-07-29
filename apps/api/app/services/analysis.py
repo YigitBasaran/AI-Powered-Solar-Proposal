@@ -49,6 +49,10 @@ class AnalysisResult:
     exchange_rate: ExchangeRate
     capex: CapexConversion
     financial: FinancialResult
+    #: The observations every figure above derives from. Carried so the
+    #: snapshot can record where they came from, and so a later size change can
+    #: reuse them instead of asking PVGIS the same four questions again.
+    probes: PvgisProbeSet | None = None
 
     @property
     def capacity_warning(self) -> str | None:
@@ -190,7 +194,63 @@ async def run_analysis(
         exchange_rate=rate,
         capex=capex,
         financial=financial,
+        probes=probes,
     )
+
+
+def serialise_provenance(probes: PvgisProbeSet | None) -> dict[str, Any] | None:
+    """Where every production figure in this snapshot came from.
+
+    Nested inside `energy` rather than added as a new top-level section, so
+    everything that already takes `energy` whole - the PDF, the share payload,
+    `recompute_for_consumption`, `validate_ready` - carries it along without
+    knowing it exists. A snapshot issued before this block existed simply has
+    `null` here, and still renders.
+
+    Two angle conventions are named rather than one called "aspect": PVGIS
+    counts from south, the compass from north, and a figure recorded under the
+    wrong one is silently a different roof plane. `pvgisAspectDeg` is the
+    request and reuse-equality key, so it is kept at full precision; the
+    two-decimal human-facing copies live in `energy.facets[]`.
+
+    The two timestamps are also distinguished. `batchCompletedAt` is when the
+    four-probe batch finished; each probe carries its own `retrievedAt`.
+    """
+    if probes is None:
+        return None
+
+    return {
+        "source": probes.data_source.value,
+        "endpoint": probes.endpoint,
+        "origin": probes.origin,
+        "apiVersion": probes.api_version,
+        "batchCompletedAt": probes.batch_completed_at.isoformat(),
+        "radiationDatabase": single_radiation_database(probes),
+        "request": {
+            "lat": probes.request_params.get("lat"),
+            "lon": probes.request_params.get("lon"),
+            "peakPowerKwp": probes.request_params.get("peakpower"),
+            "lossPercent": probes.request_params.get("loss"),
+            "pvTechChoice": probes.request_params.get("pvtechchoice"),
+            "mountingPlace": probes.request_params.get("mountingplace"),
+        },
+        "probes": [
+            {
+                "facetId": probe.facet_id,
+                "compassAzimuthDeg": round(probe.compass_azimuth_deg, 6),
+                "pvgisAspectDeg": round(probe.pvgis_aspect_deg, 6),
+                "angleDeg": round(probe.angle_deg, 6),
+                "specificYieldKwhPerKwp": round(probe.result.specific_yield_kwh_per_kwp, 4),
+                "monthlySpecificYieldKwhPerKwp": [
+                    round(v, 4) for v in probe.result.monthly_specific_yield_kwh_per_kwp
+                ],
+                "radiationDatabase": probe.result.radiation_database,
+                "retrievedAt": probe.result.retrieved_at.isoformat(),
+                "losses": probe.result.losses_percent,
+            }
+            for probe in probes.probes.values()
+        ],
+    }
 
 
 def serialise_analysis(result: AnalysisResult) -> dict[str, object]:
@@ -249,6 +309,7 @@ def serialise_analysis(result: AnalysisResult) -> dict[str, object]:
             "installedPowerKwp": result.yield_result.installed_power_kwp,
             "dataSource": result.yield_result.data_source.value,
             "radiationDatabase": result.yield_result.radiation_database,
+            "pvgis": serialise_provenance(result.probes),
             "facets": [
                 {
                     "facetId": f.facet_id,
@@ -437,6 +498,7 @@ async def recompute_for_system_size(
             exchange_rate=rate,
             capex=capex,
             financial=financial,
+            probes=probes,
         )
     )
     # The rate block is carried across verbatim rather than re-serialised, so

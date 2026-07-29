@@ -175,6 +175,27 @@ export type Analysis = {
     }[];
   };
   energy: {
+    /** Absent on proposals issued before PVGIS became a mandatory live call. */
+    pvgis?: {
+      source: string;
+      endpoint: string;
+      origin: string;
+      apiVersion: string | null;
+      batchCompletedAt: string;
+      radiationDatabase: string;
+      request: Record<string, unknown>;
+      probes: {
+        facetId: string;
+        compassAzimuthDeg: number;
+        pvgisAspectDeg: number;
+        angleDeg: number;
+        specificYieldKwhPerKwp: number;
+        monthlySpecificYieldKwhPerKwp: number[];
+        radiationDatabase: string;
+        retrievedAt: string;
+        losses: Record<string, number> | null;
+      }[];
+    } | null;
     totalAnnualProductionKwh: number;
     totalMonthlyProductionKwh: number[];
     installedPowerKwp: number;

@@ -28,9 +28,21 @@ from typing import Any
 #: asserts it contains nothing from a domain or provenance path, another
 #: asserts two identical runs differ *only* within it.
 #:
-#: FX provenance - the rate, its date, the retrieval source, the provider - is
-#: **data**, not metadata. Only the moment of retrieval is volatile.
-VOLATILE_SNAPSHOT_PATHS: frozenset[str] = frozenset({"exchangeRate.retrievedAt"})
+#: FX and PVGIS provenance - the rate, its date, the retrieval source, the
+#: provider, the endpoint, the radiation database, every yield - is **data**,
+#: not metadata. Only the moments of retrieval are volatile.
+#:
+#: `energy.pvgis.batchCompletedAt` is when the four-probe batch finished;
+#: `energy.pvgis.probes[].retrievedAt` is when each individual probe answered.
+#: Two runs with identical inputs differ in both and in nothing else, which is
+#: what `test_identical_inputs_differ_only_in_volatile_paths` proves.
+VOLATILE_SNAPSHOT_PATHS: frozenset[str] = frozenset(
+    {
+        "exchangeRate.retrievedAt",
+        "energy.pvgis.batchCompletedAt",
+        "energy.pvgis.probes[].retrievedAt",
+    }
+)
 
 #: Sections that no project input can affect.
 NEVER_AFFECTED: frozenset[str] = frozenset({"roof"})

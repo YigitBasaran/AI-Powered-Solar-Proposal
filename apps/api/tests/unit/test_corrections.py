@@ -242,14 +242,32 @@ async def test_a_selective_recompute_equals_a_full_reanalysis(offline_env) -> No
 # ---------------------------------------------------------------------------
 
 
-def test_volatile_paths_exclude_every_domain_and_provenance_value() -> None:
-    """An ignore list is the easiest place to hide a real difference."""
+def test_volatile_paths_are_only_ever_retrieval_timestamps() -> None:
+    """An ignore list is the easiest place to hide a real difference.
+
+    The rule used to be "nothing under `energy.`", which held only while that
+    section contained domain output alone. PVGIS provenance now lives there
+    too, and it carries genuine retrieval timestamps - so the rule is stated as
+    what it always meant: **the only thing that may be normalised away is the
+    moment an observation was made.**
+
+    That is a stronger formulation than a prefix ban. A prefix ban would have
+    let `energy.pvgis.specificYieldKwhPerKwp` in the moment the prefix was
+    relaxed; this will not, whatever section it sits in.
+    """
     from app.services.conversation.invalidation import VOLATILE_SNAPSHOT_PATHS
 
+    allowed_leaves = {"retrievedAt", "batchCompletedAt"}
     for path in VOLATILE_SNAPSHOT_PATHS:
-        assert not path.startswith(("roof.", "layout.", "energy.", "financial.")), (
-            f"{path} is domain output and must never be normalised away"
+        leaf = path.rsplit(".", 1)[-1]
+        assert leaf in allowed_leaves, (
+            f"{path} is not a retrieval timestamp and must never be normalised away"
         )
+
+
+def test_volatile_paths_exclude_every_domain_and_provenance_value() -> None:
+    """Named explicitly, so relaxing the rule above cannot quietly admit one."""
+    from app.services.conversation.invalidation import VOLATILE_SNAPSHOT_PATHS
 
     forbidden = {
         "exchangeRate.rate",
@@ -261,6 +279,17 @@ def test_volatile_paths_exclude_every_domain_and_provenance_value() -> None:
         "exchangeRate.isFixture",
         "energy.dataSource",
         "energy.radiationDatabase",
+        # PVGIS provenance. Which endpoint answered, at which API version, from
+        # which dataset, and every yield it returned, are all data.
+        "energy.pvgis.source",
+        "energy.pvgis.endpoint",
+        "energy.pvgis.origin",
+        "energy.pvgis.apiVersion",
+        "energy.pvgis.radiationDatabase",
+        "energy.pvgis.probes[].specificYieldKwhPerKwp",
+        "energy.pvgis.probes[].pvgisAspectDeg",
+        "energy.pvgis.probes[].compassAzimuthDeg",
+        "energy.pvgis.probes[].radiationDatabase",
     }
     assert VOLATILE_SNAPSHOT_PATHS.isdisjoint(forbidden), "provenance is data, not metadata"
 

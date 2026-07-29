@@ -284,8 +284,12 @@
 
   <div class="source-note">
     Source: PVGIS 5.3 ({{ energy.radiationDatabase or "JRC" }}), European Commission
-    Joint Research Centre. One request per occupied facet, using that facet's own
-    pitch and azimuth. Data mode: <strong>{{ energy.dataSource }}</strong>.
+    Joint Research Centre. One normalised 1 kWp request per roof facet, using that
+    facet's own pitch and azimuth; production is that yield times the capacity
+    actually placed. Data mode: <strong>{{ energy.dataSource }}</strong>.
+    {%- if energy.pvgis %}
+    Retrieved from {{ energy.pvgis.endpoint }} at {{ energy.pvgis.batchCompletedAt }}.
+    {%- endif %}
   </div>
 </section>
 

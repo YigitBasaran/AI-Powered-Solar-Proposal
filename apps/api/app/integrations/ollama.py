@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 import httpx
@@ -92,6 +93,36 @@ class OllamaClient:
             return await _do(self._client)
         async with httpx.AsyncClient() as client:
             return await _do(client)
+
+    async def structured(
+        self, *, system: str, prompt: str, schema: dict[str, Any]
+    ) -> tuple[str, int]:
+        """One schema-constrained completion, plus how long it took.
+
+        Transport only: the caller owns the prompt, the schema and what to do
+        with a reply that does not validate. Returns the raw response text so
+        the caller can distinguish an empty answer from an unparseable one -
+        those are different failures and deserve different telemetry.
+        """
+        started = time.perf_counter()
+        data = await self._post(
+            "/api/generate",
+            {
+                "model": self._settings.ollama_model,
+                "system": system,
+                "prompt": prompt,
+                "format": schema,
+                "stream": False,
+                # A reasoning model puts its whole output in `thinking` and
+                # returns an EMPTY `response` unless this is off - including
+                # schema-constrained JSON. Ollama ignores it for models that do
+                # not think.
+                "think": False,
+                "options": {"temperature": 0},
+            },
+        )
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        return str(data.get("response") or ""), latency_ms
 
     async def available(self) -> bool:
         try:

@@ -391,8 +391,15 @@ class ChatIntent(StrEnum):
     UNKNOWN = "unknown"
 
 
-class ParsedChatMessage(BaseModel):
-    intent: ChatIntent
+class ExtractedValues(BaseModel):
+    """The only four values any parser - rules or model - may ever express.
+
+    This is a **closed** set on purpose. A free-form dict of extracted values
+    would re-open the channel the whole design exists to close: it would let a
+    language model return ``{"annual_savings_eur": 99999}`` and have something
+    downstream believe it. There is no field here for money, production or an
+    exchange rate, so those cannot be expressed at all.
+    """
 
     latitude: float | None = None
     longitude: float | None = None
@@ -404,8 +411,6 @@ class ParsedChatMessage(BaseModel):
     # whitelist, and the generated JSON schema constrains the model's output to
     # these three values. Widening it to `float` would lose both.
     system_size_kwp: Literal[3.6, 6.0, 9.6] | None = None  # type: ignore[valid-type]
-
-    confidence: float = Field(ge=0, le=1)
 
     @field_validator("latitude")
     @classmethod
@@ -420,6 +425,26 @@ class ParsedChatMessage(BaseModel):
         if v is not None and not -180.0 <= v <= 180.0:
             raise ValueError("longitude out of range")
         return v
+
+
+class ParsedChatMessage(ExtractedValues):
+    """The value-extraction view of a conversation action.
+
+    Kept as the projection the deterministic parser returns, so the parser
+    suite keeps testing the real classifier rather than a reimplementation of
+    it. See ``services/conversation/compat.py``.
+
+    ``confidence`` carries a **default**. It gates no decision anywhere, and a
+    live model that read it as a percentage and returned ``100`` had its
+    otherwise-correct answer discarded by Pydantic - a required, bounded field
+    vetoing a usable action it was never meant to judge. The field survives
+    because two parser tests read it; it is absent from the model-facing schema
+    entirely.
+    """
+
+    intent: ChatIntent
+
+    confidence: float = Field(default=0.0, ge=0, le=1)
 
 
 # --------------------------------------------------------------------------

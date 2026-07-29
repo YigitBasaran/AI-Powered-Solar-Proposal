@@ -20,16 +20,48 @@ from app.core.errors import InvalidStepTransitionError, NotFoundError
 from app.db.session import commit_before_response, get_session
 from app.domain.models import ProjectStep
 from app.integrations.exchange_rates import ExchangeRateService, SqlExchangeRateCache
-from app.models.tables import ChatMessage, Project
+from app.models.tables import ChatMessage, Project, Proposal
+
+# Imported as a module, not by name: the recompute functions are called
+# through it so a failing recomputation can actually be exercised, and so the
+# route always reaches the current definition rather than one bound at import.
+from app.services import analysis as analysis_service
 from app.services.analysis import run_analysis, serialise_analysis
-from app.services.chat import parse_user_message
-from app.services.workflow import handle_message, initial_assistant_message, progress
+from app.services.conversation.actions import ActionKind
+from app.services.conversation.answers import answer_question
+from app.services.conversation.router import route_message
+from app.services.proposal import existing_proposal
+from app.services.revisions import find_or_create_revision, find_revision, revision_notice
+from app.services.workflow import (
+    ProjectState,
+    StepOutcome,
+    handle_message,
+    initial_assistant_message,
+    progress,
+)
 
 logger = logging.getLogger("solarvis.api")
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 MAX_MESSAGE_LENGTH = 2000
+
+#: The only columns a chat message may write.
+#:
+#: The previous route looped `setattr` over whatever the state machine returned.
+#: That was safe only for as long as nobody added a key, and it made "a question
+#: never mutates state" a convention rather than something a test could check.
+ASSIGNABLE: frozenset[str] = frozenset(
+    {
+        "raw_location_input",
+        "resolved_latitude",
+        "resolved_longitude",
+        "monthly_consumption_kwh",
+        "selected_system_size_kwp",
+        "analysis_json",
+        "analysis_status",
+    }
+)
 
 
 class CreateProjectResponse(BaseModel):
@@ -48,9 +80,15 @@ class ChatResponse(BaseModel):
     currentStep: str
     assistantMessage: str
     accepted: bool
+    #: Derived from `interpretation.effectiveProvider`, so the flat field can
+    #: never contradict the object beside it.
     parserSource: str
     progress: list[dict[str, Any]]
     readyForAnalysis: bool
+    analysisStatus: str = "pending"
+    interpretation: dict[str, Any] | None = None
+    #: Set when this reply came from a revision the change forked.
+    revisionOfProjectId: str | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -67,6 +105,108 @@ class ProjectResponse(BaseModel):
     progress: list[dict[str, Any]]
     messages: list[dict[str, Any]]
     analysis: dict[str, Any] | None
+    revisionOfProjectId: str | None = None
+    revisionProjectId: str | None = None
+    hasProposal: bool = False
+
+
+async def _pending_confirmation(session: AsyncSession, project: Project) -> str | None:
+    """What the *immediately preceding* assistant message offered, if anything.
+
+    Kept in `payload_json` rather than a new column, and deliberately read from
+    the last message only: an offer made five turns ago is not something a
+    later "yes" can be assumed to answer.
+    """
+    last = (
+        await session.execute(
+            select(ChatMessage)
+            .where(ChatMessage.project_id == project.id, ChatMessage.role == "assistant")
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if last is None or not isinstance(last.payload_json, dict):
+        return None
+    resolution = last.payload_json.get("resolution")
+    if not isinstance(resolution, dict):
+        return None
+    pending = resolution.get("pendingConfirmation")
+    return pending if isinstance(pending, str) else None
+
+
+async def _project_state(session: AsyncSession, project: Project) -> ProjectState:
+    """The read-model the state machine and the answer service both work from."""
+    proposal = (
+        await session.execute(
+            select(Proposal).where(Proposal.project_id == project.id).limit(1)
+        )
+    ).scalar_one_or_none()
+
+    return ProjectState(
+        current_step=ProjectStep(project.current_step),
+        raw_location_input=project.raw_location_input,
+        monthly_consumption_kwh=project.monthly_consumption_kwh,
+        selected_system_size_kwp=project.selected_system_size_kwp,
+        analysis_status=project.analysis_status,
+        analysis=project.analysis_json,
+        has_finalised_proposal=proposal is not None,
+        proposal_snapshot=proposal.proposal_data_json if proposal is not None else None,
+        proposal_share_token=proposal.share_token if proposal is not None else None,
+        pending_confirmation=await _pending_confirmation(session, project),
+        revision_of_project_id=getattr(project, "revision_of_project_id", None),
+    )
+
+
+def _apply(project: Project, updates: dict[str, object]) -> None:
+    """Write the state machine's updates, and nothing else."""
+    for key, value in updates.items():
+        if key not in ASSIGNABLE:
+            raise InvalidStepTransitionError(f"{key} is not a chat-assignable field.")
+        setattr(project, key, value)
+
+
+async def _recalculate(
+    project: Project, outcome: StepOutcome, settings: Settings
+) -> list[str] | None:
+    """Recompute exactly what the change reached, and nothing more.
+
+    Only ever the dependent sections: a consumption change never re-runs PVGIS
+    and never re-reads the exchange rate, because doing so would move the rate
+    the customer was quoted out from under them mid-conversation.
+    """
+    if not outcome.changed_inputs or not project.analysis_json:
+        return None
+    if project.analysis_status not in {"complete", "stale", "recalculating"}:
+        return None
+
+    snapshot = dict(project.analysis_json)
+    project.analysis_status = "recalculating"
+    try:
+        if outcome.changed_inputs == frozenset({"monthly_consumption_kwh"}):
+            updated = analysis_service.recompute_for_consumption(
+                snapshot=snapshot,
+                monthly_consumption_kwh=float(project.monthly_consumption_kwh or 0.0),
+                settings=settings,
+            )
+        else:
+            updated = await analysis_service.recompute_for_system_size(
+                snapshot=snapshot,
+                system_size_kwp=float(project.selected_system_size_kwp or 0.0),
+                monthly_consumption_kwh=float(project.monthly_consumption_kwh or 0.0),
+                settings=settings,
+            )
+    except Exception:
+        # The snapshot now describes inputs the project no longer has. Leaving
+        # the status at "complete" would present the old figures as though they
+        # described the new ones, which is the failure this whole layer exists
+        # to prevent.
+        project.analysis_status = "stale"
+        logger.exception("recalculation failed for project %s", project.id)
+        return None
+
+    project.analysis_json = updated
+    project.analysis_status = "complete"
+    return sorted(outcome.changed_inputs)
 
 
 async def _load(session: AsyncSession, project_id: str) -> Project:
@@ -78,11 +218,20 @@ async def _load(session: AsyncSession, project_id: str) -> Project:
     return project
 
 
-def _to_response(project: Project, settings: Settings) -> ProjectResponse:
+def _to_response(
+    project: Project,
+    settings: Settings,
+    *,
+    has_proposal: bool = False,
+    revision_project_id: str | None = None,
+) -> ProjectResponse:
     step = ProjectStep(project.current_step)
     monthly = project.monthly_consumption_kwh
     size = project.selected_system_size_kwp
     return ProjectResponse(
+        revisionOfProjectId=project.revision_of_project_id,
+        revisionProjectId=revision_project_id,
+        hasProposal=has_proposal,
         projectId=project.id,
         currentStep=project.current_step,
         rawLocationInput=project.raw_location_input,
@@ -145,7 +294,14 @@ async def get_project(
 ) -> ProjectResponse:
     project = await _load(session, project_id)
     await session.refresh(project, ["messages"])
-    return _to_response(project, settings)
+    proposal = await existing_proposal(session, project)
+    revision = await find_revision(session, project)
+    return _to_response(
+        project,
+        settings,
+        has_proposal=proposal is not None,
+        revision_project_id=revision.id if revision is not None else None,
+    )
 
 
 @router.post("/{project_id}/chat", response_model=ChatResponse)
@@ -158,31 +314,69 @@ async def chat(
     project = await _load(session, project_id)
     step = ProjectStep(project.current_step)
 
-    # The raw message is preserved verbatim before anything interprets it.
+    routed = await route_message(payload.message, step=step, settings=settings)
+    action = routed.action
+
+    # A change to a project whose proposal has been issued forks a revision,
+    # and the conversation moves with it. Routing happens first because only
+    # the action says whether this message wants to mutate anything; a question
+    # about a finalised proposal must not fork anything at all.
+    notice = ""
+    parent = project
+    if action.wants_mutation:
+        proposal = await existing_proposal(session, project)
+        if proposal is not None:
+            project = await find_or_create_revision(session, project)
+            notice = revision_notice(parent, proposal.share_token, settings.web_base_url) + "\n\n"
+            step = ProjectStep(project.current_step)
+
+    # The raw message is preserved verbatim, on whichever project owns the turn.
     session.add(
         ChatMessage(project_id=project.id, role="user", content=payload.message, step=step.value)
     )
 
-    parsed, parser_source = await parse_user_message(payload.message, step=step, settings=settings)
+    state = await _project_state(session, project)
+    answer = (
+        answer_question(action=action, project=state, settings=settings)
+        if action.is_question or action.kind is ActionKind.UNSUPPORTED_REQUEST
+        else None
+    )
     outcome = handle_message(
-        current_step=step, parsed=parsed, raw_text=payload.message, settings=settings
+        project=state,
+        action=action,
+        raw_text=payload.message,
+        answer=answer,
+        settings=settings,
     )
 
-    for key, value in outcome.updates.items():
-        setattr(project, key, value)
+    _apply(project, outcome.updates)
     project.current_step = outcome.next_step.value
 
-    message = outcome.assistant_message or (
-        "I can answer questions about the roof, production or financials once the analysis has run."
-    )
+    recalculated = await _recalculate(project, outcome, settings)
+
+    message = notice + outcome.assistant_message
     session.add(
         ChatMessage(
             project_id=project.id,
             role="assistant",
             content=message,
             step=project.current_step,
-            parser_source=parser_source,
-            payload_json=parsed.model_dump(mode="json"),
+            parser_source=routed.interpretation.parser_source,
+            payload_json={
+                "action": action.model_dump(mode="json"),
+                "resolution": {
+                    "answerState": answer.state.value if answer else None,
+                    "answerSource": answer.source.value if answer else None,
+                    "helpTopic": answer.help_topic if answer else None,
+                    "stepBefore": step.value,
+                    "stepAfter": project.current_step,
+                    "accepted": outcome.accepted,
+                    "mutated": sorted(outcome.updates),
+                    "pendingConfirmation": outcome.pending_confirmation,
+                    "recalculated": recalculated,
+                },
+                "interpretation": routed.interpretation.to_payload(),
+            },
         )
     )
     await session.flush()
@@ -190,14 +384,30 @@ async def chat(
     # the instant this returns, and the dependency's commit lands too late.
     await commit_before_response(session)
 
+    logger.info(
+        "chat | project=%s step=%s->%s kind=%s topic=%s provider=%s/%s reason=%s mutated=%s",
+        project.id,
+        step.value,
+        project.current_step,
+        action.kind.value,
+        action.topic.value,
+        routed.interpretation.attempted_provider,
+        routed.interpretation.effective_provider,
+        routed.interpretation.fallback_reason,
+        sorted(outcome.updates),
+    )
+
     return ChatResponse(
         projectId=project.id,
         currentStep=project.current_step,
         assistantMessage=message,
         accepted=outcome.accepted,
-        parserSource=parser_source,
+        parserSource=routed.interpretation.parser_source,
         progress=progress(outcome.next_step),
         readyForAnalysis=outcome.next_step is ProjectStep.ROOF_RECONSTRUCTION,
+        analysisStatus=project.analysis_status,
+        interpretation=routed.interpretation.to_payload(),
+        revisionOfProjectId=project.revision_of_project_id,
     )
 
 

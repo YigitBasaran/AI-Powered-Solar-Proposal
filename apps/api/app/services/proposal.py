@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import Settings, get_settings
 from app.core.errors import NotFoundError, ProposalIncompleteError
 from app.models.tables import Project, Proposal, ProposalView
+from app.services.conversation.invalidation import detect_staleness
 
 logger = logging.getLogger("solarvis.proposal")
 
@@ -62,6 +63,33 @@ def validate_ready(project: Project) -> dict[str, Any]:
     snapshot = project.analysis_json
     if not snapshot:
         raise ProposalIncompleteError("This project has no completed analysis.")
+
+    # Two independent guards, because either alone can be defeated.
+    #
+    # The status catches a recomputation that is in flight or that failed. The
+    # signature catches a snapshot that is *shaped* like a finished analysis but
+    # describes inputs the project no longer has - which is what a status flag
+    # cannot see, and what would otherwise be frozen into an immutable document.
+    if project.analysis_status in {"recalculating", "running"}:
+        raise ProposalIncompleteError(
+            "The analysis is still being recalculated. One moment, then try again."
+        )
+    if project.analysis_status == "stale":
+        raise ProposalIncompleteError(
+            "The analysis no longer matches this project's inputs and could not be "
+            "recalculated. Re-run the analysis before finalising."
+        )
+
+    staleness = detect_staleness(
+        snapshot=snapshot,
+        monthly_consumption_kwh=project.monthly_consumption_kwh,
+        selected_system_size_kwp=project.selected_system_size_kwp,
+    )
+    if staleness.is_stale:
+        raise ProposalIncompleteError(
+            "The analysis describes different inputs to the ones on this project "
+            f"({', '.join(sorted(staleness.stale_inputs))}). Re-run the analysis first."
+        )
 
     _require(snapshot, "layout")
     energy = _require(snapshot, "energy")

@@ -49,8 +49,25 @@ class Project(Base):
     monthly_consumption_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
     selected_system_size_kwp: Mapped[float | None] = mapped_column(Float, nullable=True)
 
+    #: "pending" | "running" | "complete" | "recalculating" | "stale".
+    #:
+    #: The last two exist so a snapshot can be known not to describe the
+    #: project's current inputs. Without them a changed value silently leaves
+    #: correct-looking figures in place that describe something else.
     analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     analysis_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    #: The project this one is a revision of.
+    #:
+    #: UNIQUE, and that is the whole idempotency mechanism. SQLite treats NULLs
+    #: as distinct, so any number of root projects coexist, while a parent may
+    #: have **at most one** direct child. A retried or concurrent delivery of
+    #: the same change therefore cannot fork two drafts - the database refuses
+    #: the second insert and the loser re-selects the winner's row. Revisions
+    #: form a chain, not a tree.
+    revision_of_project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="SET NULL"), unique=True, nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
     updated_at: Mapped[datetime] = mapped_column(

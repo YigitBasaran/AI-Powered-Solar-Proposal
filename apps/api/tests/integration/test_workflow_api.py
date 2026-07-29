@@ -80,10 +80,48 @@ def test_raw_location_input_is_preserved_verbatim(client) -> None:
     assert project["rawLocationInput"] == "somewhere near the station, -34.0466 18.4649"
 
 
-def test_any_location_still_resolves_to_the_case_property(client) -> None:
-    """Geocoding is out of scope, so all inputs land on the fixed roof."""
+def test_a_location_elsewhere_is_blocked_and_the_case_property_offered(client) -> None:
+    """Behaviour change, deliberate: London used to be silently accepted.
+
+    The old build stored any input as `raw_location_input` and then analysed
+    Cape Town's roof under it. Every figure downstream was then labelled with a
+    property it did not describe. The honest reply says so and offers the one
+    property this build can actually analyse - and stores nothing.
+    """
+    project_id = start_project(client)
+    body = say(client, project_id, "51.5074, -0.1278")
+
+    assert body["accepted"] is False
+    assert body["currentStep"] == "location"
+    assert "-34.046582" in body["assistantMessage"]
+
+    project = client.get(f"/api/v1/projects/{project_id}").json()
+    assert project["rawLocationInput"] is None, "nothing is stored for a refused location"
+    assert project["resolvedLatitude"] is None
+
+
+def test_confirming_the_offer_records_the_case_property(client) -> None:
+    """The second half of block-and-offer: "yes" is a real answer to it."""
     project_id = start_project(client)
     say(client, project_id, "51.5074, -0.1278")
+    body = say(client, project_id, "yes")
+
+    assert body["accepted"] is True
+    assert body["currentStep"] == "consumption"
+
+    project = client.get(f"/api/v1/projects/{project_id}").json()
+    assert project["resolvedLatitude"] == pytest.approx(-34.04658242871865)
+    # Not the word "yes": the field means which property was chosen.
+    assert "Galway Road" in project["rawLocationInput"]
+
+
+def test_the_brief_positive_latitude_is_accepted_as_the_case_property(client) -> None:
+    """The documented sign error identifies this property, not a point at sea."""
+    project_id = start_project(client)
+    body = say(client, project_id, "34.04658242871865, 18.46491476666948")
+
+    assert body["accepted"] is True
+    assert body["currentStep"] == "consumption"
     project = client.get(f"/api/v1/projects/{project_id}").json()
     assert project["resolvedLatitude"] == pytest.approx(-34.04658242871865)
 
@@ -155,12 +193,18 @@ def test_unreadable_location_is_rejected_without_advancing(client) -> None:
     assert body["currentStep"] == "location"
 
 
-def test_a_written_address_is_accepted_and_resolved_to_the_case_coordinate(client) -> None:
+def test_a_written_address_is_blocked_because_nothing_here_geocodes(client) -> None:
+    """Behaviour change, deliberate: the address used to be accepted verbatim.
+
+    There is no geocoder in this build, so an address cannot be checked against
+    the calibrated property. Accepting it meant claiming a match that had never
+    been tested.
+    """
     project_id = start_project(client)
     body = say(client, project_id, "10 Downing Street, London")
-    assert body["accepted"] is True
-    assert body["currentStep"] == "consumption"
-    # Recorded as typed, and openly resolved.
+    assert body["accepted"] is False
+    assert body["currentStep"] == "location"
+    # The refusal names what was refused, and what is on offer instead.
     assert "10 Downing Street, London" in body["assistantMessage"]
     assert "-34.046582" in body["assistantMessage"]
 

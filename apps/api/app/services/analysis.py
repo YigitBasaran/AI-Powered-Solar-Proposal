@@ -14,13 +14,16 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal
+from typing import Any
 
 from app.core.config import Settings, get_settings
 from app.domain.models import (
     CapexConversion,
     DataSource,
     ExchangeRate,
+    ExchangeRateSource,
     FacetYieldResult,
     FinancialResult,
     PanelLayout,
@@ -287,30 +290,173 @@ def serialise_analysis(result: AnalysisResult) -> dict[str, object]:
             "isFixture": rate.retrieval_source.is_fixture,
             "retrievedAt": rate.retrieved_at.isoformat(),
         },
-        "financial": {
-            "annualConsumptionKwh": fin.annual_consumption_kwh,
-            "annualProductionKwh": round(fin.annual_production_kwh, 2),
-            "coveredEnergyKwh": round(fin.covered_energy_kwh, 2),
-            "coveragePercent": round(fin.coverage_percent, 2),
-            "electricityPriceEurPerKwh": str(fin.electricity_price_eur_per_kwh),
-            "annualSavingsEur": str(fin.annual_savings_eur),
-            "originalCapex": {
-                "amount": str(fin.capex_conversion.original_amount),
-                "currency": fin.capex_conversion.original_currency,
-            },
-            "convertedCapex": {
-                "amount": str(fin.capex_conversion.converted_amount),
-                "currency": fin.capex_conversion.converted_currency,
-            },
-            "simplePaybackYears": fin.simple_payback_years,
-            "twentyYearNetBenefitEur": str(fin.twenty_year_net_benefit_eur),
-            "cashFlow": [
-                {
-                    "year": y.year,
-                    "annualSavingsEur": str(y.annual_savings_eur),
-                    "cumulativeCashFlowEur": str(y.cumulative_cash_flow_eur),
-                }
-                for y in fin.cash_flow
-            ],
-        },
+        "financial": serialise_financial(fin),
     }
+
+
+def serialise_financial(fin: FinancialResult) -> dict[str, object]:
+    """The `financial` block on its own.
+
+    Shared with `recompute_for_consumption`, which rebuilds this section and
+    nothing else - if the two produced different shapes, a recalculated
+    proposal would quietly stop matching a freshly analysed one.
+    """
+    return {
+        "annualConsumptionKwh": fin.annual_consumption_kwh,
+        "annualProductionKwh": round(fin.annual_production_kwh, 2),
+        "coveredEnergyKwh": round(fin.covered_energy_kwh, 2),
+        "coveragePercent": round(fin.coverage_percent, 2),
+        "electricityPriceEurPerKwh": str(fin.electricity_price_eur_per_kwh),
+        "annualSavingsEur": str(fin.annual_savings_eur),
+        "originalCapex": {
+            "amount": str(fin.capex_conversion.original_amount),
+            "currency": fin.capex_conversion.original_currency,
+        },
+        "convertedCapex": {
+            "amount": str(fin.capex_conversion.converted_amount),
+            "currency": fin.capex_conversion.converted_currency,
+        },
+        "simplePaybackYears": fin.simple_payback_years,
+        "twentyYearNetBenefitEur": str(fin.twenty_year_net_benefit_eur),
+        "cashFlow": [
+            {
+                "year": y.year,
+                "annualSavingsEur": str(y.annual_savings_eur),
+                "cumulativeCashFlowEur": str(y.cumulative_cash_flow_eur),
+            }
+            for y in fin.cash_flow
+        ],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Dependency-aware recomputation
+# ---------------------------------------------------------------------------
+#
+# `run_analysis` is for the *first* analysis. When a customer corrects a value
+# afterwards, re-running the whole pipeline would rebuild things that could not
+# have changed - and, worse, would re-fetch the exchange rate, moving the
+# figure they were quoted out from under them mid-conversation. That is the
+# same failure the immutable-proposal design exists to prevent.
+#
+# So each input gets a path that touches only what depends on it. What is
+# preserved is *proved* preserved: `tests/unit/test_corrections.py` compares
+# the untouched sections byte for byte.
+
+
+def _section(snapshot: dict[str, object], name: str) -> dict[str, Any]:
+    """One top-level snapshot section, typed for reading.
+
+    Snapshots are `dict[str, object]` because that is what `serialise_analysis`
+    produces; the sections inside are known to be mappings.
+    """
+    block = snapshot.get(name)
+    if not isinstance(block, dict):
+        raise ValueError(f"snapshot is missing the {name!r} section")
+    return block
+
+
+def exchange_rate_from_snapshot(snapshot: dict[str, object]) -> ExchangeRate:
+    """Rebuild the rate observation a snapshot already recorded.
+
+    Re-reading it from the provider would be a different observation. This is
+    the one the customer was shown, so it is the one that carries forward.
+    """
+    block = _section(snapshot, "exchangeRate")
+    return ExchangeRate(
+        source_api=str(block["sourceApi"]),
+        data_provider=str(block["dataProvider"]),
+        rate_date=date.fromisoformat(str(block["rateDate"])),
+        base_currency=str(block["baseCurrency"]),
+        quote_currency=str(block["quoteCurrency"]),
+        rate=Decimal(str(block["rate"])),
+        retrieval_source=ExchangeRateSource(str(block["retrievalSource"])),
+        retrieved_at=datetime.fromisoformat(str(block["retrievedAt"])),
+    )
+
+
+def _capex_from(rate: ExchangeRate, settings: Settings) -> CapexConversion:
+    return convert_capex(
+        amount=Decimal(str(settings.case_capex_amount)),
+        from_currency=settings.case_capex_currency,
+        exchange_rate=rate,
+    )
+
+
+def recompute_for_consumption(
+    *,
+    snapshot: dict[str, object],
+    monthly_consumption_kwh: float,
+    settings: Settings | None = None,
+) -> dict[str, object]:
+    """A new snapshot for a changed consumption. Financial only.
+
+    No PVGIS request, no layout run, no exchange-rate lookup. The roof, the
+    panel layout and the modelled production do not depend on how much
+    electricity the household uses, so they are carried across untouched.
+    """
+    settings = settings or get_settings()
+    rate = exchange_rate_from_snapshot(snapshot)
+    energy = _section(snapshot, "energy")
+
+    financial = calculate_financials(
+        monthly_consumption_kwh=monthly_consumption_kwh,
+        annual_production_kwh=float(energy["totalAnnualProductionKwh"]),
+        electricity_price_eur_per_kwh=Decimal(str(settings.case_electricity_price)),
+        capex=_capex_from(rate, settings),
+    )
+
+    return {**snapshot, "financial": serialise_financial(financial)}
+
+
+async def recompute_for_system_size(
+    *,
+    snapshot: dict[str, object],
+    system_size_kwp: float,
+    monthly_consumption_kwh: float,
+    settings: Settings | None = None,
+    pvgis_client: PvgisClient | None = None,
+    ranking_provider: FacetYieldRankingProvider | None = None,
+) -> dict[str, object]:
+    """A new snapshot for a changed system size. Layout, yield and financial.
+
+    The roof is rebuilt from the same fixed calibration - deterministic, so it
+    lands byte-identical - and the exchange rate is the observation already
+    recorded rather than a fresh one.
+    """
+    settings = settings or get_settings()
+    client = pvgis_client or PvgisClient(settings)
+    roof = build_roof_model(settings)
+
+    provider = ranking_provider or (
+        PvgisFacetYieldRankingProvider(client, settings=settings)
+        if settings.pvgis_mode.value == "live"
+        else FixtureFacetYieldRankingProvider()
+    )
+
+    layout = await generate_layout(roof, system_size_kwp, provider, settings)
+    assert_layout_valid(roof, layout, settings)
+    yield_result = await compute_yield(roof, layout, client, settings)
+
+    rate = exchange_rate_from_snapshot(snapshot)
+    capex = _capex_from(rate, settings)
+    financial = calculate_financials(
+        monthly_consumption_kwh=monthly_consumption_kwh,
+        annual_production_kwh=yield_result.total_annual_production_kwh,
+        electricity_price_eur_per_kwh=Decimal(str(settings.case_electricity_price)),
+        capex=capex,
+    )
+
+    recomputed = serialise_analysis(
+        AnalysisResult(
+            roof=roof,
+            layout=layout,
+            yield_result=yield_result,
+            exchange_rate=rate,
+            capex=capex,
+            financial=financial,
+        )
+    )
+    # The rate block is carried across verbatim rather than re-serialised, so
+    # `retrievedAt` keeps the instant of the original observation.
+    return {**recomputed, "exchangeRate": snapshot["exchangeRate"]}

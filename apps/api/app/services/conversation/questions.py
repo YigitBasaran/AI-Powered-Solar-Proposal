@@ -136,9 +136,12 @@ _TOPIC_PATTERNS: tuple[tuple[Topic, re.Pattern[str]], ...] = (
     (Topic.FX, re.compile(
         r"\b(exchange rate|usd|eur\b|euro|currency|conversion|convert|ecb|frankfurter|"
         r"dollar)\b")),
+    # `save` as a verb, not just the noun: "what will I save?" is the most
+    # natural way to ask about the annual saving and matched nothing before.
+    # PRIVACY is checked first, so "save my data" is still a privacy question.
     (Topic.FINANCE, re.compile(
-        r"\b(payback|saving|savings|cost|costs|capex|price|tariff|roi|return|cash flow|"
-        r"net benefit|money|invoice|bill total)\b")),
+        r"\b(payback|save|saves|saved|saving|savings|cost|costs|capex|price|tariff|roi|"
+        r"return|cash flow|net benefit|money|invoice|bill total)\b")),
     (Topic.YIELD, re.compile(
         r"\b(production|produce|generat|yield|output|pvgis|irradiat|shading|shade|"
         r"cloudy|weather|seasonal|kwh (?:a|per) (?:year|month)|per kwh)\b")),

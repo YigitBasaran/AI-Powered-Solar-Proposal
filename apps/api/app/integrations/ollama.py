@@ -162,18 +162,19 @@ class OllamaClient:
         logger.debug("ollama parsed %s -> %s", text[:60], parsed.intent)
         return parsed
 
-    async def explain(self, values: dict[str, Any]) -> str:
-        """Prose over immutable backend values.
+    async def prose(self, system: str, prompt: str) -> str:
+        """One unconstrained completion, returned as text.
 
-        The model is given the finished numbers and asked to describe them. It
-        cannot alter them: the caller renders the figures, not this text.
+        Transport only. Every caller validates what comes back - the executive
+        summary and the answer paraphrase both check each number in the reply
+        against the closed set of values they supplied.
         """
         payload = {
             "model": self._settings.ollama_model,
-            "system": EXPLANATION_PROMPT,
-            "prompt": json.dumps(values, sort_keys=True),
+            "system": system,
+            "prompt": prompt,
             "stream": False,
-            # Same reason as in `parse_message`: a reasoning model returns an
+            # Same reason as in `structured`: a reasoning model returns an
             # empty `response` unless thinking is off, and an empty summary
             # would silently become the deterministic one.
             "think": False,
@@ -181,3 +182,11 @@ class OllamaClient:
         }
         data = await self._post("/api/generate", payload)
         return str(data.get("response", "")).strip()
+
+    async def explain(self, values: dict[str, Any]) -> str:
+        """Prose over immutable backend values.
+
+        The model is given the finished numbers and asked to describe them. It
+        cannot alter them: the caller renders the figures, not this text.
+        """
+        return await self.prose(EXPLANATION_PROMPT, json.dumps(values, sort_keys=True))

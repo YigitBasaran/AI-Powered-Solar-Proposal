@@ -96,28 +96,68 @@ async def _snapshot(monthly: float, size: float) -> dict:
     return dict(serialise_analysis(result))
 
 
+# Consumption pairs chosen to straddle the savings cap. At 6 kWp the system
+# produces 9,502 kWh a year, so 1,150/month (13,800/yr) is production-limited
+# while 400/month (4,800/yr) is consumption-limited. Comparing only two
+# production-limited values would show savings unchanged and wrongly declare
+# them independent of consumption.
+_CONSUMPTION_PAIRS = [(1150.0, 900.0), (1150.0, 400.0), (400.0, 200.0), (1150.0, 5000.0)]
+_SYSTEM_SIZE_PAIRS = [(6.0, 9.6), (6.0, 3.6), (3.6, 9.6)]
+
+
 async def test_the_declared_consumption_dependencies_are_the_real_ones(offline_env) -> None:
     """Derive the dependency set by experiment; assert the declared map matches.
 
+    Two properties, because either alone is satisfiable by a wrong map:
+
+    * **safety** - no field outside the map ever moves, for any pair;
+    * **tightness** - every field in the map moves for some pair, so the map
+      cannot be padded with things that are actually independent.
+
     The point is to refuse to *assume* that consumption-dependence lives only
     under a section called ``financial``. If a future field elsewhere starts
-    depending on consumption, this fails and the map has to be updated.
+    depending on consumption, safety fails and the map has to be updated.
     """
     from app.services.conversation.invalidation import DEPENDS_ON_CONSUMPTION, differing_paths
 
-    a = await _snapshot(1150.0, 6.0)
-    b = await _snapshot(900.0, 6.0)
+    observed: set[str] = set()
+    for before, after in _CONSUMPTION_PAIRS:
+        moved = differing_paths(await _snapshot(before, 6.0), await _snapshot(after, 6.0))
+        assert moved <= set(DEPENDS_ON_CONSUMPTION), (
+            f"consumption {before} -> {after} moved fields outside the declared map: "
+            f"{sorted(moved - set(DEPENDS_ON_CONSUMPTION))}"
+        )
+        observed |= moved
 
-    assert differing_paths(a, b) == set(DEPENDS_ON_CONSUMPTION)
+    assert observed == set(DEPENDS_ON_CONSUMPTION), (
+        f"declared but never observed to move: {sorted(set(DEPENDS_ON_CONSUMPTION) - observed)}"
+    )
 
 
 async def test_the_declared_system_size_dependencies_are_the_real_ones(offline_env) -> None:
     from app.services.conversation.invalidation import DEPENDS_ON_SYSTEM_SIZE, differing_paths
 
-    a = await _snapshot(1150.0, 6.0)
-    b = await _snapshot(1150.0, 9.6)
+    observed: set[str] = set()
+    for before, after in _SYSTEM_SIZE_PAIRS:
+        moved = differing_paths(await _snapshot(1150.0, before), await _snapshot(1150.0, after))
+        assert moved <= set(DEPENDS_ON_SYSTEM_SIZE), (
+            f"size {before} -> {after} moved fields outside the declared map: "
+            f"{sorted(moved - set(DEPENDS_ON_SYSTEM_SIZE))}"
+        )
+        observed |= moved
 
-    assert differing_paths(a, b) == set(DEPENDS_ON_SYSTEM_SIZE)
+    assert observed == set(DEPENDS_ON_SYSTEM_SIZE)
+
+
+async def test_the_roof_and_the_rate_never_move(offline_env) -> None:
+    """Two sections no project input may touch, asserted directly."""
+    from app.services.conversation.invalidation import (
+        DEPENDS_ON_CONSUMPTION,
+        DEPENDS_ON_SYSTEM_SIZE,
+    )
+
+    everything = set(DEPENDS_ON_CONSUMPTION) | set(DEPENDS_ON_SYSTEM_SIZE)
+    assert not [p for p in everything if p.startswith(("roof.", "exchangeRate."))]
 
 
 async def test_recomputing_for_consumption_leaves_everything_else_byte_identical(
@@ -153,6 +193,48 @@ async def test_recomputing_for_consumption_never_refetches_the_rate(offline_env)
     assert (
         updated["financial"]["convertedCapex"] == original["financial"]["convertedCapex"]
     ), "CAPEX does not depend on consumption"
+
+
+async def test_recomputing_for_system_size_preserves_the_roof_and_the_rate(offline_env) -> None:
+    """The layout and production genuinely change; the roof and rate do not."""
+    from app.services.analysis import recompute_for_system_size
+
+    original = await _snapshot(1150.0, 6.0)
+    updated = await recompute_for_system_size(
+        snapshot=original,
+        system_size_kwp=9.6,
+        monthly_consumption_kwh=1150.0,
+        settings=get_settings(),
+    )
+
+    assert updated["roof"] == original["roof"]
+    assert updated["exchangeRate"] == original["exchangeRate"]
+    assert updated["layout"]["requestedSystemSizeKwp"] == 9.6
+    assert updated["layout"]["placedPanelCount"] == 24
+    assert updated["energy"]["totalAnnualProductionKwh"] != original["energy"][
+        "totalAnnualProductionKwh"
+    ]
+
+
+async def test_a_selective_recompute_equals_a_full_reanalysis(offline_env) -> None:
+    """The shortcut is a shortcut, not a different answer.
+
+    If these ever diverged, an edited project would quietly disagree with a
+    freshly analysed one for the same inputs.
+    """
+    from app.services.analysis import recompute_for_system_size
+    from app.services.conversation.invalidation import differing_paths
+
+    original = await _snapshot(1150.0, 6.0)
+    selective = await recompute_for_system_size(
+        snapshot=original,
+        system_size_kwp=9.6,
+        monthly_consumption_kwh=1150.0,
+        settings=get_settings(),
+    )
+    full = await _snapshot(1150.0, 9.6)
+
+    assert differing_paths(selective, full) == set()
 
 
 # ---------------------------------------------------------------------------
@@ -218,9 +300,8 @@ def _project_state(**overrides):
 
 
 async def test_a_signature_mismatch_withholds_the_affected_sections(offline_env) -> None:
-    from app.services.conversation.facts import build_facts
-
     from app.services.conversation.actions import AnswerState, Topic
+    from app.services.conversation.facts import build_facts
 
     snapshot = await _snapshot(1150.0, 6.0)
     # The project has moved on; the snapshot still describes 1150.
@@ -232,9 +313,8 @@ async def test_a_signature_mismatch_withholds_the_affected_sections(offline_env)
 
 
 async def test_unaffected_sections_stay_answerable_during_a_change(offline_env) -> None:
-    from app.services.conversation.facts import build_facts
-
     from app.services.conversation.actions import AnswerState, Topic
+    from app.services.conversation.facts import build_facts
 
     snapshot = await _snapshot(1150.0, 6.0)
     project = _project_state(
@@ -249,9 +329,8 @@ async def test_unaffected_sections_stay_answerable_during_a_change(offline_env) 
 
 
 async def test_a_stale_status_does_not_answer_from_the_old_numbers(offline_env) -> None:
-    from app.services.conversation.facts import build_facts
-
     from app.services.conversation.actions import AnswerState, Topic
+    from app.services.conversation.facts import build_facts
 
     snapshot = await _snapshot(1150.0, 6.0)
     project = _project_state(
@@ -270,10 +349,9 @@ async def test_a_stale_status_does_not_answer_from_the_old_numbers(offline_env) 
 
 async def test_rules_answering_cleanly_records_no_attempt(offline_env) -> None:
     """Configured=ollama plus a clear message is not a fallback event."""
-    from app.services.conversation.router import route_message
-
     from app.core.config import LlmProvider
     from app.domain.models import ProjectStep
+    from app.services.conversation.router import route_message
 
     settings = get_settings().model_copy(update={"llm_provider": LlmProvider.OLLAMA})
     routed = await route_message("1150 kWh", step=ProjectStep.CONSUMPTION, settings=settings)
@@ -288,10 +366,10 @@ async def test_rules_answering_cleanly_records_no_attempt(offline_env) -> None:
 async def test_a_failed_model_call_is_a_customer_visible_fallback(offline_env) -> None:
     import httpx
     import respx
-    from app.services.conversation.router import route_message
 
     from app.core.config import LlmProvider
     from app.domain.models import ProjectStep
+    from app.services.conversation.router import route_message
 
     settings = get_settings().model_copy(
         update={"llm_provider": LlmProvider.OLLAMA, "ollama_base_url": "http://ollama.test"}

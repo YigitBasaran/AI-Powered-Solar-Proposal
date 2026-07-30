@@ -628,13 +628,28 @@ DEFAULT_FOR_TOPIC: dict[Topic, str] = {
 }
 
 
-def find_entry(text: str, topic: Topic | None = None) -> HelpEntry | None:
+def find_entry(
+    text: str, topic: Topic | None = None, *, allow_topic_default: bool = True
+) -> HelpEntry | None:
     """The best curated entry for a message, or None.
 
     A trigger match on the classified topic wins; a trigger match elsewhere is
     next, because the topic classifier is coarse and a message that names
-    "payback" is about payback whatever the classifier decided. Only then does
-    the topic default apply.
+    "payback" is about payback whatever the classifier decided.
+
+    `allow_topic_default` is the important argument, and it exists because of a
+    real defect. The topic default used to apply unconditionally, and the answer
+    service always supplied a topic - defaulted from the *current step* when the
+    message itself named none. So any question the triggers did not recognise
+    came back as the current step's default help entry. At the consumption step,
+    "who built this?", "can you summarise the project?", "tell me about the
+    panels" and "what have I told you so far?" all returned the same paragraph
+    about reading a figure off an electricity bill, word for word. That is the
+    repetition customers noticed: not a fallback fired too often, but a fallback
+    standing in for four different questions.
+
+    So a topic inferred *from the message* may still supply a default, and a
+    topic merely inherited from the workflow step may not.
     """
     matched = [entry for entry in ENTRIES if entry.matches(text)]
 
@@ -644,7 +659,7 @@ def find_entry(text: str, topic: Topic | None = None) -> HelpEntry | None:
                 return entry
     if matched:
         return matched[0]
-    if topic is not None:
+    if topic is not None and allow_topic_default:
         return BY_KEY.get(DEFAULT_FOR_TOPIC.get(topic, ""))
     return None
 

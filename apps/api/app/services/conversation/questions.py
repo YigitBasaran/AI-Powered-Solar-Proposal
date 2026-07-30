@@ -184,4 +184,18 @@ def classify_topic(message: Normalised, *, default: Topic = Topic.GENERAL) -> To
     return default
 
 
-__all__ = ["classify_topic", "is_question", "question_kind"]
+def topic_named_in(message: Normalised) -> Topic | None:
+    """The topic the message itself names, or None.
+
+    The difference from `classify_topic` is the absence of a default, and it
+    matters: a topic inherited from the current step is not evidence about what
+    the customer asked, so it must not be allowed to select a canned answer for
+    them.
+    """
+    for topic, pattern in _TOPIC_PATTERNS:
+        if pattern.search(message.text):
+            return topic
+    return None
+
+
+__all__ = ["classify_topic", "is_question", "question_kind", "topic_named_in"]

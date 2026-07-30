@@ -39,6 +39,7 @@ from app.services.conversation.actions import (
 from app.services.conversation.facts import FactBundle, build_facts
 from app.services.conversation.knowledge import HelpEntry, find_entry
 from app.services.conversation.normalise import normalise
+from app.services.conversation.questions import topic_named_in
 from app.services.summary import ALWAYS_ALLOWED, unsupported_numbers
 
 logger = logging.getLogger("solarvis.conversation.answers")
@@ -282,7 +283,14 @@ def compose(
 
     wants_a_figure = action.kind is ActionKind.ASK_QUESTION
 
-    if facts.state is AnswerState.NOT_CALCULATED_YET and wants_a_figure:
+    # `help_text` is required here, and that is the second half of the
+    # repetition fix. "I don't have that yet - I still need your monthly
+    # consumption" is only meaningful if we worked out what *that* refers to.
+    # Without a recognised entry it is a non-sequitur: "who built this?" and
+    # "what have I told you so far?" were both answered with it. When nothing
+    # was recognised the honest shrug below is the right answer, and it says
+    # what can be asked instead.
+    if facts.state is AnswerState.NOT_CALCULATED_YET and wants_a_figure and help_text:
         # The disjointness rule: not-calculated-yet *is* the methodology text,
         # plus what is still missing.
         #
@@ -429,7 +437,16 @@ def answer_question(
     # because that is what the transcript needs; the registry's triggers are
     # lowercase. Passing the raw form matched nothing for any capitalised
     # question, and every one of them quietly fell through to the topic default.
-    entry = find_entry(normalise(action.question or "").text, action.topic)
+    # The topic default may only stand in for a question when the *message*
+    # named the topic. `action.topic` falls back to the current step, and
+    # letting that select an answer is what made four unrelated questions
+    # return the same paragraph.
+    asked = normalise(action.question or "")
+    entry = find_entry(
+        asked.text,
+        action.topic,
+        allow_topic_default=topic_named_in(asked) is not None,
+    )
     return compose(action=action, facts=facts, entry=entry, settings=settings)
 
 

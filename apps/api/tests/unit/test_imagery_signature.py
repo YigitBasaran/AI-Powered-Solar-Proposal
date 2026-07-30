@@ -181,3 +181,36 @@ def test_the_committed_calibration_records_both_signatures() -> None:
     assert meta["imagery"]["perceptual_hash"]
     assert meta["imagery"]["sha256"]
     assert meta["traced_on"]
+
+
+def test_the_committed_calibration_is_verified_not_provisional() -> None:
+    """A calibration is not authoritative until a human has looked at it.
+
+    The re-traced vertices were derived by registering the previous tracing onto
+    the Google raster and were marked `provisional` while that fit was only
+    machine-checked. Every figure this system publishes rests on those six
+    points, so "a person compared the outline with the roof" is a fact worth
+    recording in the file and worth refusing to ship without.
+    """
+    meta = calibration_metadata(load_calibration())
+
+    assert meta["status"] == "verified", (
+        f"the committed calibration is {meta['status']!r}. Review the overlay "
+        "against the live raster and mark it verified before relying on it."
+    )
+    assert meta["verified_on"]
+    assert meta["verified_by"]
+
+
+def test_the_re_trace_changed_placement_and_nothing_measurable() -> None:
+    """A pure translation moves the outline without moving any measurement.
+
+    This is what made the re-trace safe to accept: no length, area, azimuth,
+    panel count, production figure or financial result depends on where the
+    raster's origin happens to be, so correcting the placement could not
+    silently alter a quoted number.
+    """
+    registration = calibration_metadata(load_calibration())["registration"]
+
+    assert registration["rotation_deg"] == 0.0
+    assert registration["shift_m"] < 2.0, "a larger shift would deserve a fresh tracing"

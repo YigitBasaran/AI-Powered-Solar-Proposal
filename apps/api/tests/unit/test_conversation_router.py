@@ -69,7 +69,10 @@ def test_a_bare_value_still_takes_the_fast_path() -> None:
         ("cancel", ActionKind.CANCEL),
         ("never mind", ActionKind.CANCEL),
         ("go back to the location", ActionKind.NAVIGATE),
-        ("actually, my consumption is 900 kWh", ActionKind.CHANGE_PREVIOUS_VALUE),
+        # Names a field and carries a value, so it is an `update_field` now.
+        # It used to be a `change_previous_value`, which had to *guess* which
+        # field was meant; naming it removes the guess.
+        ("actually, my consumption is 900 kWh", ActionKind.UPDATE_FIELD),
         ("change the system to the smallest option", ActionKind.CHANGE_PREVIOUS_VALUE),
         ("use the middle option instead", ActionKind.CHANGE_PREVIOUS_VALUE),
         ("yes", ActionKind.CONFIRM),

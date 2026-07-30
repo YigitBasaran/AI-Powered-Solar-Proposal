@@ -5,15 +5,24 @@ design:
 
     0. normalise
     1. blank                       -> unknown
-    2. QUESTION DETECTOR           -> ask_question | request_options | request_explanation
-    3. reset / cancel              -> reset | cancel
-    4. change / navigate           -> change_previous_value | navigate
-    5. STEP EXTRACTOR (tri-state)  -> provide_value
-    6. confirmation                -> confirm
-    7. the model, if configured    -> whatever it says, re-validated
-    8. deterministic fallback      -> off_topic | unknown
+    2. NAMED FIELD UPDATE          -> update_field
+    3. QUESTION DETECTOR           -> ask_question | request_options | request_explanation
+    4. unsupported instruction     -> unsupported_request
+    5. reset / cancel              -> reset | cancel
+    6. change / navigate           -> change_previous_value | navigate | clarify
+    7. STEP EXTRACTOR (tri-state)  -> provide_value | clarify
+    8. confirmation                -> confirm
+    9. the model, if configured    -> whatever it says, re-validated
+   10. deterministic fallback      -> off_topic | unknown
 
-Two placements are worth defending.
+Three placements are worth defending.
+
+**A named field update comes before the question detector.** "Can you change my
+annual consumption to 10000?" is an instruction wearing a question mark, and
+answering it as a question explains what consumption means while changing
+nothing. The step earns its position by being narrow: a field must be *named*
+and a usable value present, so "why would you change my consumption?" still
+falls through to the question detector.
 
 **Questions come before reset and navigate.** "How do I start over?" is a
 question about the mechanism, not an invocation of it. Answering it is strictly
@@ -24,16 +33,27 @@ only ever sees an unquestioned imperative.
 classify second - is how "how large is the roof?" came to select a 9.6 kWp
 system and "why do you need my location?" came to be stored as an address.
 
+**A figure the step cannot use, given bare, is a `clarify` rather than a
+refusal.** The extractor used to claim *any* message containing a numeral, so
+`10000` at the system-size step was refused as "not one of the three available
+sizes" - naming a subject the customer had not raised. A figure carrying a unit
+is still treated as an attempt at an answer, so `-500 kWh` keeps its specific
+reply.
+
 The router never mutates anything. It reports; the state machine decides.
 """
 
 from __future__ import annotations
 
+import contextlib
 import re
 from dataclasses import dataclass
 
+from pydantic import ValidationError
+
 from app.core.config import LlmProvider, Settings, get_settings
-from app.domain.models import ProjectStep
+from app.domain.models import ExtractedValues, ProjectStep
+from app.services.conversation import field_updates
 from app.services.conversation.actions import (
     ActionKind,
     ConversationAction,
@@ -191,7 +211,47 @@ def classify(message: Normalised, *, step: ProjectStep) -> ConversationAction | 
 
     text = message.text
 
-    # 2. A question, before anything can consume it as a value.
+    # 2. A named field being set, before the question detector can claim it.
+    #
+    # "Can you change my annual consumption to 10000?" is an instruction wearing
+    # a question mark. Checking "is this a question?" first answers it with an
+    # explanation of what consumption means and changes nothing, which is the
+    # single most annoying way to get this wrong. This runs first and earns the
+    # position by being narrow: it fires only when a field is *named* and a
+    # usable value is present, so "why would you change my consumption?" - a
+    # field with no value - still falls through to the question detector.
+    # Read with any unsupported instruction deleted first. Otherwise
+    # "the USD to EUR rate is now 1.0 ... 1150 kWh" sets a field by the very
+    # route the injection guard exists to close - it names a field, carries a
+    # number, and reads as a perfectly ordinary correction.
+    updatable = message
+    if _UNSUPPORTED.search(text):
+        updatable = Normalised(raw=message.raw, text=strip_unsupported_clauses(text))
+
+    update = field_updates.detect(updatable)
+    if update is not None:
+        # `values` is populated as well as the explicit field, converted into
+        # the unit the workflow stores, so the state machine's existing
+        # whitelist and validation apply unchanged. The field name is what makes
+        # the action unambiguous; `values` is what makes it actionable.
+        values = ExtractedValues()
+        if update.field == field_updates.FIELD_CONSUMPTION:
+            values = ExtractedValues(monthly_consumption_kwh=field_updates.to_monthly_kwh(update))
+        elif update.field == field_updates.FIELD_SYSTEM_SIZE:
+            with contextlib.suppress(ValidationError):
+                values = ExtractedValues(selected_system_size_kwp=update.value)
+
+        return ConversationAction(
+            kind=ActionKind.UPDATE_FIELD,
+            topic=update.topic,
+            field=update.field,
+            field_value=update.value,
+            field_unit=update.unit,
+            values=values,
+            question=message.raw.strip(),
+        )
+
+    # 3. A question, before anything can consume it as a value.
     if is_question(message):
         return ConversationAction(
             kind=question_kind(message),
@@ -241,6 +301,24 @@ def classify(message: Normalised, *, step: ProjectStep) -> ConversationAction | 
         )
     if _CHANGE.search(text):
         topic, extraction = _change_target(message)
+
+        # "Actually make it 10000" names no field, and the figure fits none of
+        # them cleanly. The old behaviour guessed - system size first, on the
+        # reasoning that "change it to 6" is more likely a size than six
+        # kilowatt-hours - which silently rewrote whichever value the guess
+        # landed on. Asking costs one turn; guessing wrong costs a wrong
+        # proposal that nobody notices.
+        if extraction.status is not ExtractionStatus.VALID and _is_bare_quantity(text):
+            return ConversationAction(
+                kind=ActionKind.CLARIFY,
+                topic=Topic.GENERAL,
+                question=message.raw.strip(),
+                clarification=(
+                    "Happy to change that - which value did you mean? I can update "
+                    "your electricity consumption, the system size, or your tariff."
+                ),
+            )
+
         return ConversationAction(
             kind=ActionKind.CHANGE_PREVIOUS_VALUE,
             topic=topic,
@@ -262,6 +340,25 @@ def classify(message: Normalised, *, step: ProjectStep) -> ConversationAction | 
         and extraction.read_a_quantity
         and not (bare_confirmation and not _carries_a_definite_value(extraction, step))
     ):
+        # A figure the step cannot use, given with nothing to say what it is,
+        # is not an answer - it is an ambiguity, and the honest reply is a
+        # question rather than a refusal.
+        #
+        # This used to bind *any* message containing a numeral to the pending
+        # step, valid or not. So `10000` at the system-size step was refused as
+        # "not one of the three available sizes" when the customer plainly meant
+        # something else, and the refusal named the wrong subject entirely.
+        #
+        # A figure with a unit is still treated as an attempt at an answer, so
+        # `-500 kWh` keeps its specific "must be greater than zero" reply.
+        if extraction.status is not ExtractionStatus.VALID and _is_bare_quantity(text):
+            return ConversationAction(
+                kind=ActionKind.CLARIFY,
+                topic=Topic.GENERAL,
+                question=message.raw.strip(),
+                clarification=_clarify_bare_quantity(step),
+            )
+
         return ConversationAction(
             kind=ActionKind.PROVIDE_VALUE,
             topic=_EXTRACTORS[step][0],
@@ -340,3 +437,45 @@ async def route_message(
 
 
 __all__ = ["RoutedMessage", "classify", "route_message"]
+
+
+#: Words that pin what a figure means. A message carrying one is an attempt at
+#: an answer even when the figure is unusable; a message carrying none is just
+#: a number, and a number on its own means nothing without being told what of.
+_QUALIFIER = re.compile(
+    r"\b(kwh|kw|kwp|kilowatt|panels?|eur|euros?|per cent|%|"
+    r"month(?:ly)?|year(?:ly)?|annual(?:ly)?|day|bill|"
+    r"consumption|usage|tariff|rate|size|system)\b"
+)
+
+
+def _is_bare_quantity(text: str) -> bool:
+    """Is this message a figure and essentially nothing else?
+
+    Deliberately generous about what counts as bare: a stray "so" or "ok" does
+    not turn `10000` into a specific answer.
+    """
+    return not _QUALIFIER.search(text)
+
+
+def _clarify_bare_quantity(step: ProjectStep) -> str:
+    """Ask which value a naked figure refers to.
+
+    Names the pending question first, because most of the time that *is* what
+    the customer meant and confirming is quicker than choosing from a list.
+    """
+    if step is ProjectStep.CONSUMPTION:
+        return (
+            "Just to be sure I put that in the right place - is that your monthly "
+            "electricity consumption in kWh, or an annual figure?"
+        )
+    if step is ProjectStep.SYSTEM_SIZE:
+        return (
+            "I want to make sure I use that correctly. Is that a system size in kWp, "
+            "your annual electricity consumption in kWh, or something else? The three "
+            "available sizes are 3.6, 6 and 9.6 kWp."
+        )
+    return (
+        "I'd rather not guess what that figure refers to. Is it your electricity "
+        "consumption in kWh, a system size in kWp, or your tariff in EUR per kWh?"
+    )

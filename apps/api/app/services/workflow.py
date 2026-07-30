@@ -533,6 +533,27 @@ def handle_message(
         case ActionKind.CHANGE_PREVIOUS_VALUE:
             return _change_value(project, action, raw_text, settings)
 
+        case ActionKind.UPDATE_FIELD:
+            return _update_field(project, action, raw_text, settings)
+
+        case ActionKind.COMPARE_OPTIONS:
+            # A comparison is a question that happens to name two things. The
+            # answer service already assembles it from the calculated figures,
+            # and nothing about asking may move the workflow.
+            return _answered_outcome(project, answer, settings)
+
+        case ActionKind.CLARIFY:
+            # The router could not tell what was meant and declined to guess.
+            # The pending question is restated underneath, so a customer who
+            # simply mistyped can carry on without re-reading the thread.
+            prompt = restate(project.current_step, settings)
+            text = action.clarification or "Sorry - which value did you mean?"
+            return _stay(
+                project,
+                f"{text}\n\n{prompt}" if prompt and prompt not in text else text,
+                accepted=False,
+            )
+
         case ActionKind.NAVIGATE:
             return _navigate(project, action, settings)
 
@@ -629,3 +650,41 @@ __all__ = [
     "restate",
     "system_size_prompt",
 ]
+
+
+def _update_field(
+    project: ProjectState,
+    action: ConversationAction,
+    raw_text: str,
+    settings: Settings,
+) -> StepOutcome:
+    """Set a field the customer named, from wherever they happen to be.
+
+    The field arrives already converted into the unit the workflow stores, so
+    this does not re-interpret it - it applies the same validation and the same
+    whitelist a value supplied at its own step would face. An update is not a
+    shortcut around the state machine; it is a different way in to it.
+
+    Tariff is recognised by the router but not yet storable: there is no
+    per-project tariff column, and the financial model reads a configured rate.
+    Saying so is better than accepting the number and quietly ignoring it, which
+    would leave the customer believing their payback had been recalculated.
+    """
+    from app.services.conversation import field_updates
+
+    if action.field == field_updates.FIELD_TARIFF:
+        prompt = restate(project.current_step, settings)
+        return _stay(
+            project,
+            "I can't change the electricity tariff yet — the financial model uses "
+            f"a configured rate of {settings.case_electricity_price:.2f} EUR/kWh "
+            "for this case, and per-project tariffs aren't stored. Everything else "
+            "you've given me still stands."
+            + (f"\n\n{prompt}" if prompt else ""),
+            accepted=False,
+        )
+
+    # Consumption and system size both map to columns the state machine already
+    # owns, so they go through the existing correction path and inherit its
+    # validation, its recalculation and its wording.
+    return _change_value(project, action, raw_text, settings)

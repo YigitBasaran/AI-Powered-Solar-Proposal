@@ -23,6 +23,16 @@ class ActionKind(StrEnum):
     """
 
     PROVIDE_VALUE = "provide_value"
+    #: A named field is being set, whatever step is pending.
+    #:
+    #: Distinct from `CHANGE_PREVIOUS_VALUE`, which only ever meant "correct the
+    #: thing we were just discussing" and had to guess which field that was.
+    #: This one carries the field explicitly, so it can be honoured from any
+    #: step without the guess.
+    UPDATE_FIELD = "update_field"
+    COMPARE_OPTIONS = "compare_options"
+    #: The message could mean more than one thing and we will not pick for them.
+    CLARIFY = "clarify"
     ASK_QUESTION = "ask_question"
     REQUEST_OPTIONS = "request_options"
     REQUEST_EXPLANATION = "request_explanation"
@@ -139,6 +149,19 @@ class ConversationAction(BaseModel):
 
     target_step: ProjectStep | None = None
 
+    #: Which field an `UPDATE_FIELD` names, and what it should become.
+    #:
+    #: Carried separately from `values` because `values` is keyed by the
+    #: workflow's own slots, and an update may arrive in units the slot does not
+    #: use - an annual consumption figure has to become a monthly one before the
+    #: state machine ever sees it.
+    field: str | None = None
+    field_value: float | None = None
+    field_unit: str | None = None
+
+    #: What to ask when the message is ambiguous. Never a guess at the answer.
+    clarification: str | None = None
+
     @property
     def is_question(self) -> bool:
         return self.kind in {
@@ -152,6 +175,7 @@ class ConversationAction(BaseModel):
         return self.kind in {
             ActionKind.PROVIDE_VALUE,
             ActionKind.CHANGE_PREVIOUS_VALUE,
+            ActionKind.UPDATE_FIELD,
             ActionKind.RESET,
         }
 

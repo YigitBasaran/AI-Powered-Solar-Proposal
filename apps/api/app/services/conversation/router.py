@@ -60,6 +60,7 @@ from app.services.conversation.actions import (
     ExtractionStatus,
     Topic,
 )
+from app.services.conversation.context import ConversationContext
 from app.services.conversation.extractors import (
     Extraction,
     extract_consumption,
@@ -399,9 +400,19 @@ def _topic_for(step: ProjectStep | None) -> Topic:
 
 
 async def route_message(
-    text: str, *, step: ProjectStep, settings: Settings | None = None
+    text: str,
+    *,
+    step: ProjectStep,
+    settings: Settings | None = None,
+    context: ConversationContext | None = None,
 ) -> RoutedMessage:
-    """Classify one message, escalating to the model only when rules cannot."""
+    """Classify one message, escalating to the model only when rules cannot.
+
+    `context` carries what the project already knows. It is optional so the
+    unit tests can call this without a database, but the route always supplies
+    it - without it the model is asked to resolve "make it the bigger one"
+    while being told nothing about what was offered.
+    """
     settings = settings or get_settings()
     message = normalise(text)
 
@@ -431,7 +442,12 @@ async def route_message(
     from app.services.conversation.llm import classify_with_model
 
     action, interpretation = await classify_with_model(
-        message, step=step, settings=settings, fallback=fallback
+        message,
+        step=step,
+        settings=settings,
+        fallback=fallback,
+        known=dict(context.known) if context else None,
+        context=context,
     )
     return RoutedMessage(action=action, interpretation=interpretation, message=message)
 

@@ -42,6 +42,7 @@ from app.services.analysis_claim import (
 )
 from app.services.conversation.actions import ActionKind
 from app.services.conversation.answers import answer_question
+from app.services.conversation.context import RECENT_TURN_LIMIT, Turn, build_context
 from app.services.conversation.router import route_message
 from app.services.imagery import require_calibrated_imagery
 from app.services.proposal import existing_proposal
@@ -156,6 +157,25 @@ async def _pending_confirmation(session: AsyncSession, project: Project) -> str 
         return None
     pending = resolution.get("pendingConfirmation")
     return pending if isinstance(pending, str) else None
+
+
+async def _recent_turns(session: AsyncSession, project: Project) -> list[Turn]:
+    """The last few turns, oldest first.
+
+    Bounded deliberately. An unbounded transcript crowds out the instructions
+    and, because attention favours the tail, lets a turn from twenty messages
+    ago outrank the current one. The compact state summary is what carries the
+    facts; this is only here so a pronoun has something to point at.
+    """
+    rows = (
+        await session.execute(
+            select(ChatMessage)
+            .where(ChatMessage.project_id == project.id)
+            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+            .limit(RECENT_TURN_LIMIT)
+        )
+    ).scalars().all()
+    return [Turn(role=row.role, content=row.content) for row in reversed(rows)]
 
 
 async def _project_state(session: AsyncSession, project: Project) -> ProjectState:
@@ -367,7 +387,22 @@ async def chat(
     project = await _load(session, project_id)
     step = ProjectStep(project.current_step)
 
-    routed = await route_message(payload.message, step=step, settings=settings)
+    # State is assembled *before* routing, and that ordering is the fix.
+    #
+    # It used to be built afterwards, which meant the router - and therefore the
+    # model - could not see a single thing the customer had already said. Every
+    # live prompt rendered "Known so far: nothing yet", and "make it the bigger
+    # one" had to be resolved against nothing at all.
+    prior_state = await _project_state(session, project)
+    context = build_context(
+        prior_state,
+        settings=settings,
+        recent=await _recent_turns(session, project),
+    )
+
+    routed = await route_message(
+        payload.message, step=step, settings=settings, context=context
+    )
     action = routed.action
 
     # A change to a project whose proposal has been issued forks a revision,
@@ -388,7 +423,9 @@ async def chat(
         ChatMessage(project_id=project.id, role="user", content=payload.message, step=step.value)
     )
 
-    state = await _project_state(session, project)
+    # Re-read only when the turn forked a revision, because then `project` is a
+    # different row to the one `prior_state` describes.
+    state = prior_state if project is parent else await _project_state(session, project)
     answer = (
         answer_question(action=action, project=state, settings=settings)
         if action.is_question or action.kind is ActionKind.UNSUPPORTED_REQUEST

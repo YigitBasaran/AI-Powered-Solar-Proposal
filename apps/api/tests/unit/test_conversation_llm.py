@@ -94,9 +94,24 @@ def test_the_model_cannot_name_the_next_step() -> None:
     assert "target_step" not in json.dumps(LlmAction.model_json_schema())
 
 
-def test_confidence_is_not_in_the_model_facing_schema() -> None:
-    assert "confidence" not in LlmAction.model_fields
-    assert "confidence" not in json.dumps(LlmAction.model_json_schema())
+def test_confidence_is_optional_and_tolerant_of_how_a_model_expresses_it() -> None:
+    """Confidence is back, but it may never be a reason to discard an answer.
+
+    It was removed because it was required and bounded, so a model that read it
+    as a percentage and answered `100` had an otherwise-correct classification
+    thrown away by schema validation. It returns because "I am not sure" is
+    genuinely useful - but it is normalised rather than rejected, and it gates
+    only the decision to ask instead of act.
+    """
+    assert "confidence" in LlmAction.model_fields
+
+    assert LlmAction(kind=ActionKind.UNKNOWN).normalised_confidence == 1.0
+    assert LlmAction(kind=ActionKind.UNKNOWN, confidence=0.4).normalised_confidence == 0.4
+    # A percentage, which is the shape that broke the earlier build.
+    assert LlmAction(kind=ActionKind.UNKNOWN, confidence=100).normalised_confidence == 1.0
+    assert LlmAction(kind=ActionKind.UNKNOWN, confidence=90).normalised_confidence == 0.9
+    # Nonsense is clamped rather than raised on.
+    assert LlmAction(kind=ActionKind.UNKNOWN, confidence=-5).normalised_confidence == 0.0
 
 
 async def test_a_confidence_of_one_hundred_no_longer_discards_the_action(offline_env) -> None:
@@ -310,3 +325,91 @@ def test_the_prompt_never_contains_a_computed_figure() -> None:
     prompt = build_prompt(normalise("what is my payback?"), step=ProjectStep.PROPOSAL, known={})
     for forbidden in ("cashFlow", "annualSavings", "retrievedAt", "sourcePixelPolygon"):
         assert forbidden not in prompt
+
+
+# ---------------------------------------------------------------------------
+# Unsure means ask, not guess
+# ---------------------------------------------------------------------------
+
+
+async def test_a_low_confidence_mutation_asks_instead_of_acting(offline_env) -> None:
+    """The asymmetry that matters: acting on a bad guess is unrecoverable.
+
+    A tentative reading of a *question* costs a slightly-off explanation. A
+    tentative `provide_value` rewrites a figure the customer is relying on, and
+    they have no reason to check it again.
+    """
+    action, interpretation = await _classify(
+        {
+            "response": json.dumps(
+                {
+                    "kind": "provide_value",
+                    "topic": "system_size",
+                    "values": {"system_size_kwp": 9.6},
+                    "confidence": 0.2,
+                }
+            )
+        }
+    )
+
+    assert action.kind is ActionKind.CLARIFY
+    assert action.clarification
+    assert interpretation.effective_provider == "ollama", (
+        "the model answered; it was simply unsure, which is not a fallback"
+    )
+
+
+async def test_named_missing_fields_ask_for_exactly_those(offline_env) -> None:
+    action, _ = await _classify(
+        {
+            "response": json.dumps(
+                {
+                    "kind": "update_field",
+                    "topic": "consumption",
+                    "values": {},
+                    "confidence": 0.95,
+                    "missing_fields": ["monthly_consumption_kwh"],
+                }
+            )
+        }
+    )
+
+    assert action.kind is ActionKind.CLARIFY
+    assert "monthly electricity consumption" in (action.clarification or "")
+
+
+async def test_a_low_confidence_question_is_still_answered(offline_env) -> None:
+    """The gate applies to mutations only, so curiosity is not punished."""
+    action, _ = await _classify(
+        {
+            "response": json.dumps(
+                {
+                    "kind": "ask_question",
+                    "topic": "yield",
+                    "values": {},
+                    "confidence": 0.1,
+                }
+            )
+        }
+    )
+
+    assert action.kind is ActionKind.ASK_QUESTION
+
+
+async def test_a_confident_mutation_is_acted_on(offline_env) -> None:
+    """Both directions, so the gate cannot be vacuous."""
+    action, _ = await _classify(
+        {
+            "response": json.dumps(
+                {
+                    "kind": "provide_value",
+                    "topic": "system_size",
+                    "values": {"system_size_kwp": 9.6},
+                    "confidence": 0.98,
+                }
+            )
+        }
+    )
+
+    assert action.kind is ActionKind.PROVIDE_VALUE
+    assert action.values.system_size_kwp == 9.6

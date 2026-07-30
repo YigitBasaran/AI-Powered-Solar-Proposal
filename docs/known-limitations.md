@@ -12,7 +12,6 @@ These are honestly unproven. Nothing elsewhere in the repository claims otherwis
 
 | Item | Why |
 |---|---|
-| **Live Google Static Maps** | No API key was available. The code path is unit-tested with a mocked transport — it has never received a real Google response. Status, content type and payload size are validated, but the raster itself has not been seen. |
 | **GitHub Actions CI** | No git remote exists, so `.github/workflows/ci.yml` has never executed. Its commands are verified locally. There is no green badge and none is implied. |
 | **Ollama extraction quality** | The model *is* verified reachable: `qwen3.5:2b` was pulled on 2026-07-28 and the `@live` tier passes against it. What is uneven is its usefulness. Measured on 2026-07-29, ten of eleven probe messages — including every regression case the conversational redesign was written for — are settled deterministically in single-digit milliseconds; the model is consulted once, for the one phrasing no rule covers, and takes 2–7 s. It classifies *kind* reliably. It is less reliable about *values*: asked about *"about the same as we used last winter"* it returned a `provide_value` carrying an invented consumption figure, despite the prompt forbidding exactly that. The figure can only ever be a plausible consumption — never a computed one — and it is echoed straight back for correction, but it is a real weakness and is recorded rather than patched over. All of this is a property of a 2.3 B model, not of the integration, and it is why the workflow is built to run correctly on `LLM_PROVIDER=rules`. A larger model would need re-measuring, not re-coding. |
 | **SMTP notifications** | `EMAIL_MODE=console` is exercised; the SMTP branch is configuration-dependent and untested. |
@@ -78,6 +77,28 @@ The exhaustive offset sweep plus exact DP is right for four facets and ≤24 pan
 
 ### PDF rendering is in-request
 Chromium is launched inside the request that asks for the PDF. Fine at this scale; under real load it needs a worker queue. Memory-hungry.
+
+### Live Google imagery is a hard runtime dependency
+The application cannot show a roof, or measure one, without reaching Google
+Static Maps. There is no fixture mode and no substituted raster on failure: a
+stored image served in place of a failed fetch is how a correct-looking outline
+ends up drawn over the wrong picture, which happened here once already. A Google
+Maps API key is therefore required to run the product; tests are unaffected,
+because they point `GOOGLE_STATIC_MAPS_BASE_URL` at a local stub.
+
+**The calibration is pinned to one exact imagery configuration** — by a strict
+request signature and by a perceptual hash of the raster itself. If Google
+re-flies this tile, and it will, the map keeps rendering while measurement,
+panel layout and finalisation stop with a re-trace instruction. That is the
+intended failure direction and it is worth writing down because it will fire.
+
+Re-tracing is a **human** step. `/dev/roof-calibration` exists for it, the
+committed profile records `status: verified` with who verified it and when, and
+a profile still marked provisional fails its own test rather than shipping.
+
+The two providers do not agree: the Esri fixture and Google's capture place this
+building about **1.2 m** apart. That is why the fixture is test-replay data only
+and no longer stands in for live imagery anywhere in the product.
 
 ### Live PVGIS is a hard runtime dependency
 **An offline deployment cannot complete an analysis.** This is by design, and it

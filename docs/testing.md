@@ -23,6 +23,7 @@ cd apps/web && npm run typecheck && npm run test && npm run build
 # Static analysis
 cd apps/api && ./.venv/Scripts/python -m ruff check app tests
 cd apps/api && ./.venv/Scripts/python -m mypy app
+cd apps/api && ./.venv/Scripts/python -m alembic heads
 ```
 
 ```bash
@@ -37,7 +38,7 @@ cd apps/api && ./.venv/Scripts/python.exe ../../scripts/regenerate_sample_output
 ```bash
 # End-to-end. No servers to start first — the suite starts its own.
 cd apps/web
-npx playwright test --grep "@p0"              # the mandatory set
+npx playwright test --grep "@p0"              # the mandatory set (87)
 npx playwright test --grep-invert "@live"     # deterministic + degraded, everything
 npx playwright test --headed --grep "@p0"     # watch it happen
 npx playwright show-report                    # the HTML report from the last run
@@ -53,7 +54,9 @@ E2E_TARGET_URL=http://127.0.0.1:3000 npx playwright test --grep "@p0"
 
 Integration tests run against a **throwaway database** with Maps, FX and the LLM on committed fixtures — the configuration a reviewer gets from a clean clone with no credentials and no model pulled.
 
-**PVGIS is different, and deliberately so.** It has no fixture mode: the application always makes a real HTTP call. The suite stays offline by starting a local replay server (`tests/support/pvgis_stub.py`) and pointing `PVGIS_BASE_URL` at it, so every test exercises the same transport, retry and parse code a production call does. One mechanism serves pytest, all three Playwright launchers and both verification scripts, and because the stub keeps a request log, "a consumption change makes zero PVGIS calls" is an assertable count rather than a claim.
+**PVGIS and imagery are different, and deliberately so.** Neither has a fixture mode: the application always makes a real HTTP call for both. The suite stays offline by starting one local stub (`tests/support/pvgis_stub.py`) and pointing `PVGIS_BASE_URL` and `GOOGLE_STATIC_MAPS_BASE_URL` at it, so every test exercises the same transport, retry and parse code a production call does.
+
+The stub serves a **synthetic** raster, because Google's imagery is deliberately not committed to this repository. It also writes a roof calibration profile bound to that synthetic raster, which is how the suite satisfies the imagery-verification guard *for real* rather than switching it off. There is deliberately no "skip verification" flag anywhere — that is the flag that eventually ships enabled. One mechanism serves pytest, all three Playwright launchers and both verification scripts, and because the stub keeps a request log, "a consumption change makes zero PVGIS calls" is an assertable count rather than a claim.
 
 ---
 
@@ -163,7 +166,7 @@ Per-worker databases were the first preference and are not practical here: Next 
 | `@p1` | 33 | chromium |
 | `@live` | 7 | opt-in; skipped on a fixture stack, with the reason printed |
 
-`npx playwright test --grep-invert "@live"` → **122 passed**, 2.0 min, from a clean `.next` build. (2026-07-30; 117 before mandatory live PVGIS added `pvgis-failure.spec.ts` and `analysis-failure-ui.spec.ts` and removed the fixture-fallback spec. Faster than the 4.1 min recorded on 2026-07-29 because the probe refactor makes four PVGIS calls per analysis where the old path made seven.)
+`npx playwright test --grep-invert "@live"` → **124 passed**, 2.0 min, from a clean `.next` build. (2026-07-30; 117 before mandatory live PVGIS added `pvgis-failure.spec.ts` and `analysis-failure-ui.spec.ts` and removed the fixture-fallback spec. Faster than the 4.1 min recorded on 2026-07-29 because the probe refactor makes four PVGIS calls per analysis where the old path made seven.)
 
 `E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"` → **6 passed, 1 skipped**, 38.9 s, against real PVGIS, the real ECB feed and a locally pulled `qwen3.5:2b`. The skip is live Google Static Maps, which has no API key. That run is what caught the `think: false` defect — see [`local-ai.md`](local-ai.md).
 

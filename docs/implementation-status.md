@@ -4,7 +4,7 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated 2026-07-30: **1,211 API + 51 web + 122 E2E passing** (2 API tests `@live`-deselected); Ruff and strict MyPy clean over 54 source files. PVGIS fixture mode was removed from the runtime this day: every analysis now makes real PVGIS calls, an analysis that cannot fails rather than substituting a capture, and only a live observation from the canonical origin may back a proposal. See [`known-limitations.md`](known-limitations.md) for the trade-off that buys._
+_Last updated 2026-07-31: **1,289 API + 61 web + 124 E2E passing** (7 API tests `@live`-deselected); Ruff and strict MyPy clean over 58 source files. Two changes since: the roof calibration is now traced against **live Google imagery** and bound to it by request and imagery signatures, with `MAPS_MODE` deleted entirely; and the conversational router gained a global field-update layer ahead of step validation, a per-project electricity tariff, and real project context for the model. See [`conversation.md`](conversation.md) and [`known-limitations.md`](known-limitations.md)._
 
 ---
 

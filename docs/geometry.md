@@ -143,6 +143,50 @@ aspect = compass − 180
 
 This is **hemisphere-agnostic** — a pure change of angular reference. What changes below the equator is which aspect is *good*, not how it is computed.
 
+### The calibration is bound to the imagery it was traced on
+
+Pixels only mean something relative to one raster, so a calibration is valid
+only while the raster it was traced on is the raster being served. Nothing
+enforced that, and the cost was real: the committed vertices were digitised on
+**Esri** imagery re-projected onto Google's grid, and when live Google imagery
+was first served the roof sat about **1.2 m** from where the calibration said it
+was. Every number downstream computed cleanly — from the wrong outline.
+
+Two signatures now, because two different things drift.
+
+| | Covers | Check | On mismatch |
+|---|---|---|---|
+| **Request signature** | centre, zoom, size, scale, map type, and the raster geometry that follows | strict equality | start-up fails, naming the field that moved |
+| **Imagery signature** | what Google actually *returns* | perceptual hash, Hamming ≤ 8 of 64 | map still renders; measurement, layout and finalisation stop |
+
+The request being right is not enough, and that is exactly how the original bug
+hid: centre, zoom, size and scale were all word-for-word correct while the
+imagery underneath was another provider's capture.
+
+The content check is perceptual rather than exact because a re-encode is not a
+moved roof. Measured on the real service: two fetches of the same tile differ by
+**0** bits; the Esri fixture and the live Google raster differ by **22**. The
+SHA-256 is recorded for diagnostics and gates nothing — treating a re-compressed
+identical view as a moved roof is a false alarm, and false alarms are how a check
+ends up disabled.
+
+The old guard compared the raster **width and nothing else**, so a changed zoom,
+scale, centre or map type sailed through. Halving the zoom while doubling the
+requested size leaves the raster 1280 px wide and covering four times the ground;
+that now fails loudly.
+
+### Degraded mode is deliberately asymmetric
+
+When the imagery cannot be verified the map **still renders** — a customer
+looking at their own roof is not harmed by looking at it. What stops is
+everything *measured* from it: roof measurements, panel layout and finalisation
+return `409 ROOF_CALIBRATION_UNVERIFIED` with the Hamming distance and a
+re-trace instruction. A misplaced outline yields an area, a panel count and a
+payback that all look exactly as confident as correct ones.
+
+Google will re-fly this tile eventually. That turns a silent regression into an
+explicit, actionable failure.
+
 ### Both conventions are always named
 
 A field called `aspect` could mean either, and the ambiguity is not academic —

@@ -10,12 +10,21 @@ A chat-driven solar feasibility tool. A customer gives a location and their elec
 
 ## Quick start
 
-Runs with **no API keys and no model weights**:
-
 ```bash
 cp .env.example .env
+# Add your Google Maps API key to .env - see below for why it is required.
 docker compose up --build
 ```
+
+**A Google Maps Static API key is the one credential you must supply.** The
+application always fetches the satellite raster over HTTP; there is no imagery
+mode and no committed image standing in for one. That is deliberate: serving a
+stored raster when the fetch fails is how a correct-looking roof outline ends up
+drawn over the wrong picture, which is a defect this build has already had once.
+
+Everything else runs without credentials. PVGIS is public, the exchange rate
+falls back to a labelled capture, and the deterministic parser handles the whole
+conversation with no model pulled.
 
 - App → <http://localhost:3000>
 - API docs → <http://localhost:8000/docs>
@@ -42,6 +51,9 @@ python -m venv .venv && ./.venv/Scripts/python -m pip install -e ".[dev,pdf]"
 cd apps/web
 npm install && npm run dev
 ```
+
+The API applies its own migrations at start-up, so there is no separate
+`alembic upgrade` step.
 
 On Windows use `py -3.12` and `./.venv/Scripts/python`; on macOS/Linux use `python3` and `./.venv/bin/python`. `scripts/setup.ps1` and `scripts/setup.sh` do all of this for you.
 </details>
@@ -198,18 +210,19 @@ Full design: [`docs/conversation.md`](docs/conversation.md).
 ## Testing
 
 ```bash
-cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 1,065 tests
+cd apps/api && ./.venv/Scripts/python -m pytest -q -m "not live"   # 1,289 tests
 cd apps/api && ./.venv/Scripts/python -m ruff check app tests
-cd apps/api && ./.venv/Scripts/python -m mypy app                  # strict
-cd apps/web && npm run typecheck && npm run test && npm run build  # 51 tests
+cd apps/api && ./.venv/Scripts/python -m mypy app
+cd apps/api && ./.venv/Scripts/python -m alembic heads              # one head expected
+cd apps/web && npm run typecheck && npm run test && npm run build  # 61 tests
 ```
 
 ```bash
 # End-to-end. Nothing to start first — the suite starts its own stacks.
 cd apps/web
 npx playwright test --grep "@p0"            # 87 mandatory
-npx playwright test --grep-invert "@live"   # 122: deterministic + degraded + pvgis-down
-npx playwright test --grep "@live"          # 7, opt-in; skips on a fixture stack
+npx playwright test --grep-invert "@live"   # 124: deterministic + degraded + pvgis-down
+npx playwright test --grep "@live"          # opt-in; needs E2E_LIVE to name a service
 ```
 
 Playwright starts **three stacks**. A deterministic one on `:3100`/`:8100` where Maps, FX and the LLM are committed fixtures and PVGIS answers from a local replay server on `:8102`. A degraded one on `:3101`/`:8101` whose FX and Ollama endpoints cannot resolve. And an API-only one on `:8103` — no browser, no Next build — whose PVGIS points at a fault path that always answers 503, for the failure spec.

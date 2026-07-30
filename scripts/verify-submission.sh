@@ -63,7 +63,7 @@ echo "== API: tests (offline; PVGIS answered by the local replay stub) =="
 "$VENV_PY" -m pytest -q -m "not live"
 
 echo "== API: complete a proposal end to end =="
-APP_ENV=test MAPS_MODE=fixture FX_MODE=fixture LLM_PROVIDER=rules \
+APP_ENV=test FX_MODE=fixture LLM_PROVIDER=rules \
 "$VENV_PY" - <<'PYCODE'
 import os, tempfile
 from pathlib import Path

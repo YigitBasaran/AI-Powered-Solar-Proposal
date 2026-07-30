@@ -65,7 +65,7 @@ There is no step where a human has to remember to start something first. Playwri
 
 | Tier | Web | API | Configuration |
 |---|---|---|---|
-| **A — deterministic** | `:3100` | `:8100` | `MAPS_MODE`/`FX_MODE=fixture`, `LLM_PROVIDER=rules`, PVGIS at the replay stub on `:8102` |
+| **A — deterministic** | `:3100` | `:8100` | `FX_MODE=fixture`, `LLM_PROVIDER=rules`, PVGIS and imagery at the replay stub on `:8102` |
 | **B — degraded** | `:3101` | `:8101` | FX and Ollama pointed at hosts that cannot resolve; PVGIS at the replay stub, because an unreachable PVGIS now fails the analysis outright and there would be no proposal left to test |
 | **C — live** | `:3100` | `:8100` | `@live`; skips itself unless the stack really is live. `E2E_LIVE=pvgis` *omits* the base-URL override rather than flipping a mode |
 | **D — pvgis-down** | — | `:8103` | API only, no browser, no Next build. PVGIS pointed at a fault path that always answers 503, for `e2e/pvgis-failure.spec.ts` |

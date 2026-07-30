@@ -117,9 +117,13 @@ metersPerSourceImagePixel = metersPerLogicalPixel / scale
                           = 0.0618500 m
 ```
 
-### The fixture must not be used as a scale source
+### No image is used as a scale source
 
-`MAPS_MODE=fixture` is the default (no API key required). The committed fixture is rendered on the **identical Web Mercator bbox** that Google Static Maps `z20 / scale=2 / 640x640` covers, at the identical `1280 × 1280` raster size. Therefore `FixtureImageTransform` is the **identity**, `verified = true`, and calibration performed against the fixture remains valid unchanged when `MAPS_MODE=live` swaps in real Google imagery.
+Ground resolution comes from Web Mercator and the verified `zoom`/`scale`, never from the pixel dimensions of whatever raster is on screen. That rule is why the `0.0618500 m` above is derived rather than measured.
+
+**There is no imagery mode.** The application always fetches the raster over HTTP from `GOOGLE_STATIC_MAPS_BASE_URL`, which in any real deployment is Google's own Static Maps service. Tests point that URL at a local stub, so they stay offline without the *application* having an offline path.
+
+The committed Esri fixture used to stand in for live imagery, and its sidecar asserted that the fixture→source-map transform was the identity, `verified = true`. That claim was read by no code, and it did not survive contact with reality: when live Google imagery was first served, the roof sat about **1.2 m** from where the calibration said it was, because the two providers orthorectify this building differently. The calibration is now traced against Google's own raster and bound to it by a perceptual hash — see [`known-limitations.md`](known-limitations.md). The fixture remains only as test-replay data.
 
 The brief's own reference images are **topology references only** and are deliberately *not* used as the map substrate:
 

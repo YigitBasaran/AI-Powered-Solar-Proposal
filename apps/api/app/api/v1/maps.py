@@ -10,28 +10,25 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Response
 
 from app.core.config import Settings, get_settings
 from app.core.errors import AppError, MapsUnavailableError
-from app.domain.imagery import request_signature, verify_imagery
+from app.domain.imagery import is_google_endpoint, request_signature, verify_imagery
 from app.services.roof import calibration_metadata, load_calibration
 
 logger = logging.getLogger("solarvis.maps")
 
 router = APIRouter(prefix="/maps", tags=["maps"])
 
-#: The canonical origin. Only a request to *this* host needs an API key; the
-#: test stub does not have one and must not be made to invent one.
-GOOGLE_STATIC_HOST = "maps.googleapis.com"
 MIN_IMAGE_BYTES = 2048
 
-
-def _is_canonical(url: str) -> bool:
-    return urlparse(url).hostname == GOOGLE_STATIC_HOST
+#: Only a request to Google's own host needs an API key; the test stub does not
+#: have one and must not be made to invent one. Shared with the PDF and the
+#: health probe so "is this really Google?" is decided in one place.
+_is_canonical = is_google_endpoint
 
 
 def _calibration_expectations(settings: Settings) -> dict[str, Any]:

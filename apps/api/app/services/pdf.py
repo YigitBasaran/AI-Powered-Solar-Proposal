@@ -19,6 +19,7 @@ from typing import Any
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.core.config import Settings, get_settings
+from app.domain.imagery import is_google_endpoint
 from app.services.charts import (
     cash_flow_chart,
     facet_orientation_diagram,
@@ -72,10 +73,13 @@ def _data_mode_notes(snapshot: dict[str, Any], settings: Settings) -> list[str]:
         # and still has to say what it was built on.
         notes.append("Production figures come from captured PVGIS fixtures, not a live call.")
 
-    if settings.maps_mode.value == "fixture":
+    if not is_google_endpoint(settings.google_static_maps_base_url):
+        # There is no imagery mode to consult any more, so this asks the only
+        # question that matters: did the raster come from Google? Anything else
+        # is a stub, which is fine for a test stack and not fine on a document.
         notes.append(
-            "Satellite imagery is a development fixture rendered on the verified "
-            "map grid, not a live Google Static Maps request."
+            "Satellite imagery did not come from Google Static Maps, so it is not "
+            "the imagery this roof was calibrated against."
         )
     return notes
 
@@ -112,9 +116,10 @@ def build_context(
         encoded = base64.b64encode(layout_image_bytes).decode("ascii")
         layout_image = f"data:image/png;base64,{encoded}"
 
-    map_attribution = "Imagery (c) Esri, Maxar, Earthstar Geographics"
-    if settings.maps_mode.value == "live":
-        map_attribution = "Map data (c) Google"
+    # Imagery is always fetched from the configured endpoint, and in any real
+    # deployment that is Google. The Esri attribution belonged to the committed
+    # fixture, which no longer takes part in the product flow.
+    map_attribution = "Map data (c) Google"
 
     return {
         "roof": roof,

@@ -2,7 +2,7 @@
 
 This repository is a **case-study submission**. It bundles a small number of third-party assets so the application runs end-to-end without API credentials. Those assets are included for **evaluation of this submission only**.
 
-> **None of the bundled imagery is cleared for unrestricted public redistribution.** Do not treat inclusion here as a grant of rights. Anyone reusing this repository beyond reviewing the submission should replace the fixtures with imagery they are licensed to use, or run in `MAPS_MODE=live` with their own Google Maps API key.
+> **None of the bundled imagery is cleared for unrestricted public redistribution.** Do not treat inclusion here as a grant of rights. Anyone reusing this repository beyond reviewing the submission should replace the fixtures with imagery they are licensed to use, or supply their own Google Maps API key, which is what the application uses at runtime.
 
 ---
 
@@ -18,11 +18,11 @@ This repository is a **case-study submission**. It bundles a small number of thi
 
 **Why this asset exists.** The brief specifies Google Maps Static API, which requires an API key. To keep the application runnable with **zero credentials**, the fixture is rendered from an openly reachable imagery service on the **exact Web Mercator bounding box** that Google Static Maps `zoom=20 / scale=2 / size=640x640` covers at the resolved coordinate, at the identical `1280 × 1280` raster size.
 
-Because the fixture sits on the same grid as the live raster, the fixture→source-map transform is the **identity**, and roof calibration performed on the fixture remains valid unchanged when `MAPS_MODE=live` substitutes genuine Google imagery. The fixture is a stand-in for the *pixels*, never for the *geometry*: all real-world measurement derives from the verified Web Mercator configuration, not from the image.
+The fixture sits on the same Web Mercator grid as the live raster, so it is a stand-in for the *pixels* and never for the *geometry*: all real-world measurement derives from the verified configuration, not from the image. It is **not** a stand-in for live imagery in the product, which always fetches from Google — the two providers orthorectify this building about 1.2 m apart, which is why the roof is calibrated against Google's own raster.
 
 **Attribution handling.** The attribution string is stored in `satellite-fixture.json`, rendered as a persistent layer in the roof workspace, and therefore baked into every exported layout snapshot and PDF. It is not removable from the UI.
 
-**Live mode.** Setting `MAPS_MODE=live` with a `GOOGLE_MAPS_API_KEY` bypasses this fixture entirely and uses Google imagery under Google's own terms, with Google's attribution baked into the returned raster.
+**At runtime.** The application always requests imagery from Google Static Maps with your `GOOGLE_MAPS_API_KEY`, under Google's own terms, with Google's attribution baked into the returned raster. The bundled fixture takes no part in that flow; it answers the test stub only.
 
 ---
 
@@ -51,7 +51,7 @@ Called live over the network; no data redistributed in this repository.
 | **PVGIS 5.3** (European Commission JRC) | Facet-level PV yield | Free non-commercial use; JRC attribution retained in proposal assumptions |
 | **Frankfurter** (`api.frankfurter.dev`) | USD→EUR reference rate | Open API; underlying data © European Central Bank |
 | **European Central Bank** | Reference rate provider | ECB euro foreign exchange reference rates |
-| **Google Maps Static API** | Satellite imagery in `MAPS_MODE=live` | Google Maps Platform Terms of Service; requires the user's own API key |
+| **Google Maps Static API** | All satellite imagery at runtime | Google Maps Platform Terms of Service; requires the user's own API key |
 | **Nominatim / OpenStreetMap** | One-off coordinate verification during development | © OpenStreetMap contributors, ODbL 1.0 — used for research only, not called at runtime |
 | **Ollama + Qwen3.5** | Optional local LLM | Model weights are **not** committed; pulled on demand by the user |
 

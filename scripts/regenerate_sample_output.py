@@ -54,7 +54,6 @@ def _configure() -> None:
             # came back as replay, finalisation would refuse and this script
             # would fail rather than produce a mislabelled document.
             "ALLOW_REPLAY_PROPOSALS": "false",
-            "MAPS_MODE": os.environ.get("MAPS_MODE", "fixture"),
             "LLM_PROVIDER": os.environ.get("LLM_PROVIDER", "rules"),
         }
     )

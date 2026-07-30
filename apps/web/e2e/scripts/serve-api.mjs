@@ -51,7 +51,6 @@ const common = {
   LOG_LEVEL: "WARNING",
   DATABASE_URL: sqliteUrl(dbPath),
   API_BASE_URL: `http://127.0.0.1:${port}`,
-  MAPS_MODE: "fixture",
   // Imagery has no fixture mode either: the API always makes a real HTTP
   // request. The stub answers it, and the calibration profile written beside
   // the stub is bound to that synthetic raster, so the verification guard runs

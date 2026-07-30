@@ -110,7 +110,6 @@ try {
 
     Write-Host '== API: complete a proposal end to end =='
     $env:APP_ENV = 'test'
-    $env:MAPS_MODE = 'fixture'
     $env:FX_MODE = 'fixture'
     $env:LLM_PROVIDER = 'rules'
     # PVGIS has no fixture mode; the inline script starts the replay stub and

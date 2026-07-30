@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info(
         "solarVis API starting | env=%s maps=%s pvgis=%s fx=%s llm=%s",
         settings.app_env,
-        settings.maps_mode,
+        settings.google_static_maps_base_url,
         # Not a mode - the endpoint, because that is the thing that varies and
         # the thing that decides whether an observation is proposal-grade.
         settings.pvgis_base_url,

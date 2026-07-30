@@ -39,6 +39,7 @@ import io
 import json
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import numpy as np
 from PIL import Image
@@ -84,6 +85,20 @@ class ImageryVerdict:
     expected: str
     actual: str
     reason: str | None = None
+
+
+#: Google's own Static Maps host.
+#:
+#: Imagery from anywhere else is a stub. That is a legitimate configuration for
+#: a test stack and never a legitimate one for a proposal, so the distinction is
+#: made here, once, rather than by a mode flag that has to be kept in step with
+#: reality by hand.
+GOOGLE_STATIC_HOST = "maps.googleapis.com"
+
+
+def is_google_endpoint(url: str) -> bool:
+    """Does this URL point at Google's own Static Maps service?"""
+    return urlparse(url).hostname == GOOGLE_STATIC_HOST
 
 
 def request_signature(config: Any) -> str:

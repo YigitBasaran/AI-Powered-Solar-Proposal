@@ -138,7 +138,6 @@ Every mode is surfaced in the UI, the snapshot and the PDF. **Fixture data is ne
 
 | Setting | Default | Fallback |
 |---|---|---|
-| `MAPS_MODE` | `fixture` | — |
 | `FX_MODE` | `live` | → cache → labelled fixture, **never parity** |
 | `LLM_PROVIDER` | `rules` | → rules |
 

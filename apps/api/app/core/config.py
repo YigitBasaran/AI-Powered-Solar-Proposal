@@ -43,11 +43,6 @@ EARTH_RADIUS_M = 6_378_137.0
 WEB_MERCATOR_TILE_SIZE_PX = 256
 
 
-class MapsMode(StrEnum):
-    LIVE = "live"
-    FIXTURE = "fixture"
-
-
 class FxMode(StrEnum):
     LIVE = "live"
     FIXTURE = "fixture"
@@ -194,7 +189,6 @@ class Settings(BaseSettings):
     #: verification path rather than a bypass flag - there is deliberately no
     #: "skip the check" setting, because that is the setting that gets left on.
     roof_calibration_path: str = ""
-    maps_mode: MapsMode = MapsMode.FIXTURE
     google_maps_api_key: str = ""
     google_maps_zoom: int = 20
     google_maps_size: str = "640x640"

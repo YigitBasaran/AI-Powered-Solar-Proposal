@@ -45,7 +45,6 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
     keys = (
         "APP_ENV",
         "DATABASE_URL",
-        "MAPS_MODE",
         "GOOGLE_STATIC_MAPS_BASE_URL",
         "GOOGLE_MAPS_API_KEY",
         "ROOF_CALIBRATION_PATH",
@@ -61,7 +60,6 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
             # environment, and they check this rather than trusting a flag.
             "APP_ENV": "test",
             "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
-            "MAPS_MODE": "fixture",
             # Imagery has no fixture mode either: the app always makes a real
             # HTTP request, and the suite stays offline by answering it locally.
             # Without this a developer's own key in `.env` would send the whole

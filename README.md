@@ -146,7 +146,6 @@ Every mode is surfaced in the UI, in the proposal snapshot, and in the PDF assum
 
 | Setting | Default | Notes |
 |---|---|---|
-| `MAPS_MODE` | `fixture` | `live` needs `GOOGLE_MAPS_API_KEY`; key stays server-side |
 | `FX_MODE` | `live` | Frankfurter with ECB as the explicit provider |
 | `LLM_PROVIDER` | `rules` | `ollama` · `rules` · `disabled` — the full flow works in all three |
 | `EMAIL_MODE` | `console` | Proposal-view notifications |

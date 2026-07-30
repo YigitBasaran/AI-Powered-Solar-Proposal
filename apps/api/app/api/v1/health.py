@@ -26,6 +26,7 @@ from app.core.config import (
     Settings,
     get_settings,
 )
+from app.domain.imagery import is_google_endpoint
 from app.integrations.pvgis import classify_endpoint
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -43,10 +44,8 @@ def _maps_status(settings: Settings) -> dict[str, Any]:
     and whether it is Google's own. No outbound call is made - a readiness probe
     must not - so this reports configuration, not reachability.
     """
-    from app.api.v1.maps import _is_canonical
-
     url = settings.google_static_maps_base_url
-    live = _is_canonical(url)
+    live = is_google_endpoint(url)
 
     if live:
         return {

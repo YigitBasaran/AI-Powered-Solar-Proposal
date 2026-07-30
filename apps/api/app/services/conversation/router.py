@@ -68,7 +68,12 @@ from app.services.conversation.extractors import (
     extract_system_size,
 )
 from app.services.conversation.normalise import Normalised, normalise
-from app.services.conversation.questions import classify_topic, is_question, question_kind
+from app.services.conversation.questions import (
+    classify_topic,
+    is_question,
+    question_kind,
+    topic_named_in,
+)
 from app.services.conversation.telemetry import FallbackReason, Interpretation, rules_only
 
 #: Wiping the answers so far is destructive, so the wording has to be explicit.
@@ -237,11 +242,20 @@ def classify(message: Normalised, *, step: ProjectStep) -> ConversationAction | 
         # the action unambiguous; `values` is what makes it actionable.
         values = ExtractedValues()
         if update.field == field_updates.FIELD_CONSUMPTION:
-            values = ExtractedValues(monthly_consumption_kwh=field_updates.to_monthly_kwh(update))
+            with contextlib.suppress(ValidationError):
+                values = ExtractedValues(
+                    monthly_consumption_kwh=field_updates.to_monthly_kwh(update)
+                )
         elif update.field == field_updates.FIELD_SYSTEM_SIZE:
             with contextlib.suppress(ValidationError):
-                values = ExtractedValues(selected_system_size_kwp=update.value)
+                values = ExtractedValues(system_size_kwp=update.value)
 
+        # `extraction` has to say VALID for the setters to act: they refuse
+        # anything else, which is right for a half-read message and wrong here,
+        # where the field and the figure were both stated outright. It stays
+        # ABSENT when the value failed domain validation - an out-of-whitelist
+        # size, say - so the refusal wording still comes from the state machine.
+        populated = values.model_dump(exclude_none=True) != {}
         return ConversationAction(
             kind=ActionKind.UPDATE_FIELD,
             topic=update.topic,
@@ -249,6 +263,7 @@ def classify(message: Normalised, *, step: ProjectStep) -> ConversationAction | 
             field_value=update.value,
             field_unit=update.unit,
             values=values,
+            extraction=ExtractionStatus.VALID if populated else ExtractionStatus.INVALID,
             question=message.raw.strip(),
         )
 
@@ -303,13 +318,17 @@ def classify(message: Normalised, *, step: ProjectStep) -> ConversationAction | 
     if _CHANGE.search(text):
         topic, extraction = _change_target(message)
 
-        # "Actually make it 10000" names no field, and the figure fits none of
-        # them cleanly. The old behaviour guessed - system size first, on the
+        # "Actually make it 10000" names no field at all, so there is nothing to
+        # resolve it against. The old behaviour guessed - size first, on the
         # reasoning that "change it to 6" is more likely a size than six
-        # kilowatt-hours - which silently rewrote whichever value the guess
-        # landed on. Asking costs one turn; guessing wrong costs a wrong
-        # proposal that nobody notices.
-        if extraction.status is not ExtractionStatus.VALID and _is_bare_quantity(text):
+        # kilowatt-hours - and silently rewrote whatever the guess landed on.
+        #
+        # The condition is "the message named no field", not "no extractor
+        # matched". Those differ, and the difference is the bug: 10000 is not a
+        # valid size but *is* a valid monthly consumption, so an extractor-based
+        # test still resolves it confidently to the wrong field. Asking costs
+        # one turn; guessing wrong costs a proposal nobody re-checks.
+        if topic_named_in(message) is None and _is_bare_quantity(text):
             return ConversationAction(
                 kind=ActionKind.CLARIFY,
                 topic=Topic.GENERAL,

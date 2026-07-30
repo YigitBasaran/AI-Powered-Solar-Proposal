@@ -151,6 +151,7 @@ async def run_analysis(
     monthly_consumption_kwh: float,
     system_size_kwp: float,
     settings: Settings | None = None,
+    tariff_eur_per_kwh: float | None = None,
     pvgis_client: PvgisClient | None = None,
     fx_service: ExchangeRateService | None = None,
     probes: PvgisProbeSet | None = None,
@@ -180,7 +181,7 @@ async def run_analysis(
     financial = calculate_financials(
         monthly_consumption_kwh=monthly_consumption_kwh,
         annual_production_kwh=yield_result.total_annual_production_kwh,
-        electricity_price_eur_per_kwh=Decimal(str(settings.case_electricity_price)),
+        electricity_price_eur_per_kwh=tariff_for(settings, tariff_eur_per_kwh),
         capex=capex,
     )
 
@@ -437,6 +438,18 @@ def exchange_rate_from_snapshot(snapshot: dict[str, object]) -> ExchangeRate:
 ANGLE_TOLERANCE_DEG = 1e-6
 
 
+def tariff_for(settings: Settings, tariff_eur_per_kwh: float | None) -> Decimal:
+    """The electricity price to quote against.
+
+    `None` means the customer has not given one, so the configured case rate
+    stands. Stated once here because three entry points need it and a
+    disagreement between them would show up as a payback that changes depending
+    on which route recomputed it.
+    """
+    value = settings.case_electricity_price if tariff_eur_per_kwh is None else tariff_eur_per_kwh
+    return Decimal(str(value))
+
+
 def probe_set_from_snapshot(snapshot: dict[str, object]) -> PvgisProbeSet | None:
     """Rebuild the probe batch a snapshot already recorded.
 
@@ -576,6 +589,7 @@ def recompute_for_consumption(
     snapshot: dict[str, object],
     monthly_consumption_kwh: float,
     settings: Settings | None = None,
+    tariff_eur_per_kwh: float | None = None,
 ) -> dict[str, object]:
     """A new snapshot for a changed consumption. Financial only.
 
@@ -590,7 +604,7 @@ def recompute_for_consumption(
     financial = calculate_financials(
         monthly_consumption_kwh=monthly_consumption_kwh,
         annual_production_kwh=float(energy["totalAnnualProductionKwh"]),
-        electricity_price_eur_per_kwh=Decimal(str(settings.case_electricity_price)),
+        electricity_price_eur_per_kwh=tariff_for(settings, tariff_eur_per_kwh),
         capex=_capex_from(rate, settings),
     )
 
@@ -603,6 +617,7 @@ async def recompute_for_system_size(
     system_size_kwp: float,
     monthly_consumption_kwh: float,
     settings: Settings | None = None,
+    tariff_eur_per_kwh: float | None = None,
     pvgis_client: PvgisClient | None = None,
     probes: PvgisProbeSet | None = None,
 ) -> dict[str, object]:
@@ -632,7 +647,7 @@ async def recompute_for_system_size(
     financial = calculate_financials(
         monthly_consumption_kwh=monthly_consumption_kwh,
         annual_production_kwh=yield_result.total_annual_production_kwh,
-        electricity_price_eur_per_kwh=Decimal(str(settings.case_electricity_price)),
+        electricity_price_eur_per_kwh=tariff_for(settings, tariff_eur_per_kwh),
         capex=capex,
     )
 

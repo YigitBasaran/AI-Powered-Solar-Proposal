@@ -73,6 +73,7 @@ ASSIGNABLE: frozenset[str] = frozenset(
         "resolved_longitude",
         "monthly_consumption_kwh",
         "selected_system_size_kwp",
+        "electricity_tariff_eur_per_kwh",
         "analysis_json",
         "analysis_status",
     }
@@ -242,11 +243,12 @@ async def _recalculate(
         return None
 
     try:
-        if outcome.changed_inputs == frozenset({"monthly_consumption_kwh"}):
+        if outcome.changed_inputs <= {"monthly_consumption_kwh", "electricity_tariff_eur_per_kwh"}:
             updated = analysis_service.recompute_for_consumption(
                 snapshot=snapshot,
                 monthly_consumption_kwh=float(project.monthly_consumption_kwh or 0.0),
                 settings=settings,
+                tariff_eur_per_kwh=project.electricity_tariff_eur_per_kwh,
             )
         else:
             updated = await analysis_service.recompute_for_system_size(
@@ -254,6 +256,7 @@ async def _recalculate(
                 system_size_kwp=float(project.selected_system_size_kwp or 0.0),
                 monthly_consumption_kwh=float(project.monthly_consumption_kwh or 0.0),
                 settings=settings,
+                tariff_eur_per_kwh=project.electricity_tariff_eur_per_kwh,
             )
     except Exception:
         # The snapshot now describes inputs the project no longer has. Leaving
@@ -543,6 +546,7 @@ async def run_project_analysis(
             monthly_consumption_kwh=project.monthly_consumption_kwh,
             system_size_kwp=project.selected_system_size_kwp,
             settings=settings,
+            tariff_eur_per_kwh=project.electricity_tariff_eur_per_kwh,
             fx_service=ExchangeRateService(settings, cache=SqlExchangeRateCache(session)),
         )
     except AppError as error:

@@ -73,12 +73,12 @@ def test_an_action_request_written_as_a_question_still_updates(client, at_system
     )
 
 
-def test_a_tariff_request_is_understood_and_answered_honestly(client, at_system_size):
-    """Recognised, and refused for the right reason rather than misfiled.
+def test_a_tariff_request_written_as_a_question_is_applied(client, at_system_size):
+    """A price, filed as a price.
 
-    Tariff is not storable yet. The property that matters is that the reply says
-    so instead of writing 0.31 into some other field - which is exactly what
-    happened while `use` was a consumption word.
+    The property that matters is that 0.31 does not land in some other field -
+    which is exactly what happened while `use` was a consumption word, and the
+    customer's consumption was silently rewritten to 0.31 kWh a month.
     """
     before = _project(client, at_system_size)["monthlyConsumptionKwh"]
     reply = _say(client, at_system_size, "Could you use 0.31 EUR/kWh instead?")
@@ -200,3 +200,51 @@ def test_an_update_after_analysis_recalculates_the_dependent_figures(client):
     )
     # Coverage and savings are properties of usage, so they must move.
     assert after["financial"]["coveragePercent"] != before["financial"]["coveragePercent"]
+
+
+# ---------------------------------------------------------------------------
+# The tariff is a real, stored, per-project value
+# ---------------------------------------------------------------------------
+
+
+def test_a_tariff_change_moves_the_savings_and_leaves_production_alone(client):
+    """The dependency rule for a tariff, asserted rather than assumed.
+
+    Electricity price has no bearing on how much sun falls on a roof, so
+    production must not move. It has every bearing on what the electricity is
+    worth, so savings and payback must.
+    """
+    project_id = client.post("/api/v1/projects").json()["projectId"]
+    for message in (CASE_COORD, "1,150 kWh", "6 kWp"):
+        _say(client, project_id, message)
+    assert client.post(f"/api/v1/projects/{project_id}/run-analysis").status_code == 200
+
+    before = _project(client, project_id)["analysis"]
+    _say(client, project_id, "My tariff is actually 0.31 EUR/kWh")
+    after = _project(client, project_id)["analysis"]
+
+    # Serialised as a string, because money is a Decimal all the way down.
+    assert float(after["financial"]["electricityPriceEurPerKwh"]) == pytest.approx(0.31)
+    assert float(after["financial"]["annualSavingsEur"]) > float(
+        before["financial"]["annualSavingsEur"]
+    ), (
+        "a higher tariff makes the same generation worth more"
+    )
+    assert float(after["financial"]["simplePaybackYears"]) < float(
+        before["financial"]["simplePaybackYears"]
+    )
+
+    assert (
+        after["energy"]["totalAnnualProductionKwh"]
+        == before["energy"]["totalAnnualProductionKwh"]
+    ), "the price of electricity moved the modelled production"
+    assert after["layout"]["placedPanelCount"] == before["layout"]["placedPanelCount"]
+
+
+def test_an_implausible_tariff_is_refused_rather_than_stored(client, at_system_size):
+    """Zero makes payback infinite; both would render as a confident figure."""
+    reply = _say(client, at_system_size, "Change my tariff to 0 EUR/kWh")
+
+    assert "doesn't look right" in reply["assistantMessage"]
+    project = _project(client, at_system_size)
+    assert project["currentStep"] == "system_size"

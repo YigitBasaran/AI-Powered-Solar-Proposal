@@ -94,6 +94,14 @@ class Project(Base):
     analysis_status: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
     analysis_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
 
+    #: The customer's own electricity tariff, in EUR per kWh.
+    #:
+    #: Null means "use the configured case rate". Stored per project rather than
+    #: read from settings alone because a tariff is a property of the customer,
+    #: not of the deployment - two people looking at the same roof can face
+    #: different prices, and the payback they are quoted has to reflect theirs.
+    electricity_tariff_eur_per_kwh: Mapped[float | None] = mapped_column(Float, nullable=True)
+
     #: Why the last analysis failed - a structured `{code, message, details}`.
     #:
     #: Not inside `analysis_json`, because `validate_ready` and the whole read

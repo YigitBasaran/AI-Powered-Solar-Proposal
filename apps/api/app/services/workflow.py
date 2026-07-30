@@ -345,6 +345,9 @@ _FIELD_FOR_STEP: dict[ProjectStep, str] = {
     ProjectStep.SYSTEM_SIZE: "selected_system_size_kwp",
 }
 
+#: Above this a "tariff" is almost certainly a different quantity.
+_MAX_PLAUSIBLE_TARIFF = 5.0
+
 CHANGEABLE: dict[Topic, str] = {
     Topic.CONSUMPTION: "monthly_consumption_kwh",
     Topic.SYSTEM_SIZE: "selected_system_size_kwp",
@@ -661,6 +664,51 @@ __all__ = [
 ]
 
 
+def _set_tariff(
+    project: ProjectState, action: ConversationAction, settings: Settings
+) -> StepOutcome:
+    """Store the customer's own electricity price.
+
+    Validated here rather than trusted: a tariff of zero makes the payback
+    infinite and a negative one makes it meaningless, and both would render as a
+    confident figure rather than as a mistake.
+
+    It changes the financial results and nothing else - the roof, the layout and
+    the modelled production do not depend on what electricity costs - so it
+    triggers the same narrow recompute a consumption change does.
+    """
+    value = action.field_value
+    if value is None or not (0.0 < value < _MAX_PLAUSIBLE_TARIFF):
+        prompt = restate(project.current_step, settings)
+        shown = "that" if value is None else f"{value:g} EUR/kWh"
+        return _stay(
+            project,
+            f"A tariff of {shown} doesn't look right - it needs to be above zero "
+            f"and below {_MAX_PLAUSIBLE_TARIFF:g}. What do you pay per kWh?"
+            + (f"\n\n{prompt}" if prompt else ""),
+            accepted=False,
+        )
+
+    message = (
+        f"Electricity tariff set to EUR {value:.2f}/kWh (the case default is "
+        f"{settings.case_electricity_price:.2f}). That moves your savings and "
+        f"payback; the roof, the panel layout and the production figures are "
+        f"unaffected."
+    )
+    if project.has_analysis:
+        message += "\n\nRecalculating the financial figures now."
+    prompt = restate(project.current_step, settings)
+    if prompt:
+        message += f"\n\n{prompt}"
+
+    return StepOutcome(
+        assistant_message=message,
+        next_step=project.current_step,
+        updates={"electricity_tariff_eur_per_kwh": value},
+        changed_inputs=frozenset({"electricity_tariff_eur_per_kwh"}),
+    )
+
+
 def _update_field(
     project: ProjectState,
     action: ConversationAction,
@@ -682,16 +730,7 @@ def _update_field(
     from app.services.conversation import field_updates
 
     if action.field == field_updates.FIELD_TARIFF:
-        prompt = restate(project.current_step, settings)
-        return _stay(
-            project,
-            "I can't change the electricity tariff yet — the financial model uses "
-            f"a configured rate of {settings.case_electricity_price:.2f} EUR/kWh "
-            "for this case, and per-project tariffs aren't stored. Everything else "
-            "you've given me still stands."
-            + (f"\n\n{prompt}" if prompt else ""),
-            accepted=False,
-        )
+        return _set_tariff(project, action, settings)
 
     # An update that supplies the value the current step is waiting for is an
     # *answer*, and has to advance like one.

@@ -115,6 +115,14 @@ _UNSUPPORTED = re.compile(
     r"pretend|disregard (?:the )?(?:rules|instructions))\b"
 )
 
+#: Steps whose valid answers are a fixed, short list.
+#:
+#: A figure outside an enumeration is probably about something else entirely; a
+#: figure outside a *range* is a bad answer to the question that was asked. The
+#: two deserve different replies, and conflating them is how `0` at the
+#: consumption step came to be answered with "which value did you mean?".
+_ENUMERATED_STEPS = frozenset({ProjectStep.SYSTEM_SIZE})
+
 #: Steps that expect a value, and the extractor that reads it.
 _EXTRACTORS = {
     ProjectStep.LOCATION: (Topic.LOCATION, extract_location),
@@ -360,18 +368,26 @@ def classify(message: Normalised, *, step: ProjectStep) -> ConversationAction | 
         and extraction.read_a_quantity
         and not (bare_confirmation and not _carries_a_definite_value(extraction, step))
     ):
-        # A figure the step cannot use, given with nothing to say what it is,
-        # is not an answer - it is an ambiguity, and the honest reply is a
-        # question rather than a refusal.
+        # A bare figure that the step cannot use is an ambiguity, and the honest
+        # reply is a question - but only where "cannot use" really means "might
+        # not be about this field at all".
         #
-        # This used to bind *any* message containing a numeral to the pending
-        # step, valid or not. So `10000` at the system-size step was refused as
-        # "not one of the three available sizes" when the customer plainly meant
-        # something else, and the refusal named the wrong subject entirely.
+        # That is true of an *enumerated* step. The sizes are 3.6, 6 and 9.6, so
+        # `10000` is not a bad size; it is almost certainly not a size. Refusing
+        # it as "not one of the three available sizes" answers a question the
+        # customer did not ask.
         #
-        # A figure with a unit is still treated as an attempt at an answer, so
-        # `-500 kWh` keeps its specific "must be greater than zero" reply.
-        if extraction.status is not ExtractionStatus.VALID and _is_bare_quantity(text):
+        # It is not true of a *range* step. Consumption accepts any positive
+        # figure, so `0` is not ambiguous - it is a consumption figure that
+        # cannot be used, and "it has to be greater than zero" is exactly the
+        # right reply. Asking "did you mean consumption?" there would be
+        # obtuse: they had just been asked for consumption and answered with a
+        # number.
+        if (
+            step in _ENUMERATED_STEPS
+            and extraction.status is not ExtractionStatus.VALID
+            and _is_bare_quantity(text)
+        ):
             return ConversationAction(
                 kind=ActionKind.CLARIFY,
                 topic=Topic.GENERAL,

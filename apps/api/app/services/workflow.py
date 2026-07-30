@@ -336,6 +336,15 @@ def _provide_value(
             return _change_value(project, action, raw, settings)
 
 
+#: Which named field each step is actually waiting for.
+#:
+#: Used to tell an *answer* phrased as an instruction from a *correction* to an
+#: earlier value. The first advances the workflow; the second must not.
+_FIELD_FOR_STEP: dict[ProjectStep, str] = {
+    ProjectStep.CONSUMPTION: "monthly_consumption_kwh",
+    ProjectStep.SYSTEM_SIZE: "selected_system_size_kwp",
+}
+
 CHANGEABLE: dict[Topic, str] = {
     Topic.CONSUMPTION: "monthly_consumption_kwh",
     Topic.SYSTEM_SIZE: "selected_system_size_kwp",
@@ -684,7 +693,17 @@ def _update_field(
             accepted=False,
         )
 
-    # Consumption and system size both map to columns the state machine already
-    # owns, so they go through the existing correction path and inherit its
-    # validation, its recalculation and its wording.
+    # An update that supplies the value the current step is waiting for is an
+    # *answer*, and has to advance like one.
+    #
+    # Routing everything through the correction path looks tidier and is wrong:
+    # corrections deliberately do not move the step, so a first-time answer that
+    # happened to be phrased as an instruction - "set the system size to 6 kWp"
+    # - stored the value and then sat on the same question for ever. Intake
+    # never completed and no analysis ever ran.
+    if _FIELD_FOR_STEP.get(project.current_step) == action.field:
+        return _provide_value(project, action, raw_text, settings)
+
+    # Anything else is a change to a value from an earlier step, which inherits
+    # the correction path's validation, recalculation and wording.
     return _change_value(project, action, raw_text, settings)

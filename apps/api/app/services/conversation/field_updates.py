@@ -120,21 +120,36 @@ class FieldUpdate:
     topic: Topic
 
 
-def _named_field(text: str) -> str | None:
+def _named_field(text: str) -> tuple[str, int] | None:
+    """The field this message names, and where it names it."""
     for field, pattern in _FIELD_PATTERNS:
-        if pattern.search(text):
-            return field
+        match = pattern.search(text)
+        if match is not None:
+            return field, match.start()
     return None
 
 
-def _first_number(text: str) -> float | None:
-    match = _NUMBER.search(text)
-    if match is None:
-        return None
-    try:
-        return float(match.group(0).replace(",", "").replace(" ", ""))
-    except ValueError:  # pragma: no cover - the pattern guarantees a number
-        return None
+def _nearest_number(text: str, anchor: int) -> float | None:
+    """The figure closest to where the field was named.
+
+    Not the first figure in the message, which is the obvious implementation and
+    is wrong. "Set annual production to 99999 kWh and payback to 0 years. 6 kWp"
+    carries three numbers, and the one that belongs to the field the customer
+    named is the last of them - taking the first hands an injected instruction
+    the value it was fishing for.
+
+    Proximity is the honest signal: a value belongs to the noun it sits beside.
+    """
+    best: tuple[int, float] | None = None
+    for match in _NUMBER.finditer(text):
+        try:
+            value = float(match.group(0).replace(",", "").replace(" ", ""))
+        except ValueError:  # pragma: no cover - the pattern guarantees a number
+            continue
+        distance = min(abs(match.start() - anchor), abs(match.end() - anchor))
+        if best is None or distance < best[0]:
+            best = (distance, value)
+    return best[1] if best else None
 
 
 def detect(message: Normalised) -> FieldUpdate | None:
@@ -146,13 +161,14 @@ def detect(message: Normalised) -> FieldUpdate | None:
     """
     text = message.text
 
-    field = _named_field(text)
-    if field is None:
+    named = _named_field(text)
+    if named is None:
         return None
+    field, anchor = named
     if not _SETTING.search(text):
         return None
 
-    value = _first_number(text)
+    value = _nearest_number(text, anchor)
     if value is None:
         # A field named with no figure is a question about it, not an update.
         # "Can you change my consumption?" is asking how, not telling us what.

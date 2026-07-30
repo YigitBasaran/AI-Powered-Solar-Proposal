@@ -121,6 +121,12 @@ class ProjectResponse(BaseModel):
     annualConsumptionKwh: float | None
     selectedSystemSizeKwp: float | None
     requestedPanelCount: int | None
+    #: The customer's own electricity price, or null for the configured case rate.
+    #:
+    #: Published because it is an input *they* set and may want to check. It was
+    #: stored, used in every financial figure, and invisible to every client -
+    #: so nobody could confirm the price their payback had been quoted at.
+    electricityTariffEurPerKwh: float | None = None
     analysisStatus: str
     #: `{code, message, details}` when the last analysis failed, else null.
     #:
@@ -315,6 +321,7 @@ def _to_response(
         monthlyConsumptionKwh=monthly,
         annualConsumptionKwh=monthly * 12.0 if monthly else None,
         selectedSystemSizeKwp=size,
+        electricityTariffEurPerKwh=project.electricity_tariff_eur_per_kwh,
         requestedPanelCount=settings.required_panel_count(size) if size else None,
         analysisStatus=project.analysis_status,
         analysisError=project.analysis_error_json,

@@ -450,6 +450,41 @@ def answer_question(
     return compose(action=action, facts=facts, entry=entry, settings=settings)
 
 
+async def answer_and_polish(
+    *,
+    action: ConversationAction,
+    project: Any,
+    settings: Settings | None = None,
+) -> tuple[Answer, str | None]:
+    """The deterministic answer, reworded by the model when that is safe.
+
+    `paraphrase` has existed since the conversational rebuild and was never
+    called - so `AnswerSource.LLM_PARAPHRASE` was unreachable in production and
+    the model contributed nothing to how an answer *read*, only to how a message
+    was classified. That is most of why it seemed to add so little.
+
+    Wiring it in is safe because the deterministic answer is composed first and
+    the model only rewords it. It cannot introduce a figure: `paraphrase`
+    whitelists the numbers already present in the facts and in its own source
+    text, and any other number sends the deterministic wording through
+    unchanged. Every rejection is returned as a named reason rather than
+    swallowed, so a silently degraded language layer stays visible.
+    """
+    settings = settings or get_settings()
+    answer = answer_question(action=action, project=project, settings=settings)
+
+    if settings.llm_provider is not LlmProvider.OLLAMA:
+        return answer, "not_configured"
+
+    facts = build_facts(project=project, settings=settings, topic=action.topic)
+    return await paraphrase(
+        question=action.question or "",
+        answer=answer,
+        facts=facts,
+        settings=settings,
+    )
+
+
 def facts_for(action: ConversationAction, project: Any, settings: Settings) -> FactBundle:
     return build_facts(project=project, settings=settings, topic=action.topic)
 

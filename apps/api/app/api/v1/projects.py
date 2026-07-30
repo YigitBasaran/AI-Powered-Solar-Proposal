@@ -41,7 +41,7 @@ from app.services.analysis_claim import (
     release_stale_claim,
 )
 from app.services.conversation.actions import ActionKind
-from app.services.conversation.answers import answer_question
+from app.services.conversation.answers import answer_and_polish
 from app.services.conversation.context import RECENT_TURN_LIMIT, Turn, build_context
 from app.services.conversation.router import route_message
 from app.services.imagery import require_calibrated_imagery
@@ -429,11 +429,19 @@ async def chat(
     # Re-read only when the turn forked a revision, because then `project` is a
     # different row to the one `prior_state` describes.
     state = prior_state if project is parent else await _project_state(session, project)
-    answer = (
-        answer_question(action=action, project=state, settings=settings)
-        if action.is_question or action.kind is ActionKind.UNSUPPORTED_REQUEST
-        else None
-    )
+    # The deterministic answer, reworded by the model where that is safe.
+    #
+    # The paraphrase path existed since the conversational rebuild and was never
+    # called, so the model shaped nothing a customer actually read - which is
+    # most of why it seemed to add so little. It cannot introduce a figure: the
+    # answer is composed first from the fact bundle, and any number the model
+    # writes that is not already in those facts sends the deterministic wording
+    # through unchanged.
+    answer = None
+    if action.is_question or action.kind is ActionKind.UNSUPPORTED_REQUEST:
+        answer, _paraphrase_rejection = await answer_and_polish(
+            action=action, project=state, settings=settings
+        )
     outcome = handle_message(
         project=state,
         action=action,

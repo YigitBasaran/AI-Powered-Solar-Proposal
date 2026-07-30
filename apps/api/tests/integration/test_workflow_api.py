@@ -380,15 +380,15 @@ def test_satellite_image_is_served_same_origin_and_labelled(client) -> None:
     """Same origin, so the Konva canvas stays exportable and the key stays server-side.
 
     The suite answers from a local stub, so the source reads `stub` rather than
-    `live` - and the imagery is deliberately not Google's, so it is reported as
-    unverified. Both labels are the point: nothing downstream may mistake this
-    for the raster the roof was calibrated against.
+    `live` - nothing downstream may mistake it for Google's own raster. It *is*
+    reported as verified, because the suite's calibration profile is bound to
+    that synthetic raster: the guard is exercised for real rather than bypassed.
     """
     response = client.get("/api/v1/maps/satellite")
     assert response.status_code == 200
     assert response.headers["content-type"] == "image/png"
     assert response.headers["X-Image-Source"] == "stub"
-    assert response.headers["X-Imagery-Verified"] == "false"
+    assert response.headers["X-Imagery-Verified"] == "true"
     assert len(response.content) > 100_000
 
 

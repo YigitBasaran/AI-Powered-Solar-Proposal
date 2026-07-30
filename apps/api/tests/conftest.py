@@ -48,6 +48,7 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
         "MAPS_MODE",
         "GOOGLE_STATIC_MAPS_BASE_URL",
         "GOOGLE_MAPS_API_KEY",
+        "ROOF_CALIBRATION_PATH",
         "PVGIS_BASE_URL",
         "ALLOW_REPLAY_PROPOSALS",
         "FX_MODE",
@@ -88,6 +89,16 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
 
     get_settings.cache_clear()
 
+    # A calibration bound to the stub's raster.
+    #
+    # The committed profile is bound to Google's imagery, which is deliberately
+    # not in this repository, so the suite would otherwise be unable to satisfy
+    # the verification it is meant to be testing. Writing a profile for the
+    # synthetic raster keeps the *real* guard in the path - there is no bypass
+    # flag, because a bypass flag is what eventually ships enabled.
+    os.environ["ROOF_CALIBRATION_PATH"] = str(_test_calibration(tmpdir, stub_url))
+    get_settings.cache_clear()
+
     yield db_path
 
     for key, value in previous.items():
@@ -96,6 +107,45 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
         else:
             os.environ[key] = value
     get_settings.cache_clear()
+
+
+def _test_calibration(tmpdir: Path, stub_url: str) -> Path:
+    """The committed roof geometry, re-bound to the stub's synthetic raster."""
+    import json
+    import urllib.request
+
+    from app.core.config import get_settings
+    from app.domain.imagery import (
+        describe_request,
+        imagery_sha256,
+        perceptual_hash,
+        request_signature,
+    )
+    from app.services.roof import CALIBRATION_PATH
+
+    cfg = get_settings().satellite_image_config
+    params = (
+        f"?center={cfg.center_latitude},{cfg.center_longitude}"
+        f"&zoom={cfg.zoom}&size={cfg.requested_width_px}x{cfg.requested_height_px}"
+        f"&scale={cfg.scale}&maptype={cfg.map_type}"
+    )
+    with urllib.request.urlopen(f"{stub_url}/maps/api/staticmap{params}", timeout=30) as raw:
+        raster = raw.read()
+
+    data = json.loads(CALIBRATION_PATH.read_text(encoding="utf-8"))
+    data["calibration_metadata"] = {
+        **data.get("calibration_metadata", {}),
+        "traced_against": "the test stub's synthetic raster",
+        "request_signature": request_signature(cfg),
+        "request": describe_request(cfg),
+        "imagery": {
+            "perceptual_hash": perceptual_hash(raster),
+            "sha256": imagery_sha256(raster),
+        },
+    }
+    path = tmpdir / "test_roof_calibration.json"
+    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return path
 
 
 @pytest.fixture

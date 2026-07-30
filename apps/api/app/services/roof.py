@@ -71,6 +71,13 @@ def _load_calibration(path: Path) -> dict[str, Any]:
     return data
 
 
+def calibration_path_for(settings: Settings | None = None) -> Path:
+    """The profile in force: the configured override, or the committed one."""
+    settings = settings or get_settings()
+    configured = settings.roof_calibration_path.strip()
+    return Path(configured) if configured else CALIBRATION_PATH
+
+
 def load_calibration(
     settings: Settings | None = None, *, calibration_path: Path | None = None
 ) -> dict[str, Any]:
@@ -79,7 +86,7 @@ def load_calibration(
     Exposed for callers that need only its provenance - the maps endpoint asks
     which imagery it was traced on, and has no use for the geometry.
     """
-    return _load_calibration(calibration_path or CALIBRATION_PATH)
+    return _load_calibration(calibration_path or calibration_path_for(settings))
 
 
 def calibration_metadata(data: dict[str, Any]) -> dict[str, Any]:
@@ -152,7 +159,7 @@ def build_roof_model(
     settings: Settings | None = None, *, calibration_path: Path | None = None
 ) -> RoofModel:
     settings = settings or get_settings()
-    data = _load_calibration(calibration_path or CALIBRATION_PATH)
+    data = _load_calibration(calibration_path or calibration_path_for(settings))
 
     cfg = settings.satellite_image_config
     m_per_px = cfg.ground_m_per_source_px

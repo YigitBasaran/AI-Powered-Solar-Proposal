@@ -105,15 +105,14 @@ def build_request_params(settings: Settings) -> dict[str, str | int]:
     return params
 
 
-@router.get("/satellite")
-async def satellite(settings: Settings = Depends(get_settings)) -> Response:
-    """The satellite raster, always fetched over HTTP.
+async def fetch_raster(
+    settings: Settings, *, client: httpx.AsyncClient | None = None
+) -> bytes:
+    """The raster bytes, validated as an image but not yet interpreted.
 
-    There is no fixture branch. An offline deployment cannot show imagery,
-    and an offline *test* points `GOOGLE_STATIC_MAPS_BASE_URL` at a local
-    stub - the same seam PVGIS uses. Substituting a committed raster when the
-    request fails would put a correct-looking overlay on the wrong picture,
-    which is the exact failure this change exists to remove.
+    Shared by the route that serves it and by the verifier that decides whether
+    measurement is permitted, so the two cannot end up asking different servers
+    or applying different validation.
     """
     url = settings.google_static_maps_base_url
 
@@ -125,13 +124,19 @@ async def satellite(settings: Settings = Depends(get_settings)) -> Response:
 
     params = build_request_params(settings)
 
-    async with httpx.AsyncClient() as client:
+    async def _get(http: httpx.AsyncClient) -> httpx.Response:
         try:
-            response = await client.get(url, params=params, timeout=15.0)
+            return await http.get(url, params=params, timeout=15.0)
         except (httpx.TimeoutException, httpx.TransportError) as exc:
             raise MapsUnavailableError(
                 f"Google Static Maps unreachable: {type(exc).__name__}"
             ) from exc
+
+    if client is not None:
+        response = await _get(client)
+    else:
+        async with httpx.AsyncClient() as owned:
+            response = await _get(owned)
 
     if response.status_code != 200:
         raise MapsUnavailableError(
@@ -144,13 +149,29 @@ async def satellite(settings: Settings = Depends(get_settings)) -> Response:
     if len(response.content) < MIN_IMAGE_BYTES:
         raise MapsUnavailableError("Google returned a suspiciously small image")
 
+    return response.content
+
+
+@router.get("/satellite")
+async def satellite(settings: Settings = Depends(get_settings)) -> Response:
+    """The satellite raster, always fetched over HTTP.
+
+    There is no fixture branch. An offline deployment cannot show imagery,
+    and an offline *test* points `GOOGLE_STATIC_MAPS_BASE_URL` at a local
+    stub - the same seam PVGIS uses. Substituting a committed raster when the
+    request fails would put a correct-looking overlay on the wrong picture,
+    which is the exact failure this change exists to remove.
+    """
+    url = settings.google_static_maps_base_url
+    content = await fetch_raster(settings)
+
     # Is this the imagery the roof was traced on? Reported rather than
     # enforced here: the picture is still worth showing, and it is the
     # *measurement* that is withheld when the answer is no.
     meta = _calibration_expectations(settings)
     expected = (meta.get("imagery") or {}).get("perceptual_hash")
     try:
-        verdict = verify_imagery(response.content, expected_hash=expected)
+        verdict = verify_imagery(content, expected_hash=expected)
     except (OSError, ValueError) as exc:
         # A body that claims `image/*` and does not decode is not a map. The
         # content-type check above cannot catch this: a truncated transfer keeps
@@ -165,12 +186,12 @@ async def satellite(settings: Settings = Depends(get_settings)) -> Response:
 
     logger.info(
         "served satellite image (%d bytes, imagery %s)",
-        len(response.content),
+        len(content),
         "verified" if verdict.matches else "UNVERIFIED",
     )
     return Response(
-        content=response.content,
-        media_type=content_type,
+        content=content,
+        media_type="image/png",
         headers={
             # Long-lived, but the URL carries the signature, so a
             # configuration change is a different URL rather than a stale hit.

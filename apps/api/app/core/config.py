@@ -186,6 +186,14 @@ class Settings(BaseSettings):
     #: application an offline path. A silently substituted raster is worse than a
     #: missing one: the overlay still renders, and it renders over the wrong roof.
     google_static_maps_base_url: str = "https://maps.googleapis.com/maps/api/staticmap"
+
+    #: Which roof calibration profile to measure from.
+    #:
+    #: Empty means the committed Google profile. A test points this at a profile
+    #: bound to the stub's synthetic raster, so the suite exercises the real
+    #: verification path rather than a bypass flag - there is deliberately no
+    #: "skip the check" setting, because that is the setting that gets left on.
+    roof_calibration_path: str = ""
     maps_mode: MapsMode = MapsMode.FIXTURE
     google_maps_api_key: str = ""
     google_maps_zoom: int = 20

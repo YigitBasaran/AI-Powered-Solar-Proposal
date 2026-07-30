@@ -43,6 +43,7 @@ from app.services.analysis_claim import (
 from app.services.conversation.actions import ActionKind
 from app.services.conversation.answers import answer_question
 from app.services.conversation.router import route_message
+from app.services.imagery import require_calibrated_imagery
 from app.services.proposal import existing_proposal
 from app.services.revisions import find_or_create_revision, find_revision, revision_notice
 from app.services.workflow import (
@@ -491,6 +492,16 @@ async def run_project_analysis(
     claim = await claim_analysis(session, project, status="running", settings=settings)
 
     try:
+        # Is the imagery the roof was traced on the imagery being served? A
+        # misplaced outline still produces a plausible area, a plausible panel
+        # count and a plausible payback, so this stops the analysis rather than
+        # annotating it.
+        #
+        # Inside the claim, so a request refused as a duplicate costs no imagery
+        # fetch, and inside the `try`, so a failure is recorded against the run
+        # and the claim is released like any other.
+        await require_calibrated_imagery(settings)
+
         result = await run_analysis(
             monthly_consumption_kwh=project.monthly_consumption_kwh,
             system_size_kwp=project.selected_system_size_kwp,

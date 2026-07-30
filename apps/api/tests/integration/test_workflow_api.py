@@ -413,8 +413,14 @@ def test_roof_endpoint_publishes_source_pixel_geometry(client) -> None:
 
 def test_health_ready_reports_every_operating_mode(client) -> None:
     checks = client.get("/api/v1/health/ready").json()["checks"]
-    assert checks["maps"]["mode"] == "fixture"
     assert checks["fx"]["mode"] == "fixture"
+
+    # Imagery has no fixture mode either. Like PVGIS, what is reported is the
+    # endpoint that will be called - here the local stub, which is honest about
+    # not being Google.
+    maps = checks["maps"]
+    assert maps["mode"] == "stub"
+    assert "127.0.0.1" in maps["endpoint"]
 
     # PVGIS has no mode: it is always a real call. What is reported is which
     # endpoint will be called and whether that configuration could back a

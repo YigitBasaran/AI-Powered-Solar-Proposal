@@ -9,7 +9,7 @@
  */
 
 export type StackMode = {
-  maps: "live" | "fixture";
+  maps: "live" | "stub";
   /**
    * PVGIS has no mode - it is always a real call. What identifies the tier is
    * *which endpoint* the stack will call, so that is what is read. A `@live`
@@ -49,7 +49,7 @@ export async function readStackMode(baseURL: string): Promise<StackMode> {
   }
   const body = (await response.json()) as ReadyPayload;
   return {
-    maps: body.checks.maps.mode as "live" | "fixture",
+    maps: body.checks.maps.mode as "live" | "stub",
     pvgisEndpoint: body.checks.pvgis.endpoint,
     pvgisTrusted: body.checks.pvgis.trusted,
     fx: body.checks.fx.mode as "live" | "fixture",

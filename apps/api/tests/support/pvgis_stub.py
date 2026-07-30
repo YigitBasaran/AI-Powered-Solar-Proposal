@@ -422,14 +422,66 @@ def _bound_port(servers: Iterable[Any]) -> int:
     raise RuntimeError("the PVGIS stub bound no socket")  # pragma: no cover
 
 
+def write_stub_calibration(destination: Path) -> Path:
+    """The committed roof geometry, re-bound to this stub's synthetic raster.
+
+    The verification guard is real in every environment; what differs is which
+    imagery each environment can legitimately claim to have been traced on. An
+    E2E stack gets a profile for the raster it will actually be served, so it
+    exercises the guard rather than a bypass.
+    """
+    import json
+
+    from app.core.config import get_settings
+    from app.domain.imagery import (
+        describe_request,
+        imagery_sha256,
+        perceptual_hash,
+        request_signature,
+    )
+    from app.services.roof import CALIBRATION_PATH
+
+    cfg = get_settings().satellite_image_config
+    raster = _synthetic_raster(cfg.source_width_px)
+
+    data = json.loads(CALIBRATION_PATH.read_text(encoding="utf-8"))
+    data["calibration_metadata"] = {
+        **data.get("calibration_metadata", {}),
+        "traced_against": "the test stub's synthetic raster",
+        "request_signature": request_signature(cfg),
+        "request": describe_request(cfg),
+        "imagery": {
+            "perceptual_hash": perceptual_hash(raster),
+            "sha256": imagery_sha256(raster),
+        },
+    }
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    return destination
+
+
 def main() -> None:  # pragma: no cover - exercised by the E2E launcher
     parser = argparse.ArgumentParser(description="PVGIS replay stub (test infrastructure)")
     parser.add_argument("--port", type=int, default=8102)
     parser.add_argument("--captures", type=Path, default=None)
+    parser.add_argument(
+        "--write-calibration",
+        type=Path,
+        default=None,
+        help=(
+            "Write a roof calibration profile bound to this stub's synthetic "
+            "raster. The committed profile is bound to Google's imagery, which "
+            "is not in this repository, so an E2E stack needs its own."
+        ),
+    )
     args = parser.parse_args()
 
     base_url, stub, stop = start_stub(port=args.port, captures_dir=args.captures)
     print(f"[pvgis-stub] replaying {sorted(stub.captures)} on {base_url}", flush=True)
+
+    if args.write_calibration:
+        path = write_stub_calibration(args.write_calibration)
+        print(f"[pvgis-stub] wrote a matching roof calibration to {path}", flush=True)
     try:
         while True:
             time.sleep(3600)

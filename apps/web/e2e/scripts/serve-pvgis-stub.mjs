@@ -30,11 +30,17 @@ if (!Number.isInteger(port)) throw new Error("--port is required");
 await requireFreePort(port, "PVGIS replay stub");
 
 const apiRoot = resolve(REPO_ROOT, "apps", "api");
+
+// The stub writes a roof calibration bound to the raster it will serve. The
+// committed profile is bound to Google's imagery, which is deliberately not in
+// this repository, so an offline stack needs its own - and gets to exercise the
+// verification guard for real rather than switching it off.
+const calibrationPath = resolve(REPO_ROOT, "apps", "web", ".e2e-tmp", "stub-roof-calibration.json");
 const python =
   process.env.E2E_PYTHON ??
   resolve(apiRoot, process.platform === "win32" ? ".venv/Scripts/python.exe" : ".venv/bin/python");
 
-const child = spawn(python, ["-m", "tests.support.pvgis_stub", "--port", String(port)], {
+const child = spawn(python, ["-m", "tests.support.pvgis_stub", "--port", String(port), "--write-calibration", calibrationPath], {
   cwd: apiRoot,
   stdio: "inherit",
   env: { ...process.env, PYTHONPATH: apiRoot },

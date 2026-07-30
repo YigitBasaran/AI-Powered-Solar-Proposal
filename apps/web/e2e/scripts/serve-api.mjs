@@ -52,8 +52,20 @@ const common = {
   DATABASE_URL: sqliteUrl(dbPath),
   API_BASE_URL: `http://127.0.0.1:${port}`,
   MAPS_MODE: "fixture",
+  // Imagery has no fixture mode either: the API always makes a real HTTP
+  // request. The stub answers it, and the calibration profile written beside
+  // the stub is bound to that synthetic raster, so the verification guard runs
+  // for real in E2E rather than being switched off.
+  GOOGLE_STATIC_MAPS_BASE_URL: `http://127.0.0.1:${process.env.E2E_PVGIS_STUB_PORT ?? 8102}/maps/api/staticmap`,
+  GOOGLE_MAPS_API_KEY: "",
+  ROOF_CALIBRATION_PATH: stubCalibrationPath(),
   GOOGLE_MAPS_API_KEY: "",
 };
+
+/** Where the stub writes the calibration profile that matches its raster. */
+function stubCalibrationPath() {
+  return resolve(REPO_ROOT, "apps", "web", ".e2e-tmp", "stub-roof-calibration.json");
+}
 
 const stubPort = process.env.E2E_PVGIS_STUB_PORT ?? 8102;
 const stubBase = `http://127.0.0.1:${stubPort}/api/v5_3`;

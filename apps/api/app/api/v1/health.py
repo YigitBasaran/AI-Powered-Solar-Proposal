@@ -23,7 +23,6 @@ from fastapi import APIRouter
 from app.core.config import (
     TEST_ENVIRONMENTS,
     LlmProvider,
-    MapsMode,
     Settings,
     get_settings,
 )
@@ -38,24 +37,35 @@ async def live() -> dict[str, str]:
 
 
 def _maps_status(settings: Settings) -> dict[str, Any]:
-    fixture = settings.fixtures_dir / "maps" / "satellite-fixture.png"
-    if settings.maps_mode is MapsMode.LIVE:
+    """Where imagery comes from, and whether it could back a measurement.
+
+    Not a mode: there is no fixture branch any more. What varies is the endpoint,
+    and whether it is Google's own. No outbound call is made - a readiness probe
+    must not - so this reports configuration, not reachability.
+    """
+    from app.api.v1.maps import _is_canonical
+
+    url = settings.google_static_maps_base_url
+    live = _is_canonical(url)
+
+    if live:
         return {
             "mode": "live",
+            "endpoint": url,
             "ready": bool(settings.google_maps_api_key),
             "detail": (
                 "Google Maps Static API"
                 if settings.google_maps_api_key
-                else "MAPS_MODE=live but GOOGLE_MAPS_API_KEY is empty"
+                else "GOOGLE_MAPS_API_KEY is empty, so imagery cannot be fetched"
             ),
         }
     return {
-        "mode": "fixture",
-        "ready": fixture.is_file(),
+        "mode": "stub",
+        "endpoint": url,
+        "ready": True,
         "detail": (
-            "Development fixture on the exact z20/scale2 grid. Not live imagery."
-            if fixture.is_file()
-            else "Fixture image missing"
+            "Imagery is answered by a local stub, not by Google. Measurements "
+            "taken against it are not proposal-grade."
         ),
     }
 

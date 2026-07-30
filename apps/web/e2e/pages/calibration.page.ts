@@ -85,13 +85,23 @@ export class CalibrationPage {
     const box = await this.canvas.boundingBox();
     if (!box) throw new Error("calibration canvas has no bounding box");
     const width = await this.sourceWidthPx();
-    // View starts at scale 1, offset 0, and the stage is laid out at
-    // (container width / source width). Independent of the component's maths:
-    // this is just "the image fills the container".
-    const base = box.width / width;
+    // The raster is square, so one dimension describes both.
+    const height = width;
 
-    const mouseX = Math.round(box.x + source.x * base);
-    const mouseY = Math.round(box.y + source.y * base);
+    // View starts at scale 1, offset 0, and the raster is fitted inside the
+    // stage with `contain` and centred. Restated here from the published
+    // contract rather than imported, so this stays an independent check of the
+    // component rather than a copy of it.
+    //
+    // It used to be `box.width / width` with no offset - i.e. "the image fills
+    // the container width" - which was only ever true because the raster and
+    // the container happened to be square together.
+    const base = Math.min(box.width / width, box.height / height);
+    const originX = box.x + (box.width - width * base) / 2;
+    const originY = box.y + (box.height - height * base) / 2;
+
+    const mouseX = Math.round(originX + source.x * base);
+    const mouseY = Math.round(originY + source.y * base);
 
     const viewport = this.page.viewportSize();
     if (viewport && (mouseY > viewport.height || mouseX > viewport.width)) {
@@ -112,7 +122,7 @@ export class CalibrationPage {
 
     return {
       reported: { x: Number(x), y: Number(y) },
-      expected: { x: (mouseX - box.x) / base, y: (mouseY - box.y) / base },
+      expected: { x: (mouseX - originX) / base, y: (mouseY - originY) / base },
     };
   }
 }

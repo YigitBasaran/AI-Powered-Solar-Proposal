@@ -4,6 +4,7 @@ import type Konva from "konva";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from "react-konva";
 
+import { rasterTransform, stagePixelRatio } from "@/lib/raster";
 import type { MapConfig } from "@/types/api";
 import type { CalEdge, CalFacet, CalVertex, EdgeType, Mode } from "./calibrationTypes";
 import { EDGE_COLOUR } from "./calibrationTypes";
@@ -55,7 +56,11 @@ export function CalibrationCanvas({
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
 
-  const source = mapConfig?.sourceWidthPx ?? 1280;
+  const raster = {
+    sourceWidthPx: mapConfig?.sourceWidthPx ?? 1280,
+    sourceHeightPx: mapConfig?.sourceHeightPx ?? 1280,
+  };
+  const source = raster.sourceWidthPx;
 
   useEffect(() => {
     const element = containerRef.current;
@@ -73,22 +78,32 @@ export function CalibrationCanvas({
     img.onload = () => setImage(img);
   }, [mapConfig]);
 
-  const base = width / source; // source px -> unzoomed stage px
+  // The same transform the product uses. If the tracing tool and the product
+  // disagreed about where a source pixel lands, a human would faithfully trace
+  // vertices that are wrong everywhere else.
+  const transform = useMemo(
+    () => rasterTransform(raster, { width, height }),
+    [raster.sourceWidthPx, raster.sourceHeightPx, width, height],
+  );
+  const base = transform.scale;
   const vertexById = useMemo(() => new Map(vertices.map((v) => [v.id, v])), [vertices]);
 
-  const toStage = useCallback((p: { x: number; y: number }) => ({ x: p.x * base, y: p.y * base }), [base]);
+  const toStage = useCallback(
+    (p: { x: number; y: number }) => transform.toScreen(p),
+    [transform],
+  );
 
   /** Pointer position in SOURCE pixels, undoing pan and zoom. */
   const pointerSource = useCallback(
     (stage: Konva.Stage) => {
       const pointer = stage.getPointerPosition();
       if (!pointer) return null;
-      return {
-        x: (pointer.x - view.x) / view.scale / base,
-        y: (pointer.y - view.y) / view.scale / base,
-      };
+      return transform.toSource({
+        x: (pointer.x - view.x) / view.scale,
+        y: (pointer.y - view.y) / view.scale,
+      });
     },
-    [view, base],
+    [view, transform],
   );
 
   const fit = useCallback(() => {
@@ -141,6 +156,7 @@ export function CalibrationCanvas({
         ref={stageRef}
         width={width}
         height={height}
+        pixelRatio={stagePixelRatio()}
         scaleX={view.scale}
         scaleY={view.scale}
         x={view.x}
@@ -173,9 +189,21 @@ export function CalibrationCanvas({
       >
         <Layer listening={false}>
           {showLayers.image && image ? (
-            <KonvaImage image={image} width={source * base} height={source * base} />
+            <KonvaImage
+              image={image}
+              x={transform.offsetX}
+              y={transform.offsetY}
+              width={transform.renderedWidth}
+              height={transform.renderedHeight}
+            />
           ) : (
-            <Rect width={source * base} height={source * base} fill="#0f1b2b" />
+            <Rect
+              x={transform.offsetX}
+              y={transform.offsetY}
+              width={transform.renderedWidth}
+              height={transform.renderedHeight}
+              fill="#0f1b2b"
+            />
           )}
         </Layer>
 

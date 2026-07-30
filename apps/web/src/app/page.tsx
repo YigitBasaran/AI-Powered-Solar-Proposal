@@ -280,10 +280,10 @@ export default function Home() {
             {mapConfig ? (
               <span
                 data-testid="status-imagery"
-                data-mode={mapConfig.mode}
+                data-mode={mapConfig.isLive ? "live" : "stub"}
                 className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5"
               >
-                Imagery: {mapConfig.isLive ? "live" : "demo fixture"}
+                Imagery: {mapConfig.isLive ? "live Google" : "test stub"}
               </span>
             ) : null}
             {analysis ? (

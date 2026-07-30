@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from "react-konva";
 import type Konva from "konva";
 
+import { rasterMatchesContract, rasterTransform, stagePixelRatio } from "@/lib/raster";
 import type { Analysis, MapConfig, Point, RoofModel } from "@/types/api";
 
 /**
@@ -67,7 +68,14 @@ export function RoofStage({
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
 
-  const sourceSize = mapConfig?.sourceWidthPx ?? roof?.sourceWidthPx ?? 1280;
+  // Both axes. `sourceHeightPx` used to be ignored and the width substituted
+  // for it, so a non-square raster would stretch on one axis while the
+  // overlay stayed isotropic - the exact 'translated and scaled' symptom.
+  const raster = {
+    sourceWidthPx: mapConfig?.sourceWidthPx ?? roof?.sourceWidthPx ?? 1280,
+    sourceHeightPx: mapConfig?.sourceHeightPx ?? roof?.sourceHeightPx ?? 1280,
+  };
+  const [rasterError, setRasterError] = useState<string | null>(null);
 
   useEffect(() => {
     const element = containerRef.current;
@@ -85,9 +93,21 @@ export function RoofStage({
     const img = new window.Image();
     // Same-origin, so no crossOrigin dance and no tainted canvas on export.
     img.src = mapConfig.imageUrl;
-    img.onload = () => setImage(img);
+    img.onload = () => {
+      // Nothing used to check this, so a raster that disagreed with the
+      // published contract was silently stretched to fit and the resulting
+      // misalignment read as a calibration fault.
+      const check = rasterMatchesContract(img, {
+        sourceWidthPx: mapConfig.sourceWidthPx,
+        sourceHeightPx: mapConfig.sourceHeightPx,
+      });
+      setRasterError(check.ok ? null : (check.detail ?? "unexpected raster dimensions"));
+      setImage(img);
+    };
+    img.onerror = () => setRasterError("The satellite image could not be loaded.");
     return () => {
       img.onload = null;
+      img.onerror = null;
     };
   }, [mapConfig]);
 
@@ -95,14 +115,18 @@ export function RoofStage({
     onStageReady?.(stageRef.current);
   }, [onStageReady, image]);
 
-  // One factor maps source pixels to the rendered stage.
-  const displayScale = width / sourceSize;
   const stageHeight = height;
 
-  const project = useCallback(
-    (p: Point) => ({ x: p.x * displayScale, y: p.y * displayScale }),
-    [displayScale],
+  // The single source of truth for placing anything on this stage: the image
+  // and every overlay layer are positioned through it, so they cannot drift
+  // apart no matter how the container is resized.
+  const transform = useMemo(
+    () => rasterTransform(raster, { width, height: stageHeight }),
+    [raster.sourceWidthPx, raster.sourceHeightPx, width, stageHeight],
   );
+  const displayScale = transform.scale;
+
+  const project = useCallback((p: Point) => transform.toScreen(p), [transform]);
 
   const vertices = useMemo(() => {
     const map = new Map<string, Point>();
@@ -122,6 +146,11 @@ export function RoofStage({
   }, [analysis]);
 
   const metresPerPixel = roof?.groundMetresPerSourcePixel ?? 0;
+
+  /** Show the whole raster at 1:1 with the transform, unzoomed. */
+  const fitToImage = useCallback(() => {
+    setView({ scale: 1, x: 0, y: 0 });
+  }, []);
 
   /** Centre the roof and zoom so it fills the frame comfortably. */
   const fitToRoof = useCallback(() => {
@@ -147,9 +176,16 @@ export function RoofStage({
     });
   }, [roof, displayScale, width, stageHeight]);
 
+  // Deliberately fit to the *image*, not to the roof polygon.
+  //
+  // Auto-fitting to the polygon frames the view on the overlay and drags the
+  // imagery along behind it, which magnifies any calibration error by the zoom
+  // factor - a 1.2 m offset was arriving on screen at roughly 3x and reading as
+  // a gross fault. Showing the raster as it is keeps the error at its true
+  // size; "fit to roof" is still available as a deliberate action.
   useEffect(() => {
-    if (roof && image) fitToRoof();
-  }, [roof, image, fitToRoof]);
+    if (image) fitToImage();
+  }, [image, fitToImage]);
 
   const handleWheel = useCallback((event: Konva.KonvaEventObject<WheelEvent>) => {
     event.evt.preventDefault();
@@ -179,10 +215,19 @@ export function RoofStage({
 
   return (
     <div ref={containerRef} className="relative w-full" style={{ height: stageHeight }}>
+      {rasterError ? (
+        <div
+          data-testid="raster-mismatch"
+          className="absolute inset-x-2 top-2 z-10 rounded-md bg-amber-950/90 px-3 py-2 text-[12px] text-amber-100 ring-1 ring-amber-500/40"
+        >
+          {rasterError}
+        </div>
+      ) : null}
       <Stage
         ref={stageRef}
         width={width}
         height={stageHeight}
+        pixelRatio={stagePixelRatio()}
         scaleX={view.scale}
         scaleY={view.scale}
         x={view.x}
@@ -199,11 +244,19 @@ export function RoofStage({
           {toggles.satellite && image ? (
             <KonvaImage
               image={image}
-              width={sourceSize * displayScale}
-              height={sourceSize * displayScale}
+              x={transform.offsetX}
+              y={transform.offsetY}
+              width={transform.renderedWidth}
+              height={transform.renderedHeight}
             />
           ) : (
-            <Rect width={sourceSize * displayScale} height={sourceSize * displayScale} fill="#0f1b2b" />
+            <Rect
+              x={transform.offsetX}
+              y={transform.offsetY}
+              width={transform.renderedWidth}
+              height={transform.renderedHeight}
+              fill="#0f1b2b"
+            />
           )}
         </Layer>
 

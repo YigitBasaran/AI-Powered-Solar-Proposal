@@ -96,7 +96,7 @@ export type ProjectResponse = {
 };
 
 export type MapConfig = {
-  mode: "live" | "fixture";
+  /** Whether imagery comes from Google's own origin, or from a test stub. */
   isLive: boolean;
   center: { latitude: number; longitude: number };
   zoom: number;
@@ -107,6 +107,11 @@ export type MapConfig = {
   groundMetresPerSourcePixel: number;
   groundSpanM: number;
   attribution: string;
+  /** Signature of the imagery configuration currently in force. */
+  requestSignature: string;
+  /** The signature the committed roof calibration was traced against. */
+  calibrationSignature: string | null;
+  calibrationTracedOn: string | null;
   imageUrl: string;
 };
 

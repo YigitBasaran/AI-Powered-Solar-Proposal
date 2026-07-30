@@ -59,6 +59,10 @@ async def satellite_config(settings: Settings = Depends(get_settings)) -> dict[s
     meta = _calibration_expectations(settings)
 
     return {
+        # Not a mode - where the imagery will actually come from. A stub answers
+        # the test stacks, and a raster from anywhere but Google's own origin
+        # must never be presented as Google's.
+        "isLive": _is_canonical(settings.google_static_maps_base_url),
         "center": {"latitude": cfg.center_latitude, "longitude": cfg.center_longitude},
         "zoom": cfg.zoom,
         "scale": cfg.scale,

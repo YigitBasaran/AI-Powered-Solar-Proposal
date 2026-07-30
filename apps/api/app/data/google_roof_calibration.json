@@ -1,0 +1,215 @@
+{
+  "id": "case_fixed_roof",
+  "description": "Hipped roof of the fixed case property. Coordinates are SOURCE-MAP pixels on the 1280x1280 z20/scale2 raster - never viewport or fixture-crop pixels. The raster centre is the resolved case coordinate.",
+  "derivation": "Brightness band + morphological opening anchored at a median-selected seed, convex hull, minimum-area rectangle by rotating calipers, then uniform-pitch hip construction (ridge = long - short, hips at 45 deg in plan). Reproduce with scripts/derive_roof_calibration.py.",
+  "source_raster": {
+    "width_px": 1280,
+    "height_px": 1280,
+    "ground_m_per_source_px": 0.06185
+  },
+  "pitch_deg": 25.0,
+  "vertices": [
+    {
+      "id": "v_corner_a",
+      "source_pixel": {
+        "x": 562.53,
+        "y": 578.32
+      }
+    },
+    {
+      "id": "v_corner_b",
+      "source_pixel": {
+        "x": 740.77,
+        "y": 611.74
+      }
+    },
+    {
+      "id": "v_corner_c",
+      "source_pixel": {
+        "x": 719.48,
+        "y": 725.25
+      }
+    },
+    {
+      "id": "v_corner_d",
+      "source_pixel": {
+        "x": 541.25,
+        "y": 691.83
+      }
+    },
+    {
+      "id": "v_ridge_0",
+      "source_pixel": {
+        "x": 608.65,
+        "y": 645.72
+      }
+    },
+    {
+      "id": "v_ridge_1",
+      "source_pixel": {
+        "x": 673.37,
+        "y": 657.85
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "eave_0",
+      "start_vertex_id": "v_corner_a",
+      "end_vertex_id": "v_corner_b",
+      "edge_type": "eave"
+    },
+    {
+      "id": "eave_1",
+      "start_vertex_id": "v_corner_b",
+      "end_vertex_id": "v_corner_c",
+      "edge_type": "eave"
+    },
+    {
+      "id": "eave_2",
+      "start_vertex_id": "v_corner_c",
+      "end_vertex_id": "v_corner_d",
+      "edge_type": "eave"
+    },
+    {
+      "id": "eave_3",
+      "start_vertex_id": "v_corner_d",
+      "end_vertex_id": "v_corner_a",
+      "edge_type": "eave"
+    },
+    {
+      "id": "hip_0",
+      "start_vertex_id": "v_corner_a",
+      "end_vertex_id": "v_ridge_0",
+      "edge_type": "hip"
+    },
+    {
+      "id": "hip_1",
+      "start_vertex_id": "v_corner_d",
+      "end_vertex_id": "v_ridge_0",
+      "edge_type": "hip"
+    },
+    {
+      "id": "hip_2",
+      "start_vertex_id": "v_corner_b",
+      "end_vertex_id": "v_ridge_1",
+      "edge_type": "hip"
+    },
+    {
+      "id": "hip_3",
+      "start_vertex_id": "v_corner_c",
+      "end_vertex_id": "v_ridge_1",
+      "edge_type": "hip"
+    },
+    {
+      "id": "ridge_0",
+      "start_vertex_id": "v_ridge_0",
+      "end_vertex_id": "v_ridge_1",
+      "edge_type": "ridge"
+    }
+  ],
+  "facets": [
+    {
+      "id": "facet_n",
+      "label": "North facet",
+      "vertex_ids": [
+        "v_corner_a",
+        "v_corner_b",
+        "v_ridge_1",
+        "v_ridge_0"
+      ],
+      "eave_edge_id": "eave_0",
+      "eave_vertex_ids": [
+        "v_corner_a",
+        "v_corner_b"
+      ],
+      "approx_compass_azimuth_deg": 10.62,
+      "shape": "trapezoid"
+    },
+    {
+      "id": "facet_s",
+      "label": "South facet",
+      "vertex_ids": [
+        "v_corner_c",
+        "v_corner_d",
+        "v_ridge_0",
+        "v_ridge_1"
+      ],
+      "eave_edge_id": "eave_2",
+      "eave_vertex_ids": [
+        "v_corner_c",
+        "v_corner_d"
+      ],
+      "approx_compass_azimuth_deg": 190.62,
+      "shape": "trapezoid"
+    },
+    {
+      "id": "facet_w",
+      "label": "West facet",
+      "vertex_ids": [
+        "v_corner_d",
+        "v_corner_a",
+        "v_ridge_0"
+      ],
+      "eave_edge_id": "eave_3",
+      "eave_vertex_ids": [
+        "v_corner_d",
+        "v_corner_a"
+      ],
+      "approx_compass_azimuth_deg": 280.62,
+      "shape": "triangle"
+    },
+    {
+      "id": "facet_e",
+      "label": "East facet",
+      "vertex_ids": [
+        "v_corner_b",
+        "v_corner_c",
+        "v_ridge_1"
+      ],
+      "eave_edge_id": "eave_1",
+      "eave_vertex_ids": [
+        "v_corner_b",
+        "v_corner_c"
+      ],
+      "approx_compass_azimuth_deg": 100.62,
+      "shape": "triangle"
+    }
+  ],
+  "measured": {
+    "footprint_long_m": 11.216,
+    "footprint_short_m": 7.143,
+    "footprint_area_m2": 80.11,
+    "ridge_m": 4.073
+  },
+  "calibration_metadata": {
+    "traced_against": "Google Static Maps satellite imagery, fetched live",
+    "traced_on": "2026-07-30",
+    "method": "The Esri-derived tracing was re-registered onto the Google raster by maximising image-gradient response under the four eave edges, then each vertex was inspected individually at 3x zoom. The solved transform is a pure translation of (+6.5, -19.5) source px with 0.00 deg rotation and unit scale, so no measured quantity changes - only where the outline sits.",
+    "registration": {
+      "dx_px": 6.5,
+      "dy_px": -19.5,
+      "rotation_deg": 0.0,
+      "shift_m": 1.271
+    },
+    "request_signature": "1601364f6c21233ba56174f00d226902d61f6853231e162d3049b1628231dae1",
+    "request": {
+      "center_latitude": -34.046582429,
+      "center_longitude": 18.464914767,
+      "zoom": 20,
+      "requested_width_px": 640,
+      "requested_height_px": 640,
+      "scale": 2,
+      "map_type": "satellite",
+      "source_width_px": 1280,
+      "source_height_px": 1280,
+      "ground_m_per_source_px": 0.061849997
+    },
+    "imagery": {
+      "perceptual_hash": "6aff8d44f120cac4",
+      "sha256": "e7ce0d18e1afeb788566f80ef3a24e53b914f985a4ed57afebf78ddcc12f5edc",
+      "note": "perceptual hash is the gate; sha256 is diagnostic only"
+    },
+    "status": "provisional - awaiting visual review"
+  }
+}

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from app.core.config import Settings, get_settings
-from app.core.errors import RoofCalibrationMissingError
+from app.core.errors import RoofCalibrationMismatchError, RoofCalibrationMissingError
 from app.domain.geometry import (
     SurfaceFrame,
     build_surface_frame,
@@ -29,6 +29,7 @@ from app.domain.geometry import (
     source_pixel_to_metric,
     true_3d_length_m,
 )
+from app.domain.imagery import describe_request, request_signature
 from app.domain.models import (
     Point2D,
     RoofEdge,
@@ -39,7 +40,18 @@ from app.domain.models import (
     cos_pitch,
 )
 
-CALIBRATION_PATH = Path(__file__).resolve().parents[1] / "data" / "fixed_roof_calibration.json"
+_DATA = Path(__file__).resolve().parents[1] / "data"
+
+#: The calibration the runtime measures from.
+#:
+#: Traced against live Google Static Maps imagery. The older
+#: `fixed_roof_calibration.json` was traced on an Esri raster re-projected onto
+#: Google's grid; it is retained only as test-replay data, and the signature
+#: guard refuses it at runtime because it records no imagery provenance.
+CALIBRATION_PATH = _DATA / "google_roof_calibration.json"
+
+#: The superseded Esri tracing. Tests only.
+ESRI_CALIBRATION_PATH = _DATA / "fixed_roof_calibration.json"
 
 
 def _load_calibration(path: Path) -> dict[str, Any]:
@@ -57,6 +69,73 @@ def _load_calibration(path: Path) -> dict[str, Any]:
         if key not in data:
             raise RoofCalibrationMissingError(f"Calibration file is missing {key!r}")
     return data
+
+
+def load_calibration(
+    settings: Settings | None = None, *, calibration_path: Path | None = None
+) -> dict[str, Any]:
+    """The raw calibration document, without building the model.
+
+    Exposed for callers that need only its provenance - the maps endpoint asks
+    which imagery it was traced on, and has no use for the geometry.
+    """
+    return _load_calibration(calibration_path or CALIBRATION_PATH)
+
+
+def calibration_metadata(data: dict[str, Any]) -> dict[str, Any]:
+    """The block binding this calibration to the imagery it was traced on."""
+    meta = data.get("calibration_metadata")
+    return meta if isinstance(meta, dict) else {}
+
+
+def assert_calibration_matches(data: dict[str, Any], cfg: Any) -> None:
+    """Refuse to measure against a raster the calibration does not describe.
+
+    The old guard compared the raster *width* and nothing else, so a changed
+    zoom, scale, centre or map type sailed through as long as the width still
+    came to 1280 - and every one of those relocates or rescales the grid the
+    stored pixels are expressed in. The signature covers all of them at once,
+    and the error names the field that moved rather than saying "something".
+
+    A calibration with no signature at all is refused too. Absent provenance is
+    not agreement: that is exactly the state the Esri-derived file was in when
+    live Google imagery was first served, and it rendered a confidently wrong
+    roof rather than complaining.
+    """
+    meta = calibration_metadata(data)
+    stored = meta.get("request_signature")
+    current = request_signature(cfg)
+
+    if not stored:
+        raise RoofCalibrationMismatchError(
+            "This calibration does not record which imagery configuration it was "
+            "traced against, so it cannot be checked. Re-trace it with "
+            "scripts/derive_roof_calibration.py, which writes the signature.",
+            details={"expectedSignature": current},
+        )
+
+    if stored == current:
+        return
+
+    expected = meta.get("request", {})
+    actual = describe_request(cfg)
+    diverged = {
+        field: {"calibration": expected.get(field), "configured": actual.get(field)}
+        for field in actual
+        if expected.get(field) != actual.get(field)
+    }
+    raise RoofCalibrationMismatchError(
+        "The roof calibration was traced against a different imagery configuration: "
+        + ", ".join(
+            f"{f} {v['calibration']!r} -> {v['configured']!r}" for f, v in diverged.items()
+        )
+        + ". Re-trace the roof, or restore the configuration it was traced against.",
+        details={
+            "diverged": diverged,
+            "calibrationSignature": stored,
+            "configuredSignature": current,
+        },
+    )
 
 
 def _ridge_height_m(short_side_m: float, pitch_deg: float) -> float:
@@ -79,13 +158,7 @@ def build_roof_model(
     m_per_px = cfg.ground_m_per_source_px
     src_w, src_h = cfg.source_width_px, cfg.source_height_px
 
-    calibrated = data.get("source_raster", {})
-    if calibrated and int(calibrated.get("width_px", src_w)) != src_w:
-        raise RoofCalibrationMissingError(
-            "Calibration was made against a different source raster width "
-            f"({calibrated.get('width_px')} vs {src_w}). Re-derive it: the "
-            "calibration and the raster configuration must agree."
-        )
+    assert_calibration_matches(data, cfg)
 
     pitch = float(data["pitch_deg"])
 

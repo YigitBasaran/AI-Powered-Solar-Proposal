@@ -46,6 +46,8 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
         "APP_ENV",
         "DATABASE_URL",
         "MAPS_MODE",
+        "GOOGLE_STATIC_MAPS_BASE_URL",
+        "GOOGLE_MAPS_API_KEY",
         "PVGIS_BASE_URL",
         "ALLOW_REPLAY_PROPOSALS",
         "FX_MODE",
@@ -59,6 +61,12 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
             "APP_ENV": "test",
             "DATABASE_URL": f"sqlite+aiosqlite:///{db_path.as_posix()}",
             "MAPS_MODE": "fixture",
+            # Imagery has no fixture mode either: the app always makes a real
+            # HTTP request, and the suite stays offline by answering it locally.
+            # Without this a developer's own key in `.env` would send the whole
+            # suite to Google - slowly, and at their expense.
+            "GOOGLE_STATIC_MAPS_BASE_URL": f"{stub_url}/maps/api/staticmap",
+            "GOOGLE_MAPS_API_KEY": "",
             # The one seam. There is no PVGIS mode any more: the application
             # always makes a real HTTP call, and this points it at a local
             # replay server rather than at Ispra. Which is why

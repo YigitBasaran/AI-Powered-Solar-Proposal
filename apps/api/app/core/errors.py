@@ -71,6 +71,44 @@ class RoofCalibrationMissingError(AppError):
     message = "The fixed roof calibration data is missing or invalid."
 
 
+class RoofCalibrationMismatchError(AppError):
+    """The calibration was traced against a different raster than the one configured.
+
+    Distinct from `ROOF_CALIBRATION_MISSING`: the file is present and valid, and
+    every measurement derived from it will compute cleanly. It will simply be
+    measuring the wrong outline, because its pixel coordinates describe a grid
+    that is no longer the grid being served.
+
+    That is the failure this whole signature mechanism exists to make loud. It
+    has to fail at start-up rather than render, because a misplaced roof still
+    produces a plausible area, a plausible panel count and a plausible payback.
+    """
+
+    code = "ROOF_CALIBRATION_MISMATCH"
+    status_code = 500
+    message = (
+        "The roof calibration does not match the configured satellite imagery. "
+        "Re-trace it against the current configuration before measuring anything."
+    )
+
+
+class RoofCalibrationUnverifiedError(AppError):
+    """The imagery served is not the imagery the calibration was traced on.
+
+    A softer failure than the mismatch above, and deliberately so: the request
+    configuration is right, so the map is still worth showing. What cannot be
+    trusted is anything *measured* from it, so the map renders and measurement,
+    layout and finalisation are withheld until a human re-verifies the tracing.
+    """
+
+    code = "ROOF_CALIBRATION_UNVERIFIED"
+    status_code = 409
+    message = (
+        "The satellite imagery has changed since the roof was calibrated, so its "
+        "measurements cannot be trusted until it is re-traced."
+    )
+
+
 class InsufficientRoofCapacityError(AppError):
     code = "INSUFFICIENT_ROOF_CAPACITY"
     status_code = 409

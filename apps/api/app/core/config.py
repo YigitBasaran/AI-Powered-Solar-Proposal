@@ -178,6 +178,14 @@ class Settings(BaseSettings):
     case_resolved_longitude: float = 18.46491476666948
 
     # --- maps --------------------------------------------------------------
+    #: Where the satellite raster is fetched from.
+    #:
+    #: There is no fixture mode. The application always makes a real HTTP request
+    #: for imagery, exactly as it does for PVGIS, and the tests stay offline by
+    #: pointing this at a local synthetic stub rather than by giving the
+    #: application an offline path. A silently substituted raster is worse than a
+    #: missing one: the overlay still renders, and it renders over the wrong roof.
+    google_static_maps_base_url: str = "https://maps.googleapis.com/maps/api/staticmap"
     maps_mode: MapsMode = MapsMode.FIXTURE
     google_maps_api_key: str = ""
     google_maps_zoom: int = 20

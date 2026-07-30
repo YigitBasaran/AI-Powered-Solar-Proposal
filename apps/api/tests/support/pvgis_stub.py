@@ -33,6 +33,7 @@ import argparse
 import contextlib
 import json
 import threading
+from functools import lru_cache
 import time
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
@@ -309,9 +310,42 @@ class PvgisStub:
             self._attempts.clear()
         return JSONResponse({"ok": True})
 
+    async def staticmap(self, request: Request) -> Response:
+        """A synthetic Google Static Maps raster.
+
+        Synthetic on purpose: Google's imagery is not committed to this
+        repository, so an offline test cannot replay the real thing. What it
+        *can* do is prove the request is well formed and that the raster's
+        dimensions match the published contract, which is what every
+        coordinate-transform test actually depends on.
+
+        Because the pixels are not Google's, the perceptual hash will not match
+        the calibration - so this also exercises the unverified path, which is
+        the one that must degrade rather than mislead.
+        """
+        q = request.query_params
+        with self._lock:
+            self.requests.append({"endpoint": "staticmap", **dict(q)})
+
+        expected = {
+            "zoom": "20",
+            "size": "640x640",
+            "scale": "2",
+            "maptype": "satellite",
+        }
+        wrong = {k: q.get(k) for k, v in expected.items() if q.get(k) != v}
+        if wrong:
+            return JSONResponse({"error": "unexpected request", "wrong": wrong}, status_code=400)
+        if not (q.get("center") or "").startswith("-34.0465"):
+            return JSONResponse({"error": "unexpected centre", "got": q.get("center")}, 400)
+
+        width = int(q["size"].split("x")[0]) * int(q["scale"])
+        return Response(content=_synthetic_raster(width), media_type="image/png")
+
     def app(self) -> Starlette:
         return Starlette(
             routes=[
+                Route("/maps/api/staticmap", self.staticmap),
                 Route("/__stub/health", self.health),
                 Route("/__stub/requests", self.request_log),
                 Route("/__stub/reset", self.reset, methods=["POST"]),
@@ -320,6 +354,29 @@ class PvgisStub:
                 Route("/__fault/{fault}/{arg}/api/v5_3/PVcalc", self.pvcalc),
             ]
         )
+
+
+@lru_cache(maxsize=4)
+def _synthetic_raster(width: int) -> bytes:
+    """A deterministic stand-in raster of the correct dimensions.
+
+    Structured rather than pure noise - a faint grid - so that a test which
+    renders it can see whether the overlay is being stretched, and so that two
+    fetches are byte-identical the way Google's own responses are.
+    """
+    import io
+
+    import numpy as np
+    from PIL import Image
+
+    rng = np.random.default_rng(20260730)
+    pixels = rng.integers(60, 120, size=(width, width, 3), dtype=np.uint8)
+    pixels[::64, :, :] = 200
+    pixels[:, ::64, :] = 200
+
+    buffer = io.BytesIO()
+    Image.fromarray(pixels, mode="RGB").save(buffer, format="PNG")
+    return buffer.getvalue()
 
 
 # ---------------------------------------------------------------------------

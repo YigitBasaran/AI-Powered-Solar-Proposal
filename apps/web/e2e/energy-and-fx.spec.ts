@@ -16,9 +16,15 @@ test.describe("@p0 PVGIS energy", () => {
     const { analysis } = await api.analysedProject("6 kWp");
 
     // Only occupied facets are modelled; an empty facet produces nothing and
-    // should not cost a request.
+    // should not cost a request. Since the chimney took three bays off north,
+    // 6 kWp reaches all four facets - so the assertion is derived from where
+    // panels actually landed rather than naming three facets outright.
     const modelled = analysis.energy.facets.map((f) => f.facetId).sort();
-    expect(modelled).toEqual(["facet_e", "facet_n", "facet_w"]);
+    const occupied = analysis.layout.facets
+      .filter((f) => f.panelCount > 0)
+      .map((f) => f.facetId)
+      .sort();
+    expect(modelled).toEqual(occupied);
 
     for (const facet of analysis.energy.facets) {
       const yieldValue = EXPECTED_FACET_YIELD[facet.facetId as keyof typeof EXPECTED_FACET_YIELD];
@@ -46,10 +52,15 @@ test.describe("@p0 PVGIS energy", () => {
     const north = byId.get("facet_n")!;
     const south = byId.get("facet_s")!;
 
-    // Same capacity, same pitch, opposite aspect. At -34° latitude the
-    // north-facing facet must out-produce the south-facing one by roughly half
-    // again — a northern-hemisphere model would have this the other way round.
-    expect(north.installedPowerKwp).toBeCloseTo(south.installedPowerKwp, 6);
+    // Same pitch, opposite aspect. At -34° latitude the north-facing facet must
+    // out-produce the south-facing one by roughly half again — a
+    // northern-hemisphere model would have this the other way round.
+    //
+    // Capacity is no longer equal: the chimney costs north three bays, so south
+    // now carries MORE installed power than north and still produces less. That
+    // makes the yield comparison a stronger statement than it was, not a weaker
+    // one, so it is asserted per kWp rather than on totals.
+    expect(south.installedPowerKwp).toBeGreaterThan(north.installedPowerKwp);
     expect(north.specificYieldKwhPerKwp).toBeGreaterThan(south.specificYieldKwhPerKwp);
     expect(north.specificYieldKwhPerKwp / south.specificYieldKwhPerKwp).toBeGreaterThan(1.4);
   });

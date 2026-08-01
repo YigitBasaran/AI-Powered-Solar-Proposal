@@ -90,7 +90,7 @@ The site is at latitude **−34°**, so solar optimality is **inverted** relativ
 
 North-facing produces **≈52 % more** than south-facing here. The panel allocator must therefore prefer north-facing facets. No "optimal aspect" is hardcoded anywhere — ranking comes from a per-facet 1 kWp PVGIS probe, so the correct answer emerges from data rather than assumption.
 
-Favourably, the reference roof's **largest facet (the north trapezoid, calibrated azimuth 10.6°) is also its best-producing one** — 1,678.7 kWh/kWp against south's 1,119.8.
+This used to be favourable: north was the largest facet as well as the best-producing one. It is not any more. Correcting `v_ridge_0` against the raster made the **south** trapezoid the largest (31.0 m² sloped against north's 30.0), and the chimney then took three of north's six remaining bays. So the roof's biggest facet now points at its worst aspect — 1,114.9 kWh/kWp against north's 1,678.8 — which is precisely why the allocator ranks on yield rather than on area.
 
 ---
 
@@ -147,39 +147,42 @@ The brief's overlay reference confirms the expected topology, and it is present 
 - 4 facets: 2 trapezoids (north, south) + 2 triangles (east, west)
 - Uniform pitch of 25° across all facets
 
-Calibrated geometry (`apps/api/app/data/fixed_roof_calibration.json`):
+Calibrated geometry (`apps/api/app/data/google_roof_calibration.json`), after the operator correction of 2026-08-01:
 
 | Quantity | Value |
 |---|---|
-| Footprint | 11.216 m × 7.143 m = 80.11 m² |
-| Ridge length | 4.073 m |
-| Eaves | 11.216 m ×2, 7.143 m ×2 |
-| Hips | 5.051 m in plan, **5.319 m true** (not 5.573 m — see A-GEO-1) |
-| Total sloped area @ 25° | 88.40 m² |
-| North / south trapezoid | 27.30 m² projected, 30.12 m² sloped each |
-| East / west triangle | 12.76 m² projected, 14.08 m² sloped each |
-| Facet azimuths | N 10.6° · E 100.6° · S 190.6° · W 280.6° |
+| Footprint | quadrilateral, 79.69 m² |
+| Ridge length | 4.374 m |
+| Eaves | 11.360 · 7.143 · 11.216 · 6.979 m |
+| Hips | 4.775 / 4.893 / 5.051 / 5.051 m in plan; `hip_2` **5.312 m true** (not 5.573 m — see A-GEO-1) |
+| Total sloped area @ 25° | 87.93 m² |
+| Obstructions | chimney, 2.99 m² plan / 3.30 m² sloped, north facet |
+| North / south trapezoid | 27.17 / 28.10 m² projected, 29.98 / 31.00 m² sloped |
+| East / west triangle | 12.76 / 11.67 m² projected, 14.07 / 12.88 m² sloped |
+| Facet azimuths | N 10.5° · E 100.6° · S 187.6° · W 278.0° |
+
+The roof is no longer symmetric: `v_ridge_0` sits west of centre, so opposing facets differ by 3% (N/S) and 9% (E/W), and the **south** facet is now the largest while remaining the worst aspect.
 
 ### Capacity, as measured
 
-Earlier in this build I forecast from rough hand-measurements that 9.6 kWp would be infeasible. **That forecast was wrong.** With the calibrated geometry and the real packing algorithm, the roof holds exactly 24 panels:
+Earlier in this build I forecast from rough hand-measurements that 9.6 kWp would be infeasible, then measured 24 panels with the calibrated geometry and recorded that the forecast had been wrong. Modelling the chimney took it to 21; turning the east array back to 45° recovers one, so the roof holds **22**.
 
 | Facet | Sloped area | Panels (landscape) |
 |---|---|---|
-| North trapezoid | 30.1 m² | 9 |
-| South trapezoid | 30.1 m² | 9 |
-| West triangle | 14.1 m² | 3 |
-| East triangle | 14.1 m² | 3 |
-| **Total** | **88.4 m²** | **24** |
+| North trapezoid | 30.0 m² | 6 |
+| South trapezoid | 31.0 m² | 9 |
+| West triangle | 12.9 m² | 3 |
+| East triangle | 14.1 m² | 4 (array turned 45°) |
+| **Total** | **87.9 m²** | **22** |
 
-So all three case system sizes are physically satisfiable, with 9.6 kWp consuming every available slot:
+North loses three bays to a 2.99 m² chimney standing in the middle of it, and east gains one from array rotation. So the two smaller system sizes are satisfiable and the largest is not:
 
 | System | Panels | Placed | Allocation |
 |---|---|---|---|
-| 3.6 kWp | 9 | 9 | North only |
-| 6.0 kWp | 15 | 15 | North 9 + West 3 + East 3 |
-| 9.6 kWp | 24 | 24 | All four facets |
+| 3.6 kWp | 9 | 9 | North 6 + West 3 |
+| 6.0 kWp | 15 | 15 | North 6 + West 3 + East 4 + South 2 |
+| 9.6 kWp | 24 | **22** | All four facets, full — capacity warning |
 
-The 6 kWp allocation is the one that demonstrates the optimiser is genuinely production-driven. North and south are the same size and hold 9 panels each, so an allocator ranking facets by area would place the remaining 6 panels on south. The correct answer is to fill both small triangles instead and leave south empty, because at this southern-hemisphere site west (1,515 kWh/kWp) and east (1,367) out-produce south (1,120).
+The 6 kWp allocation is the one that demonstrates the optimiser is genuinely production-driven, and the chimney has made it a stronger demonstration. South is now both the **largest** facet and the one with the **most** free bays, so an allocator ranking by area *or* by capacity would fill it first. It is filled last and given only the two leftover panels, because at this southern-hemisphere site north (1,679 kWh/kWp), west (1,504) and east (1,367) all out-produce south (1,115).
 
-The honest capacity-warning path is still implemented and tested — it triggers under a realistic 1 m safety setback, which does make 24 panels impossible.
+The capacity-warning path is no longer hypothetical: 9.6 kWp triggers it on the calibrated roof, and every downstream figure is computed from the 8.8 kWp that fits. It also still triggers, far harder, under a realistic 1 m safety setback — which leaves room for 3 panels.

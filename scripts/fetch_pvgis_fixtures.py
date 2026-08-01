@@ -33,7 +33,10 @@ from typing import Any
 
 REPO = Path(__file__).resolve().parents[1]
 OUT_DIR = REPO / "fixtures" / "pvgis"
-CALIBRATION = REPO / "apps" / "api" / "app" / "data" / "fixed_roof_calibration.json"
+# The profile the runtime actually measures from. `fixed_roof_calibration.json`
+# is the superseded Esri tracing, which the signature guard refuses to serve -
+# seeding fixtures from it captured aspects no request would ever ask for.
+CALIBRATION = REPO / "apps" / "api" / "app" / "data" / "google_roof_calibration.json"
 
 BASE_URL = "https://re.jrc.ec.europa.eu/api/v5_3/PVcalc"
 LAT = -34.04658242871865

@@ -31,6 +31,8 @@ from app.integrations.pvgis import (
     parse_pvcalc,
     parse_retry_after,
 )
+from app.services.roof import build_roof_model
+from tests.support.pvgis_stub import load_captures
 
 
 @dataclass
@@ -60,6 +62,8 @@ class FakeClock:
 def fake_clock() -> tuple[FakeClock, RetryClock]:
     fake = FakeClock()
     return fake, RetryClock(now=fake.now, sleep=fake.sleep, jitter=fake.jitter)
+
+
 PVCALC_URL = "https://re.jrc.ec.europa.eu/api/v5_3/PVcalc"
 CASE_LAT = -34.04658242871865
 CASE_LON = 18.46491476666948
@@ -67,14 +71,15 @@ CASE_LON = 18.46491476666948
 
 @pytest.fixture(scope="module")
 def captured_payload() -> dict:
-    """A real PVGIS response captured at the case site (north-facing)."""
-    path = (
-        Path(__file__).resolve().parents[3].parent
-        / "fixtures"
-        / "pvgis"
-        / "pvcalcmaspectm169.38.json"
-    )
-    return json.loads(path.read_text(encoding="utf-8"))
+    """A real PVGIS response captured at the case site (north-facing).
+
+    Resolved through the calibration's own north-facet aspect rather than by
+    filename, so re-tracing the roof re-points this at the matching capture
+    instead of failing with a missing file.
+    """
+    return load_captures(
+        Path(__file__).resolve().parents[3].parent / "fixtures" / "pvgis"
+    )[round(build_roof_model().facet("facet_n").pvgis_aspect_deg)]
 
 
 @pytest.fixture

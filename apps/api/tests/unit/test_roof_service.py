@@ -97,17 +97,39 @@ def test_trapezoids_are_larger_than_triangles(roof) -> None:
     assert min(traps) > max(tris)
 
 
-def test_opposing_facets_have_equal_area(roof) -> None:
-    """A symmetric hip roof: N/S match, E/W match.
+def test_the_facets_tile_the_footprint_exactly(roof) -> None:
+    """The four facets partition the plan outline: no gap, no overlap.
 
-    Tolerance is 1e-3 rather than exact because the calibration stores pixel
-    coordinates to two decimal places - 0.01 px is 0.6 mm on the ground, which
-    perturbs the areas in the fifth significant figure. Anything looser than
-    this would stop catching a genuinely lopsided calibration.
+    This replaces the old N==S, E==W symmetry check. Symmetry was a property of
+    the *fitted rectangle plus a centred ridge*, and the operator correction to
+    `v_ridge_0` removed it. Tiling is the stronger invariant anyway: it holds for
+    any hip roof however irregular, and a calibration that lost or double-counted
+    a facet would fail it while a symmetry test would not.
+    """
+    footprint = polygon_area_m2(
+        [
+            roof.vertex(v).projected_metric
+            for v in ("v_corner_a", "v_corner_b", "v_corner_c", "v_corner_d")
+        ]
+    )
+    assert sum(f.projected_area_m2 for f in roof.facets) == pytest.approx(footprint, rel=1e-12)
+
+
+def test_the_corrected_ridge_makes_the_opposing_facets_unequal(roof) -> None:
+    """`v_ridge_0` sits west of centre, so the facets it borders are lopsided.
+
+    Bounded on both sides deliberately. A lower bound fails if someone restores
+    the old symmetric tracing; an upper bound fails if a future edit skews the
+    roof far beyond what the operator actually marked.
     """
     by_id = {f.id: f.projected_area_m2 for f in roof.facets}
-    assert by_id["facet_n"] == pytest.approx(by_id["facet_s"], rel=1e-3)
-    assert by_id["facet_e"] == pytest.approx(by_id["facet_w"], rel=1e-3)
+
+    # Moving the west ridge end north-west enlarges the south trapezoid at the
+    # north one's expense.
+    assert 1.02 < by_id["facet_s"] / by_id["facet_n"] < 1.05
+
+    # ...and shrinks the west triangle, which lost run to the ridge.
+    assert 1.06 < by_id["facet_e"] / by_id["facet_w"] < 1.12
 
 
 # ---------------------------------------------------------------------------
@@ -146,9 +168,22 @@ def test_hips_are_longer_than_their_plan_length_but_not_by_cos_pitch(roof) -> No
     assert overstatement == pytest.approx(0.048, abs=0.01)
 
 
-def test_all_hips_are_equal_on_a_symmetric_roof(roof) -> None:
-    hips = [e.true_3d_length_m for e in roof.edges if e.edge_type is RoofEdgeType.HIP]
-    assert max(hips) - min(hips) < 0.01
+def test_only_the_hips_at_the_untouched_ridge_end_are_still_equal(roof) -> None:
+    """Equal hips were a consequence of the 45-deg-in-plan construction.
+
+    The operator moved `v_ridge_0`, so the two hips running to it are no longer
+    equal to each other or to the pair at `v_ridge_1`. The pair at `v_ridge_1`
+    still is: neither of its endpoints was touched, which is a useful check that
+    the correction stayed local instead of quietly shifting the whole outline.
+    """
+    by_id = {e.id: e.true_3d_length_m for e in roof.edges if e.edge_type is RoofEdgeType.HIP}
+
+    assert by_id["hip_2"] == pytest.approx(by_id["hip_3"], rel=1e-9)
+
+    moved = (by_id["hip_0"], by_id["hip_1"])
+    assert abs(moved[0] - moved[1]) > 0.05
+    for hip in moved:
+        assert hip < by_id["hip_2"]
 
 
 def test_surface_polygon_area_equals_sloped_area(roof) -> None:
@@ -172,10 +207,18 @@ def test_surface_polygon_has_non_negative_v(roof) -> None:
 
 
 def test_facets_face_four_distinct_directions(roof) -> None:
+    """Still four quadrants, but no longer exactly 90 deg apart.
+
+    Azimuth is measured centroid -> eave midpoint, so it moves when a facet's
+    shape changes even if its eave does not. Correcting `v_ridge_0` reshaped the
+    south and west facets and spread the gaps to 86.96-92.49 deg. The tolerance
+    is 4 deg: wide enough for that, narrow enough that two facets collapsing
+    onto the same heading would still fail.
+    """
     azimuths = sorted(f.compass_azimuth_deg for f in roof.facets)
     gaps = [(azimuths[(i + 1) % 4] - azimuths[i]) % 360.0 for i in range(4)]
     for gap in gaps:
-        assert gap == pytest.approx(90.0, abs=1.0)
+        assert gap == pytest.approx(90.0, abs=4.0)
 
 
 def test_north_facet_maps_to_a_near_180_pvgis_aspect(roof) -> None:
@@ -190,16 +233,33 @@ def test_south_facet_maps_to_a_near_zero_pvgis_aspect(roof) -> None:
     assert abs(south.pvgis_aspect_deg) < 30.0
 
 
-def test_the_largest_facet_faces_north(roof) -> None:
-    """Fortunate for this property, and the reason the allocator has room to work."""
+def test_the_largest_facet_now_faces_south_not_north(roof) -> None:
+    """A real consequence of the correction, and an unwelcome one.
+
+    Before `v_ridge_0` was moved, north and south were equal at 27.30 m2 and the
+    tie went to north. Moving the west ridge end north-west grew the south
+    trapezoid to 28.10 m2, so the biggest facet is now the one pointing at the
+    *worst* aspect for the southern hemisphere. The allocator is unaffected - it
+    ranks on yield, not size - but the roof has less good area than it looks.
+    """
     largest = max(roof.facets, key=lambda f: f.projected_area_m2)
-    assert abs(largest.pvgis_aspect_deg) > 150.0
+    assert largest.id == "facet_s"
+    assert abs(largest.pvgis_aspect_deg) < 30.0
+
+    north = roof.facet("facet_n")
+    assert north.projected_area_m2 < largest.projected_area_m2
+    assert abs(north.pvgis_aspect_deg) > 150.0
 
 
-def test_east_and_west_are_opposite(roof) -> None:
+def test_east_and_west_are_roughly_opposite(roof) -> None:
+    """3 deg of tolerance, because the west facet was reshaped and east was not.
+
+    They are back-to-back triangles on the same roof, so anything approaching a
+    right angle between them would mean the calibration had come apart.
+    """
     e = roof.facet("facet_e").compass_azimuth_deg
     w = roof.facet("facet_w").compass_azimuth_deg
-    assert abs(((e - w + 180.0) % 360.0) - 180.0) == pytest.approx(180.0, abs=1.0)
+    assert abs(((e - w + 180.0) % 360.0) - 180.0) == pytest.approx(180.0, abs=3.0)
 
 
 # ---------------------------------------------------------------------------

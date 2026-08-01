@@ -28,10 +28,13 @@ is what flows on to PVGIS and the financial model.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from shapely.affinity import rotate
 from shapely.geometry import Polygon, box
+from shapely.geometry.base import BaseGeometry
 from shapely.prepared import prep
 
 from app.core.config import Settings, get_settings
@@ -72,11 +75,18 @@ class PanelPlacement:
 
 @dataclass
 class FacetCandidate:
-    """One feasible way to fill a facet."""
+    """One feasible way to fill a facet.
+
+    `placements` are expressed in the facet's surface frame *rotated by
+    `rotation_deg` about `rotation_origin`*, which is what lets the tiler stay a
+    simple axis-aligned sweep at every angle. `_to_panel` turns them back.
+    """
 
     facet_id: str
     orientation: PanelOrientation
     placements: list[PanelPlacement]
+    rotation_deg: float = 0.0
+    rotation_origin: tuple[float, float] = (0.0, 0.0)
 
     @property
     def max_count(self) -> int:
@@ -89,9 +99,23 @@ def _orientation_dims(orientation: PanelOrientation, settings: Settings) -> tupl
     return (w, h) if orientation is PanelOrientation.PORTRAIT else (h, w)
 
 
-def _usable_polygon(roof: RoofModel, facet: RoofFacet, settings: Settings) -> Polygon | None:
+def _usable_polygon(
+    roof: RoofModel, facet: RoofFacet, settings: Settings
+) -> BaseGeometry | None:
+    """The part of a facet a panel may stand on, in surface coordinates.
+
+    Returns a Polygon, or a MultiPolygon when an obstruction or a large setback
+    splits the facet in two. Both are left intact rather than reduced to the
+    largest piece: `_tile` only asks for `.bounds` and a containment test, and
+    both work on either, so keeping every part costs nothing and discarding one
+    would silently lose roof.
+
+    An obstruction in the middle of a facet becomes an interior ring, and the
+    full-footprint containment test in `_tile` is what makes that bite - a
+    centre-point test would happily straddle a chimney.
+    """
     surface = facet_surface_polygon(roof, facet)
-    poly = Polygon([(p.x, p.y) for p in surface])
+    poly: BaseGeometry = Polygon([(p.x, p.y) for p in surface])
     if not poly.is_valid:
         poly = poly.buffer(0)
     if poly.is_empty or poly.area <= 0:
@@ -101,17 +125,44 @@ def _usable_polygon(roof: RoofModel, facet: RoofFacet, settings: Settings) -> Po
         poly = poly.buffer(-settings.roof_edge_setback_m, join_style=2)
         if poly.is_empty or poly.area <= 0:
             return None
-        if poly.geom_type == "MultiPolygon":
-            poly = max(poly.geoms, key=lambda g: g.area)
+
+    obstructions = roof.obstructions_on(facet.id)
+    if obstructions:
+        frame = facet_surface_frame(roof, facet)
+        for obstruction in obstructions:
+            hole = Polygon(
+                [
+                    (p.x, p.y)
+                    for p in frame.polygon_to_surface(obstruction.projected_metric_polygon)
+                ]
+            )
+            if not hole.is_valid:
+                hole = hole.buffer(0)
+            poly = poly.difference(hole)
+        if poly.is_empty or poly.area <= 0:
+            logger.info("facet %s is fully obstructed", facet.id)
+            return None
+
     return poly
 
 
-def _tile(usable: Polygon, width_u: float, height_v: float, gap: float) -> list[PanelPlacement]:
+def _tile(
+    usable: BaseGeometry,
+    width_u: float,
+    height_v: float,
+    gap: float,
+    step: float = OFFSET_STEP_M,
+) -> list[PanelPlacement]:
     """Best tiling of one orientation, over a bounded sweep of grid offsets.
 
     Sweeping offsets matters: anchoring at the polygon's bounding-box corner
     frequently wastes a whole row against a sloping hip. The sweep is bounded
     by one grid pitch, because offsets beyond that repeat.
+
+    `step` coarsens that sweep. A coarse sweep undercounts - it can miss the
+    offset that fits one more row - so it is only ever used to *rank* rotation
+    angles cheaply, never to produce a layout. Every angle that survives the
+    ranking is re-tiled at full resolution.
     """
     min_u, min_v, max_u, max_v = usable.bounds
     pitch_u = width_u + gap
@@ -122,13 +173,13 @@ def _tile(usable: Polygon, width_u: float, height_v: float, gap: float) -> list[
     contains = prep(usable)
     best: list[PanelPlacement] = []
 
-    n_off_u = max(1, round(pitch_u / OFFSET_STEP_M))
-    n_off_v = max(1, round(pitch_v / OFFSET_STEP_M))
+    n_off_u = max(1, round(pitch_u / step))
+    n_off_v = max(1, round(pitch_v / step))
 
     for i in range(n_off_u):
-        offset_u = i * OFFSET_STEP_M
+        offset_u = i * step
         for j in range(n_off_v):
-            offset_v = j * OFFSET_STEP_M
+            offset_v = j * step
 
             placements: list[PanelPlacement] = []
             v = min_v + offset_v
@@ -164,16 +215,68 @@ def _candidate_cache_key(
         facet.id,
         round(roof.ground_m_per_source_px, 9),
         round(facet.pitch_deg, 6),
+        # The facet's own outline. `roof.id` is a profile name, not a content
+        # hash, so without this an edited calibration would be served a layout
+        # tiled against the previous geometry.
+        tuple((round(p.x, 6), round(p.y, 6)) for p in facet.projected_metric_polygon),
+        tuple(
+            (o.id, tuple((round(p.x, 6), round(p.y, 6)) for p in o.projected_metric_polygon))
+            for o in roof.obstructions_on(facet.id)
+        ),
         settings.panel_width_m,
         settings.panel_height_m,
         settings.panel_gap_m,
         settings.roof_edge_setback_m,
+        settings.panel_rotation_step_deg,
+        settings.panel_rotation_max_deg,
     )
+
+
+#: Angles kept from the coarse ranking pass and re-tiled at full resolution.
+#: Measured on the case roof: 2, 3 and 5 all reach the same 22 panels, at 3.8,
+#: 5.4 and 8.5 seconds of cold start. Three keeps a margin for roofs where the
+#: coarse pass ranks less cleanly, without paying for the tail.
+_ROTATION_SHORTLIST = 3
+
+#: Offset step used while ranking angles. Coarse on purpose - see `_tile`.
+_ROTATION_SCAN_STEP_M = 0.25
+
+
+def _rotation_angles(settings: Settings) -> list[float]:
+    """Angles to try, always including 0 so the search cannot regress."""
+    step = settings.panel_rotation_step_deg
+    if step <= 0:
+        return [0.0]
+    limit = settings.panel_rotation_max_deg
+    count = int(limit / step)
+    return sorted({0.0, *(round(i * step, 6) for i in range(count) if i * step < limit)})
+
+
+def _turn(placement: PanelPlacement, degrees: float, origin: tuple[float, float]) -> list[Point2D]:
+    """A placement's corners, rotated back into the facet's own surface frame."""
+    if degrees == 0.0:
+        return [Point2D(x=p.x, y=p.y) for p in placement.corners]
+    radians = math.radians(degrees)
+    cos, sin = math.cos(radians), math.sin(radians)
+    ox, oy = origin
+    out = []
+    for corner in placement.corners:
+        dx, dy = corner.x - ox, corner.y - oy
+        out.append(Point2D(x=ox + dx * cos - dy * sin, y=oy + dx * sin + dy * cos))
+    return out
 
 
 def build_facet_candidates(
     roof: RoofModel, facet: RoofFacet, settings: Settings | None = None
 ) -> list[FacetCandidate]:
+    """Every way this facet could be filled, one per (orientation, angle) kept.
+
+    Rotating the array is searched in two passes because a full offset sweep at
+    every angle is roughly twenty times the cost of the whole placement stage.
+    Pass one ranks angles with a coarse offset sweep; pass two re-tiles the best
+    few properly. Angle 0 is always in both, so the result can never be worse
+    than the un-rotated layout that a coarse pass might have mis-ranked.
+    """
     settings = settings or get_settings()
 
     key = _candidate_cache_key(roof, facet, settings)
@@ -187,12 +290,58 @@ def build_facet_candidates(
         _CANDIDATE_CACHE[key] = []
         return []
 
+    centroid = usable.centroid
+    origin = (centroid.x, centroid.y)
+    angles = _rotation_angles(settings)
+
+    turned: dict[float, BaseGeometry] = {
+        angle: usable if angle == 0.0 else rotate(usable, -angle, origin=centroid)
+        for angle in angles
+    }
+
     candidates: list[FacetCandidate] = []
     for orientation in (PanelOrientation.LANDSCAPE, PanelOrientation.PORTRAIT):
         width_u, height_v = _orientation_dims(orientation, settings)
-        placements = _tile(usable, width_u, height_v, settings.panel_gap_m)
-        if placements:
-            candidates.append(FacetCandidate(facet.id, orientation, placements))
+
+        if len(angles) > 1:
+            ranked = sorted(
+                angles,
+                key=lambda a: (
+                    -len(
+                        _tile(
+                            turned[a],
+                            width_u,
+                            height_v,
+                            settings.panel_gap_m,
+                            step=_ROTATION_SCAN_STEP_M,
+                        )
+                    ),
+                    a,
+                ),
+            )
+            shortlist = sorted({0.0, *ranked[:_ROTATION_SHORTLIST]})
+        else:
+            shortlist = angles
+
+        best: FacetCandidate | None = None
+        for angle in shortlist:
+            placements = _tile(turned[angle], width_u, height_v, settings.panel_gap_m)
+            if not placements:
+                continue
+            # Ties go to the smaller angle, so a rotation is only ever chosen
+            # when it is strictly better than lying parallel to the eave.
+            if best is None or len(placements) > best.max_count:
+                best = FacetCandidate(facet.id, orientation, placements, angle, origin)
+
+        if best is not None:
+            candidates.append(best)
+
+    if any(c.rotation_deg for c in candidates):
+        logger.info(
+            "facet %s: array rotation chosen %s",
+            facet.id,
+            {c.orientation.value: (c.rotation_deg, c.max_count) for c in candidates},
+        )
 
     _CANDIDATE_CACHE[key] = candidates
     return candidates
@@ -265,9 +414,13 @@ def _to_panel(
     orientation: PanelOrientation,
     index: int,
     settings: Settings,
+    rotation_deg: float = 0.0,
+    rotation_origin: tuple[float, float] = (0.0, 0.0),
 ) -> SolarPanel:
     frame = facet_surface_frame(roof, facet)
-    surface = placement.corners
+    # Placements are tiled in the rotated frame; the panel is described in the
+    # facet's own frame, so the rotation is undone exactly here and nowhere else.
+    surface = _turn(placement, rotation_deg, rotation_origin)
     projected = frame.polygon_to_projected(surface)
 
     cx = roof.source_width_px / 2.0
@@ -279,6 +432,7 @@ def _to_panel(
         id=f"{facet.id}_panel_{index:02d}",
         facet_id=facet.id,
         orientation=orientation,
+        rotation_deg=rotation_deg,
         power_wp=settings.panel_power_wp,
         surface_width_m=placement.width_u,
         surface_height_m=placement.height_v,
@@ -343,12 +497,26 @@ def generate_layout(
         candidate, count = allocation[facet.id]
         chosen = candidate.placements[:count]
         panels = [
-            _to_panel(roof, facet, p, candidate.orientation, i, settings)
+            _to_panel(
+                roof,
+                facet,
+                p,
+                candidate.orientation,
+                i,
+                settings,
+                candidate.rotation_deg,
+                candidate.rotation_origin,
+            )
             for i, p in enumerate(chosen)
         ]
         placed += len(panels)
         facet_layouts.append(
-            FacetLayout(facet_id=facet.id, orientation=candidate.orientation, panels=panels)
+            FacetLayout(
+                facet_id=facet.id,
+                orientation=candidate.orientation,
+                rotation_deg=candidate.rotation_deg,
+                panels=panels,
+            )
         )
 
     feasible_kwp = round(placed * settings.panel_power_kwp, 6)
@@ -386,9 +554,35 @@ def assert_layout_valid(roof: RoofModel, layout: PanelLayout, settings: Settings
         if usable is None:
             raise AssertionError(f"facet {facet.id} has panels but no usable area")
 
+        obstructions = roof.obstructions_on(facet.id)
+        holes = []
+        if obstructions:
+            frame = facet_surface_frame(roof, facet)
+            holes = [
+                (
+                    o.id,
+                    Polygon(
+                        [
+                            (p.x, p.y)
+                            for p in frame.polygon_to_surface(o.projected_metric_polygon)
+                        ]
+                    ),
+                )
+                for o in obstructions
+            ]
+
         boxes = []
         for panel in facet_layout.panels:
             poly = Polygon([(p.x, p.y) for p in panel.surface_polygon])
+            # Checked before the containment test purely so the message names the
+            # cause. `usable` already excludes the obstructions, so this cannot
+            # pass while that one fails - it just says "chimney" instead of
+            # "somewhere outside the facet".
+            for obstruction_id, hole in holes:
+                if poly.intersection(hole).area > 1e-9:
+                    raise AssertionError(
+                        f"panel {panel.id} stands on obstruction {obstruction_id}"
+                    )
             if not usable.covers(poly):
                 raise AssertionError(f"panel {panel.id} is not fully inside {facet.id}")
             boxes.append(poly)

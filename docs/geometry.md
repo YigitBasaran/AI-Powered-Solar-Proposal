@@ -211,10 +211,12 @@ like the same observation.
 
 | Facet | Compass | PVGIS aspect | 1 kWp yield |
 |---|---|---|---|
-| North trapezoid | 10.6° | −169.4° | **1,678.7 kWh/kWp** |
-| West triangle | 280.6° | 100.6° | 1,515.3 |
+| North trapezoid | 10.5° | −169.5° | **1,678.8 kWh/kWp** |
+| West triangle | 278.0° | 98.0° | 1,503.9 |
 | East triangle | 100.6° | −79.4° | 1,367.2 |
-| South trapezoid | 190.6° | 10.6° | 1,119.8 |
+| South trapezoid | 187.6° | 7.6° | 1,114.9 |
+
+Azimuth is measured **centroid → eave midpoint**, so it depends on a facet's shape and not only on its eave. Correcting `v_ridge_0` reshaped the south and west facets and moved their bearings by 3.0° and 2.6° while their eaves did not move at all. That is a real property of this estimator: for a trapezoid whose ridge is parallel to its eave it is exactly the downslope direction, and this roof's ridge is no longer parallel to either long eave.
 
 At −34° latitude the **north** face is the best, by 50 %. No optimal aspect is hardcoded anywhere; ranking comes from per-facet PVGIS probes, so the correct answer emerges from data rather than from an assumption that happens to be northern-hemisphere.
 

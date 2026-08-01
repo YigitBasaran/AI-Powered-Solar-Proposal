@@ -126,20 +126,24 @@ test.describe("@p0 roof calibration tool", () => {
     const b = await calibration.vertex("v_corner_b");
     const c = await calibration.vertex("v_corner_c");
 
-    // The long and short footprint sides, measured from the DOM values and
-    // converted with the published scale — no production code involved.
-    const long = Math.hypot(b.x - a.x, b.y - a.y) * mpp;
-    const short = Math.hypot(c.x - b.x, c.y - b.y) * mpp;
-    expect(long).toBeCloseTo(EXPECTED_ROOF.footprintLongM, 2);
-    expect(short).toBeCloseTo(EXPECTED_ROOF.footprintShortM, 2);
+    // Two adjacent sides, measured from the DOM values and converted with the
+    // published scale — no production code involved. The footprint is a general
+    // quadrilateral since the operator corrected `v_corner_a`, so each eave is
+    // checked against its own expected length rather than a shared long/short.
+    const eave0 = Math.hypot(b.x - a.x, b.y - a.y) * mpp;
+    const eave1 = Math.hypot(c.x - b.x, c.y - b.y) * mpp;
+    expect(eave0).toBeCloseTo(EXPECTED_ROOF.eaveLengthsM.eave_0, 2);
+    expect(eave1).toBeCloseTo(EXPECTED_ROOF.eaveLengthsM.eave_1, 2);
 
-    // ...and the API publishes the same edges.
+    // ...and the API publishes the same edges, all four of them.
     const roof = await api.roofModel();
-    const lengths = roof.edges
-      .filter((e: { type: string }) => e.type === "eave")
-      .map((e: { projectedLengthM: number }) => e.projectedLengthM)
-      .sort((a: number, b: number) => a - b);
-    expect(lengths[0]).toBeCloseTo(EXPECTED_ROOF.footprintShortM, 2);
-    expect(lengths[3]).toBeCloseTo(EXPECTED_ROOF.footprintLongM, 2);
+    const byId = new Map(
+      roof.edges
+        .filter((e: { type: string }) => e.type === "eave")
+        .map((e: { id: string; projectedLengthM: number }) => [e.id, e.projectedLengthM]),
+    );
+    for (const [id, expected] of Object.entries(EXPECTED_ROOF.eaveLengthsM)) {
+      expect(byId.get(id), `${id} missing from the published edges`).toBeCloseTo(expected, 2);
+    }
   });
 });

@@ -22,6 +22,7 @@ from app.core.config import get_settings
 from app.core.errors import PvgisUnavailableError
 from app.integrations.pvgis import PvgisClient, RetryClock, probe_facets
 from app.services.roof import build_roof_model
+from tests.support.pvgis_stub import load_captures
 
 PVCALC_URL = "https://re.jrc.ec.europa.eu/api/v5_3/PVcalc"
 REPO_ROOT = Path(__file__).resolve().parents[3].parent
@@ -59,8 +60,17 @@ def settings():
 
 @pytest.fixture(scope="module")
 def payload() -> dict:
-    path = REPO_ROOT / "fixtures" / "pvgis" / "pvcalcmaspectm169.38.json"
-    return json.loads(path.read_text(encoding="utf-8"))
+    """The captured response for whatever aspect the north facet currently has.
+
+    Looked up by the calibration's own aspect rather than by filename. Naming
+    the file pins the test to a geometry: when the roof was re-traced the north
+    facet moved from -169.38 to -169.47 deg, the capture was re-seeded under its
+    new name, and every test that spelled the old one out failed for a reason
+    that had nothing to do with what it was testing.
+    """
+    return load_captures(REPO_ROOT / "fixtures" / "pvgis")[
+        round(build_roof_model().facet("facet_n").pvgis_aspect_deg)
+    ]
 
 
 @pytest.fixture

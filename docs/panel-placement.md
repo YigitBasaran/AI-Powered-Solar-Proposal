@@ -92,19 +92,42 @@ The optimiser was built and tested before the live client existed. Adding it cha
 
 Capacity and yield on the case roof:
 
-| Facet | Sloped area | Capacity | Specific yield |
-|---|---|---|---|
-| North trapezoid | 30.12 m² | 9 | **1,678.7 kWh/kWp** |
-| West triangle | 14.08 m² | 3 | 1,515.3 |
-| East triangle | 14.07 m² | 3 | 1,367.2 |
-| South trapezoid | 30.12 m² | 9 | 1,119.8 |
-| **Total** | **88.40 m²** | **24** | |
+| Facet | Sloped area | Array angle | Capacity | Specific yield |
+|---|---|---|---|---|
+| North trapezoid | 29.98 m² | 0° | 6 | **1,678.8 kWh/kWp** |
+| West triangle | 12.88 m² | 0° | 3 | 1,503.9 |
+| East triangle | 14.07 m² | **45°** | 4 | 1,367.2 |
+| South trapezoid | 31.00 m² | 0° | 9 | 1,114.9 |
+| **Total** | **87.93 m²** | | **22** | |
 
-| System | Panels | Allocation |
-|---|---|---|
-| 3.6 kWp | 9 | North only |
-| **6.0 kWp** | **15** | **North 9 + West 3 + East 3** |
-| 9.6 kWp | 24 | All four facets |
+North is the best facet and no longer the biggest one, and it holds fewer panels than south despite being ranked first: the **chimney** takes 2.99 m² out of the middle of it, which costs three bays rather than the panel and a half its area suggests, because it lands inside a row and breaks the tiling either side.
+
+East holds four rather than three because its array is turned 45°. That is the only facet where turning wins — see [array rotation](#array-rotation) below, and the buildability caveat in [`known-limitations.md`](known-limitations.md#rotated-arrays-are-not-buildable-as-drawn).
+
+| System | Requested | Placed | Allocation |
+|---|---|---|---|
+| 3.6 kWp | 9 | 9 | North 6 + West 3 |
+| **6.0 kWp** | **15** | **15** | **North 6 + West 3 + East 4 + South 2** |
+| 9.6 kWp | 24 | **22** | All four facets, full — capacity warning |
+
+The 6.0 kWp row is the one that shows the allocator working. South is the **largest** facet and has the **most** free bays, so a fill ranked on either would use it first. It is filled last and least, because at −34° latitude it yields a third less than north.
+
+### Array rotation
+
+Each facet's array may be turned away from its eave to fit more panels. The search is two-pass, because a full offset sweep at every angle costs roughly twenty times the whole placement stage:
+
+1. rank every angle in `0 … PANEL_ROTATION_MAX_DEG` step `PANEL_ROTATION_STEP_DEG` with a **coarse** offset sweep (0.25 m instead of 0.05 m);
+2. re-tile the best three, plus 0°, at full resolution.
+
+A coarse sweep undercounts, so it is only ever used to rank. **0° is always tiled properly and ties go to the smaller angle**, which makes the result a floor rather than a gamble: rotation can never place fewer panels than lying parallel to the eave. Cold start is 5.4 s for the whole roof; the result is cached, and the roof is static.
+
+Rotation happens in the facet's **surface** frame, where a panel is a true 2 × 1 m rectangle. The projection into plan view shortens the up-slope axis by cos(pitch), so a turned panel is a **parallelogram** on screen — at 45° on a 25° roof its corners are 95.6° and 84.4°, and its sides measure 1.905 × 0.956 m rather than 2 × 1. Anything that measures or hit-tests a panel must do it on the surface.
+
+What rotation does **not** do is change production: the panel stays coplanar with the roof, so tilt, azimuth and yield are untouched. It buys panels, not efficiency.
+
+Turning the array is also not a substitute for a better tiler. The south trapezoid would take a tenth panel at 46° under a tiler that let rows slide independently, but the shipped tiler lays a rigid lattice and a rigid lattice at 46° fits 8 there where flat fits 9 — so south stays at 0°.
+
+The 9.6 kWp row is the case the capacity warning exists for: 24 panels are requested, 21 fit, and every production and financial figure downstream is computed from the 8.4 kWp that fits — never from the 9.6 kWp that was asked for.
 
 ### The 6 kWp case is the proof
 
@@ -126,7 +149,7 @@ If the requested count cannot fit:
 
 Nothing downstream ever sees the requested figure as though it were installed.
 
-The case roof happens to fit all three sizes exactly, so the warning path is exercised by applying a realistic 1 m safety setback, which makes 24 panels impossible. Tests assert the shortfall, the warning text, and that the best facet is still preferred when short.
+The case roof fits the two smaller sizes and falls three panels short of the largest, so the warning path is exercised by the real calibration. It is exercised much harder by additionally applying a realistic 1 m safety setback, which leaves room for three panels in total. Tests assert the shortfall, the warning text, and that a shortfall still leaves no usable bay empty.
 
 > An earlier estimate in this build predicted 9.6 kWp would be infeasible. It was wrong — the roof holds exactly 24. The forecast was replaced with the measurement rather than left in the docs.
 

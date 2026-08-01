@@ -40,7 +40,11 @@ def test_a_new_project_probes_every_facet_exactly_once(client, stub_requests) ->
     _analysed(client)
 
     assert len(stub_requests) == 4, "one 1 kWp probe per roof facet, and no more"
-    assert {round(float(r["aspect"])) for r in stub_requests} == {-169, -79, 11, 101}
+    from app.services.roof import build_roof_model
+
+    assert {round(float(r["aspect"])) for r in stub_requests} == {
+        round(f.pvgis_aspect_deg) for f in build_roof_model().facets
+    }
     assert {float(r["peakpower"]) for r in stub_requests} == {1.0}
 
 
@@ -65,7 +69,9 @@ def test_a_size_change_reuses_the_stored_observation(client, stub_requests) -> N
 
     project = client.get(f"/api/v1/projects/{project_id}").json()
     assert project["selectedSystemSizeKwp"] == 9.6
-    assert project["analysis"]["layout"]["placedPanelCount"] == 24
+    # 22 is roof capacity, not the 24 requested. The reuse path has to reach the
+    # same shortfall a fresh analysis would, without asking PVGIS again.
+    assert project["analysis"]["layout"]["placedPanelCount"] == 22
 
 
 def test_the_reused_observation_is_carried_across_verbatim(client) -> None:

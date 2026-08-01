@@ -60,4 +60,16 @@ async def fixed_model(settings: Settings = Depends(get_settings)) -> dict[str, A
             }
             for f in roof.facets
         ],
+        "obstructionGeometry": [
+            {
+                "id": o.id,
+                "label": o.label,
+                "kind": o.kind,
+                "facetId": o.facet_id,
+                "sourcePixelPolygon": [
+                    {"x": round(p.x, 2), "y": round(p.y, 2)} for p in o.source_pixel_polygon
+                ],
+            }
+            for o in roof.obstructions
+        ],
     }

@@ -66,10 +66,14 @@ def test_provenance_names_both_angle_conventions(provenance) -> None:
 
 def test_the_reuse_key_is_kept_at_full_precision(provenance) -> None:
     """`energy.facets[]` rounds for reading; provenance is a comparison key."""
+    from app.services.roof import build_roof_model
+
     aspects = {p["facetId"]: p["pvgisAspectDeg"] for p in provenance["probes"]}
-    assert aspects["facet_n"] == pytest.approx(-169.3798, abs=1e-3)
-    # Two decimals would collapse -169.3798 and -169.38 into one value; six
-    # keeps the equality check meaningful.
+    expected = build_roof_model().facet("facet_n").pvgis_aspect_deg
+    # The payload rounds to six decimals; the model carries full float precision.
+    assert aspects["facet_n"] == pytest.approx(expected, abs=1e-6)
+    # Two decimals would collapse -169.467751 and -169.47 into one value; full
+    # precision keeps the equality check meaningful.
     assert round(aspects["facet_n"], 2) != aspects["facet_n"]
 
 
@@ -178,10 +182,15 @@ async def test_disagreeing_radiation_databases_fail_the_whole_analysis(
     from app.core.config import get_settings
     from app.core.errors import PvgisInconsistentProvenanceError
     from app.services.analysis import run_analysis
+    from app.services.roof import build_roof_model
 
     stub_url, _ = pvgis_stub
+    # The fault is scoped to one facet's aspect, so it has to track the
+    # calibration: a literal here silently stops injecting anything the moment
+    # the roof is re-traced, and the test then passes for the wrong reason.
+    south = round(build_roof_model().facet("facet_s").pvgis_aspect_deg, 2)
     settings = get_settings().model_copy(
-        update={"pvgis_base_url": f"{stub_url}/__fault/mixed-raddb/10.62/api/v5_3"}
+        update={"pvgis_base_url": f"{stub_url}/__fault/mixed-raddb/{south}/api/v5_3"}
     )
 
     with pytest.raises(PvgisInconsistentProvenanceError) as caught:

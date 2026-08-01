@@ -58,8 +58,8 @@ def test_non_integral_system_size_is_rejected(settings) -> None:
         settings.required_panel_count(5.0)
 
 
-@pytest.mark.parametrize(("size", "expected"), [(3.6, 9), (6.0, 15), (9.6, 24)])
-async def test_each_case_size_places_the_requested_count(
+@pytest.mark.parametrize(("size", "expected"), [(3.6, 9), (6.0, 15)])
+async def test_the_two_smaller_case_sizes_place_the_requested_count(
     roof, provider, settings, size, expected
 ) -> None:
     layout = generate_layout(roof, size, provider, settings)
@@ -69,13 +69,41 @@ async def test_each_case_size_places_the_requested_count(
     assert layout.capacity_warning is None
 
 
+async def test_the_largest_case_size_no_longer_fits_since_the_chimney_was_modelled(
+    roof, provider, settings
+) -> None:
+    """The headline consequence of excluding the obstruction.
+
+    The chimney occupies 2.99 m2 in the middle of the north facet, which costs
+    three panel bays rather than the one and a half its area suggests: it lands
+    inside a row and breaks the tiling on both sides of itself. Array rotation
+    wins one of the three back on the east facet, so capacity is 24 -> 22 and
+    the largest offered system is an 8.8 kWp shortfall.
+
+    This is exactly the case the capacity warning exists for, and it must reach
+    the customer rather than being rounded away.
+    """
+    layout = generate_layout(roof, 9.6, provider, settings)
+
+    assert layout.requested_panel_count == 24
+    assert layout.placed_panel_count == 22
+    assert layout.feasible_system_size_kwp == pytest.approx(8.8)
+    assert not layout.is_fully_satisfied
+    assert layout.capacity_warning is not None
+    assert "8.8" in layout.capacity_warning
+
+    placed = {fl.facet_id: len(fl.panels) for fl in layout.facet_layouts}
+    assert placed["facet_n"] == 6
+
+
 @pytest.mark.parametrize("size", [3.6, 6.0, 9.6])
 async def test_installed_power_equals_count_times_panel_rating(
     roof, provider, settings, size
 ) -> None:
+    """Power always tracks what was *placed*, never what was asked for."""
     layout = generate_layout(roof, size, provider, settings)
     assert layout.feasible_system_size_kwp == pytest.approx(layout.placed_panel_count * 0.4)
-    assert layout.feasible_system_size_kwp == pytest.approx(size)
+    assert layout.feasible_system_size_kwp <= size
 
 
 async def test_unsupported_system_size_is_refused(roof, provider, settings) -> None:
@@ -189,10 +217,21 @@ def test_landscape_outperforms_portrait_on_these_facets(roof, settings) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_small_system_goes_entirely_to_the_best_facet(roof, provider, settings) -> None:
+async def test_small_system_fills_the_best_facet_then_spills_to_the_next_best(
+    roof, provider, settings
+) -> None:
+    """3.6 kWp used to fit on north alone. The chimney took three of its bays.
+
+    So the smallest system now needs a second facet, and the one it picks is the
+    test: west, the next-best yield, not south, which is the largest.
+    """
     layout = generate_layout(roof, 3.6, provider, settings)
-    assert len(layout.facet_layouts) == 1
-    assert layout.facet_layouts[0].facet_id == "facet_n"
+    used = {fl.facet_id: fl.panel_count for fl in layout.facet_layouts}
+
+    assert used["facet_n"] == 6, "north is full once the chimney is excluded"
+    assert used["facet_w"] == 3
+    assert "facet_s" not in used
+    assert sum(used.values()) == 9
 
 
 async def test_medium_system_prefers_small_high_yield_facets_over_a_large_poor_one(
@@ -200,19 +239,24 @@ async def test_medium_system_prefers_small_high_yield_facets_over_a_large_poor_o
 ) -> None:
     """The southern-hemisphere test that a naive area-greedy fill would fail.
 
-    North and south are the same size (30.1 m2, 9 panels each). A fill that
-    ranks by area would put the remaining 6 panels on south. But at this site
-    south yields 1120 kWh/kWp while the two small east/west triangles yield
-    1367 and 1515, so the correct answer is to use both triangles and leave
-    south empty.
+    South is the *largest* facet at 31.0 m2, and with the chimney excluded north
+    holds only 6 panels to south's 9. An area-greedy fill would therefore favour
+    south outright. But south yields 1115 kWh/kWp against north's 1679, west's
+    1504 and east's 1367, so the correct answer fills north and both triangles
+    to capacity first and gives south only what is left.
+
+    East takes 4 rather than 3 because its array is turned 45 deg. That the two
+    left-over panels land on south rather than anywhere else is the assertion
+    that matters.
     """
     layout = generate_layout(roof, 6.0, provider, settings)
     used = {fl.facet_id: fl.panel_count for fl in layout.facet_layouts}
 
-    assert used["facet_n"] == 9
-    assert "facet_s" not in used, "south is the worst facet and must be skipped"
+    assert used["facet_n"] == 6
     assert used["facet_w"] == 3
-    assert used["facet_e"] == 3
+    assert used["facet_e"] == 4
+    assert used["facet_s"] == 2, "only the remainder, despite being the biggest facet"
+    assert sum(used.values()) == 15
 
 
 async def test_full_system_uses_every_facet(roof, provider, settings) -> None:
@@ -274,11 +318,12 @@ async def test_repeated_runs_produce_identical_layouts(roof, provider, settings,
 async def test_large_setback_reduces_capacity_and_raises_a_warning(
     roof, provider, settings
 ) -> None:
-    """The roof fits 24 panels as calibrated, so capacity is forced down here.
+    """A 1 m safety setback on top of the chimney leaves almost nothing.
 
-    A 1 m safety setback is a realistic requirement and makes the requested
-    count physically impossible, which is the behaviour the brief asks to be
-    handled honestly rather than papered over.
+    The roof holds 21 panels as calibrated, already short of the 24 the largest
+    system wants. Adding a realistic fire/access setback takes that to 3, which
+    is the behaviour the brief asks to be handled honestly rather than papered
+    over.
     """
     tight = settings.model_copy(update={"roof_edge_setback_m": 1.0})
     layout = generate_layout(roof, 9.6, provider, tight)
@@ -291,12 +336,25 @@ async def test_large_setback_reduces_capacity_and_raises_a_warning(
     assert_layout_valid(roof, layout, tight)
 
 
-async def test_shortfall_still_prefers_the_best_facets(roof, provider, settings) -> None:
+async def test_shortfall_uses_every_panel_the_roof_can_take(roof, provider, settings) -> None:
+    """Under a shortfall there is no ranking left to test - only completeness.
+
+    This used to assert that north held the most panels. That conflated "best
+    facet" with "biggest count": with a 1 m setback and the chimney excluded,
+    north fits 1 panel and south 2, so south wins on count while north is still
+    filled to its capacity. Preference is exercised where a choice actually
+    exists, in the 6.0 kWp test above; here the only correct behaviour is to
+    leave no usable bay empty.
+    """
     tight = settings.model_copy(update={"roof_edge_setback_m": 1.0})
     layout = generate_layout(roof, 9.6, provider, tight)
-    if layout.facet_layouts:
-        best = max(layout.facet_layouts, key=lambda fl: fl.panel_count)
-        assert best.facet_id == "facet_n"
+
+    capacity = sum(
+        max((c.max_count for c in build_facet_candidates(roof, f, tight)), default=0)
+        for f in roof.facets
+    )
+    assert capacity < layout.requested_panel_count
+    assert layout.placed_panel_count == capacity
 
 
 async def test_impossible_setback_yields_no_panels_and_a_warning(roof, provider, settings) -> None:

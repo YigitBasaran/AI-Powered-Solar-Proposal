@@ -1,7 +1,7 @@
 {
   "id": "case_fixed_roof",
   "description": "Hipped roof of the fixed case property. Coordinates are SOURCE-MAP pixels on the 1280x1280 z20/scale2 raster - never viewport or fixture-crop pixels. The raster centre is the resolved case coordinate.",
-  "derivation": "Brightness band + morphological opening anchored at a median-selected seed, convex hull, minimum-area rectangle by rotating calipers, then uniform-pitch hip construction (ridge = long - short, hips at 45 deg in plan). Reproduce with scripts/derive_roof_calibration.py.",
+  "derivation": "Automated pass: brightness band + morphological opening anchored at a median-selected seed, convex hull, minimum-area rectangle by rotating calipers, then uniform-pitch hip construction (ridge = long - short, hips at 45 deg in plan), via scripts/derive_roof_calibration.py. That pass produced v_corner_b, v_corner_c, v_corner_d and v_ridge_1, which stand unchanged. v_corner_a and v_ridge_0 were then MOVED by operator inspection of the raster and no longer come from the script, so two of its guarantees no longer hold: the footprint is a general quadrilateral rather than a fitted rectangle, and the hips are not all at 45 deg in plan. Re-running the script would silently discard both corrections.",
   "source_raster": {
     "width_px": 1280,
     "height_px": 1280,
@@ -12,8 +12,8 @@
     {
       "id": "v_corner_a",
       "source_pixel": {
-        "x": 562.53,
-        "y": 578.32
+        "x": 559.77,
+        "y": 580.53
       }
     },
     {
@@ -40,8 +40,8 @@
     {
       "id": "v_ridge_0",
       "source_pixel": {
-        "x": 608.65,
-        "y": 645.72
+        "x": 604.07,
+        "y": 643.75
       }
     },
     {
@@ -123,7 +123,7 @@
         "v_corner_a",
         "v_corner_b"
       ],
-      "approx_compass_azimuth_deg": 10.62,
+      "approx_compass_azimuth_deg": 10.53,
       "shape": "trapezoid"
     },
     {
@@ -140,7 +140,7 @@
         "v_corner_c",
         "v_corner_d"
       ],
-      "approx_compass_azimuth_deg": 190.62,
+      "approx_compass_azimuth_deg": 187.59,
       "shape": "trapezoid"
     },
     {
@@ -156,7 +156,7 @@
         "v_corner_d",
         "v_corner_a"
       ],
-      "approx_compass_azimuth_deg": 280.62,
+      "approx_compass_azimuth_deg": 278.05,
       "shape": "triangle"
     },
     {
@@ -176,21 +176,66 @@
       "shape": "triangle"
     }
   ],
+  "obstructions": [
+    {
+      "id": "obst_chimney_0",
+      "label": "Chimney",
+      "kind": "chimney",
+      "facet_id": "facet_n",
+      "source_pixel_polygon": [
+        {
+          "x": 658.95,
+          "y": 643.03
+        },
+        {
+          "x": 635.32,
+          "y": 638.91
+        },
+        {
+          "x": 640.92,
+          "y": 606.79
+        },
+        {
+          "x": 664.55,
+          "y": 610.91
+        }
+      ],
+      "note": "1.48 x 2.02 m, 2.99 m2 in plan. Outlined by the operator on the raster at 9x, then read back off the marked plate by segmenting the ink rather than by eye. No panel may stand on it, so it is subtracted from the north facet before placement."
+    }
+  ],
   "measured": {
-    "footprint_long_m": 11.216,
-    "footprint_short_m": 7.143,
-    "footprint_area_m2": 80.11,
-    "ridge_m": 4.073
+    "footprint_long_m": 11.288,
+    "footprint_short_m": 7.061,
+    "footprint_area_m2": 79.69,
+    "ridge_m": 4.374,
+    "note": "The footprint is no longer a rectangle, so long and short are the MEANS of two unequal pairs: 11.360/11.216 and 7.143/6.979 m. footprint_short_m is not decoration - build_roof_model reads it to derive the ridge rise, which sets the hips' true 3D lengths."
   },
   "calibration_metadata": {
     "traced_against": "Google Static Maps satellite imagery, fetched live",
     "traced_on": "2026-07-30",
-    "method": "The Esri-derived tracing was re-registered onto the Google raster by maximising image-gradient response under the four eave edges, then each vertex was inspected individually at 3x zoom. The solved transform is a pure translation of (+6.5, -19.5) source px with 0.00 deg rotation and unit scale, so no measured quantity changes - only where the outline sits.",
+    "method": "Two steps, in order. (1) The Esri-derived tracing was re-registered onto the Google raster by maximising image-gradient response under the four eave edges. The solved transform is a pure translation of (+6.5, -19.5) source px with 0.00 deg rotation and unit scale, so it changed no measured quantity - only where the outline sat. (2) That registration left a visible misfit at the top-left corner and the west end of the ridge, which the gradient method could not resolve: it locks onto the shadow bands beside the true edges, so its 'improvements' were not trustworthy. Those two points were therefore corrected by the operator, marked on a 9x plate of this raster and read back by segmenting the ink rather than by eye.",
     "registration": {
       "dx_px": 6.5,
       "dy_px": -19.5,
       "rotation_deg": 0.0,
       "shift_m": 1.271
+    },
+    "operator_correction": {
+      "applied_on": "2026-08-01",
+      "moved": {
+        "v_corner_a": {
+          "from": [562.53, 578.32],
+          "to": [559.77, 580.53],
+          "shift_m": 0.218
+        },
+        "v_ridge_0": {
+          "from": [608.65, 645.72],
+          "to": [604.07, 643.75],
+          "shift_m": 0.309
+        }
+      },
+      "cross_check": "The two marks were made independently and agree. Under the model's uniform pitch a rectangle satisfies ridge = long - short, so v_corner_a alone predicts a 4.381 m ridge; the separately marked v_ridge_0 implies 4.374 m. They differ by 7 mm, which is why both were accepted.",
+      "unmodelled_residual": "Taking both marks literally leaves the hips at 45.20/47.22/44.16/45.84 deg instead of 45, and - holding the ridge height - the four facets would want pitches spanning 1.68 deg. The model applies one pitch to all four. Pitch here is a configured assumption that was never measured from imagery, so deriving four pitches from two hand-placed dots would be false precision. The inconsistency is recorded rather than modelled."
     },
     "request_signature": "1601364f6c21233ba56174f00d226902d61f6853231e162d3049b1628231dae1",
     "request": {
@@ -211,8 +256,8 @@
       "note": "perceptual hash is the gate; sha256 is diagnostic only"
     },
     "status": "verified",
-    "verified_on": "2026-07-30",
+    "verified_on": "2026-08-01",
     "verified_by": "human visual review against the live Google raster",
-    "verification_note": "Outer outline, ridge endpoints and hip lines confirmed against the visible roof at 3x zoom, corner by corner. The registration is a pure translation with zero rotation and unit scale, so no measured quantity changed: the projected area is 80.12 m2 before and after."
+    "verification_note": "Outer outline, ridge endpoints, hip lines and the chimney were confirmed against the visible roof, corner by corner, at 9x and again at 30x on the two corrected points. Unlike the earlier registration, this revision DOES change measured quantities: projected area 80.12 -> 79.69 m2 (-0.53%), sloped area at 25 deg 88.40 -> 87.93 m2, ridge 4.073 -> 4.374 m, and the north facet loses a further 2.99 m2 in plan to the chimney, which no panel may stand on. The case's own reference tracing was measured as a cross-check: fitted onto this raster by a similarity transform it agrees at every corner to 1.05 px (6.5 cm), but it is itself a rectangle with all four hips at 45 deg, so it corroborates the outline and can say nothing independent about the ridge."
   }
 }

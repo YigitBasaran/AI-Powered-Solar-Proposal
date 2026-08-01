@@ -14,6 +14,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from app.services.roof import build_roof_model
 from tests.support.pvgis_stub import (
     CASE_LAT,
     CASE_LON,
@@ -37,12 +38,12 @@ GOOD = {
     "peakpower": 1.0,
 }
 
-#: The four case facets, and the integer PVGIS rounded each one to.
+#: The four case facets, and the integer PVGIS rounds each one to. Derived from
+#: the calibration rather than transcribed, so re-tracing the roof cannot leave
+#: this table quietly describing a geometry that no longer exists.
 CASE_ASPECTS = {
-    "facet_n": (-169.38, -169),
-    "facet_e": (-79.38, -79),
-    "facet_s": (10.62, 11),
-    "facet_w": (100.62, 101),
+    f.id: (round(f.pvgis_aspect_deg, 2), round(f.pvgis_aspect_deg))
+    for f in build_roof_model().facets
 }
 
 
@@ -99,8 +100,9 @@ def test_an_unknown_aspect_is_refused_not_approximated(stub_url) -> None:
 
 def test_energy_scales_linearly_and_irradiation_does_not(stub_url) -> None:
     base_url, _ = stub_url
-    one = _get(base_url, -169.38, peakpower=1.0).json()["outputs"]["totals"]["fixed"]
-    six = _get(base_url, -169.38, peakpower=6.0).json()["outputs"]["totals"]["fixed"]
+    north = CASE_ASPECTS["facet_n"][0]
+    one = _get(base_url, north, peakpower=1.0).json()["outputs"]["totals"]["fixed"]
+    six = _get(base_url, north, peakpower=6.0).json()["outputs"]["totals"]["fixed"]
 
     assert six["E_y"] == pytest.approx(one["E_y"] * 6.0, rel=1e-6)
     assert six["E_m"] == pytest.approx(one["E_m"] * 6.0, rel=1e-6)
@@ -202,7 +204,9 @@ def test_flaky_fails_twice_then_succeeds(stub_url) -> None:
     httpx.post(f"{base_url}/__stub/reset", timeout=10.0)
     path = "/__fault/flaky3/api/v5_3/PVcalc"
 
-    codes = [_get(base_url, 100.62, path=path).status_code for _ in range(3)]
+    codes = [
+        _get(base_url, CASE_ASPECTS["facet_w"][0], path=path).status_code for _ in range(3)
+    ]
     assert codes == [503, 503, 200]
 
 
@@ -224,14 +228,15 @@ def test_one_facet_fails_while_the_others_answer(stub_url) -> None:
 
     assert _get(base_url, -79.38, path=path).status_code == 503
     assert _get(base_url, -169.38, path=path).status_code == 200
-    assert _get(base_url, 100.62, path=path).status_code == 200
+    assert _get(base_url, CASE_ASPECTS["facet_w"][0], path=path).status_code == 200
 
 
 def test_mixed_radiation_database_affects_only_the_named_aspect(stub_url) -> None:
     base_url, _ = stub_url
-    path = "/__fault/mixed-raddb/10.62/api/v5_3/PVcalc"
+    south = CASE_ASPECTS["facet_s"][0]
+    path = f"/__fault/mixed-raddb/{south}/api/v5_3/PVcalc"
 
-    odd = _get(base_url, 10.62, path=path).json()
+    odd = _get(base_url, south, path=path).json()
     normal = _get(base_url, -169.38, path=path).json()
     assert odd["inputs"]["meteo_data"]["radiation_db"] == "PVGIS-ERA5"
     assert normal["inputs"]["meteo_data"]["radiation_db"] == "PVGIS-SARAH3"
@@ -270,7 +275,8 @@ def test_health_lists_the_captures(stub_url) -> None:
     base_url, _ = stub_url
     body = httpx.get(f"{base_url}/__stub/health", timeout=10.0).json()
     assert body["ok"] is True
-    assert body["captures"] == [-169, -79, 11, 101]
+    # One capture per case facet, indexed by the integer PVGIS rounds it to.
+    assert body["captures"] == sorted(rounded for _, rounded in CASE_ASPECTS.values())
 
 
 def test_reset_clears_the_log_and_the_attempt_counters(stub_url) -> None:

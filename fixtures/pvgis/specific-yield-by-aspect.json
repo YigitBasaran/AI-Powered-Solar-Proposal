@@ -29,22 +29,22 @@
         182.17
       ]
     },
-    "-169.38": {
-      "specific_yield_kwh_per_kwp": 1678.66,
-      "annual_kwh_per_kwp": 1678.66,
+    "-169.47": {
+      "specific_yield_kwh_per_kwp": 1678.77,
+      "annual_kwh_per_kwp": 1678.77,
       "monthly_kwh_per_kwp": [
         182.56,
-        162.31,
-        158.95,
-        131.93,
-        103.2,
-        88.21,
-        98.65,
-        112.23,
-        129.62,
-        161.93,
-        167.21,
-        181.85
+        162.32,
+        158.96,
+        131.94,
+        103.21,
+        88.22,
+        98.66,
+        112.24,
+        129.64,
+        161.94,
+        167.22,
+        181.86
       ]
     },
     "-135.00": {
@@ -137,22 +137,22 @@
         185.07
       ]
     },
-    "10.62": {
-      "specific_yield_kwh_per_kwp": 1119.82,
-      "annual_kwh_per_kwp": 1119.82,
+    "7.59": {
+      "specific_yield_kwh_per_kwp": 1114.85,
+      "annual_kwh_per_kwp": 1114.85,
       "monthly_kwh_per_kwp": [
-        177.98,
-        133.3,
-        98.82,
-        54.04,
-        29.2,
-        18.9,
-        23.54,
-        42.35,
-        75.53,
-        124.26,
-        156.21,
-        185.69
+        177.79,
+        133.04,
+        98.31,
+        53.35,
+        28.68,
+        18.46,
+        23.05,
+        41.76,
+        74.96,
+        123.86,
+        156.03,
+        185.55
       ]
     },
     "45.00": {
@@ -191,22 +191,22 @@
         189.56
       ]
     },
-    "100.62": {
-      "specific_yield_kwh_per_kwp": 1515.28,
-      "annual_kwh_per_kwp": 1515.28,
+    "98.05": {
+      "specific_yield_kwh_per_kwp": 1503.89,
+      "annual_kwh_per_kwp": 1503.89,
       "monthly_kwh_per_kwp": [
-        187.19,
-        156.77,
-        140.94,
-        105.7,
-        77.27,
-        62.11,
-        71.74,
-        87.67,
-        114.45,
-        153.42,
-        168.41,
-        189.62
+        187.03,
+        156.14,
+        139.71,
+        104.29,
+        75.79,
+        60.64,
+        70.17,
+        86.36,
+        113.36,
+        152.65,
+        168.12,
+        189.63
       ]
     },
     "135.00": {
@@ -230,16 +230,16 @@
   },
   "case_facets": {
     "facet_n": {
-      "pvgis_aspect_deg": -169.38,
-      "specific_yield_kwh_per_kwp": 1678.66
+      "pvgis_aspect_deg": -169.47,
+      "specific_yield_kwh_per_kwp": 1678.77
     },
     "facet_s": {
-      "pvgis_aspect_deg": 10.62,
-      "specific_yield_kwh_per_kwp": 1119.82
+      "pvgis_aspect_deg": 7.59,
+      "specific_yield_kwh_per_kwp": 1114.85
     },
     "facet_w": {
-      "pvgis_aspect_deg": 100.62,
-      "specific_yield_kwh_per_kwp": 1515.28
+      "pvgis_aspect_deg": 98.05,
+      "specific_yield_kwh_per_kwp": 1503.89
     },
     "facet_e": {
       "pvgis_aspect_deg": -79.38,

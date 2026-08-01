@@ -60,7 +60,7 @@ test.describe("@p0 panel placement", () => {
     const panels = analysis.layout.facets.flatMap((f) =>
       f.panels.map((p) => ({ ...p, facetId: f.facetId })),
     );
-    expect(panels.length).toBe(24);
+    expect(panels.length).toBe(EXPECTED["9.6"].actualPanelCount);
 
     for (let i = 0; i < panels.length; i += 1) {
       for (let j = i + 1; j < panels.length; j += 1) {
@@ -121,16 +121,18 @@ test.describe("@p0 panel placement", () => {
     const { analysis } = await api.analysedProject("6 kWp");
     const counts = new Map(analysis.layout.facets.map((f) => [f.facetId, f.panelCount]));
 
-    // North and south are the same size to within a square centimetre...
+    // South is the LARGEST facet, and after the chimney it also has the most
+    // free bays. An allocator ranking on either would fill it first...
     const areas = new Map(analysis.roof.facets.map((f) => [f.id, f.slopedAreaM2]));
-    expect(areas.get("facet_n")).toBeCloseTo(areas.get("facet_s")!, 2);
+    expect(areas.get("facet_s")!).toBeGreaterThan(areas.get("facet_n")!);
+    expect(counts.get("facet_s")!).toBeLessThan(counts.get("facet_n")!);
 
-    // ...yet 15 panels go 9 / 3 / 3 with south empty, because at -34° latitude
-    // north (1679) > west (1515) > east (1367) > south (1120) kWh/kWp.
-    expect(counts.get("facet_n")).toBe(9);
-    expect(counts.get("facet_w")).toBe(3);
-    expect(counts.get("facet_e")).toBe(3);
-    expect(counts.get("facet_s") ?? 0).toBe(0);
+    // ...yet 15 panels go 6 / 3 / 3 / 3, filling north and both triangles
+    // before south takes the remainder, because at -34° latitude
+    // north (1679) > west (1504) > east (1367) > south (1115) kWh/kWp.
+    for (const [facetId, panels] of Object.entries(EXPECTED["6"].panelsByFacet)) {
+      expect(counts.get(facetId) ?? 0, `panels on ${facetId}`).toBe(panels);
+    }
 
     // Stated as a rule: no facet may hold panels while a strictly
     // better-yielding facet is below its own capacity.
@@ -197,13 +199,24 @@ test.describe("@p0 panel placement", () => {
       expect(edge.true3dLengthM).toBeCloseTo(edge.projectedLengthM, 3);
     }
 
-    for (const hip of edges.filter((e) => e.type === "hip")) {
-      expect(hip.projectedLengthM).toBeCloseTo(EXPECTED_ROOF.hipProjectedLengthM, 2);
-      // True 3-D endpoint geometry: 5.319 m, from √(5.051² + 1.665²).
-      expect(hip.true3dLengthM!).toBeCloseTo(EXPECTED_ROOF.hipTrue3dLengthM, 2);
-      // Not 5.573 m. The pitch correction applies only to an edge running
-      // straight up the slope, which a hip does not.
-      expect(hip.true3dLengthM!).not.toBeCloseTo(EXPECTED_ROOF.hipNaiveWrongLengthM, 2);
+    // The four hips are no longer equal — `hip_0` and `hip_1` run to the
+    // corrected ridge end — so A-GEO-1 is checked on `hip_2`, whose endpoints
+    // the correction did not touch, and the inequality is asserted for the
+    // others rather than being averaged away.
+    const hips = edges.filter((e) => e.type === "hip");
+    const hip2 = hips.find((h) => h.id === "hip_2")!;
+    expect(hip2.projectedLengthM).toBeCloseTo(EXPECTED_ROOF.hipProjectedLengthM, 2);
+    // True 3-D endpoint geometry: 5.312 m, from √(5.051² + 1.653²).
+    expect(hip2.true3dLengthM!).toBeCloseTo(EXPECTED_ROOF.hipTrue3dLengthM, 2);
+    // Not 5.573 m. The pitch correction applies only to an edge running
+    // straight up the slope, which a hip does not.
+    expect(hip2.true3dLengthM!).not.toBeCloseTo(EXPECTED_ROOF.hipNaiveWrongLengthM, 2);
+
+    for (const hip of hips) {
+      expect(hip.true3dLengthM!).toBeGreaterThan(hip.projectedLengthM);
+      expect(hip.true3dLengthM!).toBeLessThan(
+        hip.projectedLengthM / Math.cos((25 * Math.PI) / 180),
+      );
     }
   });
 });

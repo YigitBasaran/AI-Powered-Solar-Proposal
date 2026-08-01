@@ -23,6 +23,7 @@ from app.domain.geometry import (
     build_surface_frame,
     compass_azimuth_to_pvgis_aspect,
     facet_compass_azimuth,
+    point_in_polygon,
     polygon_area_m2,
     projected_length_m,
     sloped_area_m2,
@@ -36,6 +37,7 @@ from app.domain.models import (
     RoofEdgeType,
     RoofFacet,
     RoofModel,
+    RoofObstruction,
     RoofVertex,
     cos_pitch,
 )
@@ -238,6 +240,26 @@ def build_roof_model(
 
     edge_by_id = {e.id: e for e in edges}
 
+    # --- obstructions -----------------------------------------------------
+    # Parsed before the facets, because each facet reports how much of itself
+    # is obstructed and that has to be known when the facet is constructed.
+    raw_obstructions = data.get("obstructions", [])
+    obstruction_polygons: dict[str, tuple[list[Point2D], list[Point2D], float]] = {}
+    obstructed_by_facet: dict[str, float] = {}
+    for o in raw_obstructions:
+        pixel_poly = [
+            Point2D(x=float(p["x"]), y=float(p["y"])) for p in o["source_pixel_polygon"]
+        ]
+        metric_poly = [
+            source_pixel_to_metric(
+                p, source_width_px=src_w, source_height_px=src_h, ground_m_per_source_px=m_per_px
+            )
+            for p in pixel_poly
+        ]
+        area = polygon_area_m2(metric_poly)
+        obstruction_polygons[o["id"]] = (pixel_poly, metric_poly, area)
+        obstructed_by_facet[o["facet_id"]] = obstructed_by_facet.get(o["facet_id"], 0.0) + area
+
     # --- facets -----------------------------------------------------------
     facets: list[RoofFacet] = []
     for f in data["facets"]:
@@ -271,6 +293,46 @@ def build_roof_model(
                 pvgis_aspect_deg=compass_azimuth_to_pvgis_aspect(azimuth),
                 projected_area_m2=projected_area,
                 sloped_area_m2=sloped_area_m2(projected_area, pitch),
+                obstructed_area_m2=obstructed_by_facet.get(f["id"], 0.0),
+            )
+        )
+
+    facet_by_id = {f.id: f for f in facets}
+
+    obstructions: list[RoofObstruction] = []
+    for o in raw_obstructions:
+        pixel_poly, metric_poly, area = obstruction_polygons[o["id"]]
+        host = facet_by_id.get(o["facet_id"])
+        if host is None:
+            raise RoofCalibrationMissingError(
+                f"Obstruction {o['id']!r} references unknown facet {o['facet_id']!r}"
+            )
+        # A mis-declared facet would subtract nothing from the facet the
+        # obstruction actually stands on, and the layout would quietly place a
+        # panel across a chimney. Every facet here is convex, so "all vertices
+        # inside" is equivalent to "the polygon is inside" and this is a proof,
+        # not a heuristic.
+        outside = [
+            p
+            for p in metric_poly
+            if not point_in_polygon(p, host.projected_metric_polygon)
+        ]
+        if outside:
+            raise RoofCalibrationMismatchError(
+                f"Obstruction {o['id']!r} is declared on facet {o['facet_id']!r} but "
+                f"{len(outside)} of its {len(metric_poly)} corners fall outside it",
+                details={"obstructionId": o["id"], "facetId": o["facet_id"]},
+            )
+        obstructions.append(
+            RoofObstruction(
+                id=o["id"],
+                label=o.get("label", o["id"]),
+                kind=o.get("kind", "obstruction"),
+                facet_id=o["facet_id"],
+                source_pixel_polygon=pixel_poly,
+                projected_metric_polygon=metric_poly,
+                projected_area_m2=area,
+                sloped_area_m2=sloped_area_m2(area, pitch),
             )
         )
 
@@ -281,6 +343,7 @@ def build_roof_model(
         vertices=vertices,
         edges=edges,
         facets=facets,
+        obstructions=obstructions,
         pitch_deg=pitch,
         ground_m_per_source_px=m_per_px,
         source_width_px=src_w,
@@ -324,6 +387,7 @@ def roof_summary(roof: RoofModel) -> dict[str, Any]:
         "groundMetresPerSourcePixel": round(roof.ground_m_per_source_px, 7),
         "totalProjectedAreaM2": round(roof.total_projected_area_m2, 2),
         "totalSlopedAreaM2": round(roof.total_sloped_area_m2, 2),
+        "totalObstructedAreaM2": round(roof.total_obstructed_area_m2, 2),
         "cosPitch": round(cos_pitch(roof.pitch_deg), 6),
         "facets": [
             {
@@ -334,8 +398,21 @@ def roof_summary(roof: RoofModel) -> dict[str, Any]:
                 "pvgisAspectDeg": round(f.pvgis_aspect_deg, 2),
                 "projectedAreaM2": round(f.projected_area_m2, 2),
                 "slopedAreaM2": round(f.sloped_area_m2, 2),
+                "obstructedAreaM2": round(f.obstructed_area_m2, 2),
+                "usableProjectedAreaM2": round(f.usable_projected_area_m2, 2),
             }
             for f in roof.facets
+        ],
+        "obstructions": [
+            {
+                "id": o.id,
+                "label": o.label,
+                "kind": o.kind,
+                "facetId": o.facet_id,
+                "projectedAreaM2": round(o.projected_area_m2, 2),
+                "slopedAreaM2": round(o.sloped_area_m2, 2),
+            }
+            for o in roof.obstructions
         ],
         "edges": [
             {

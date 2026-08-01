@@ -170,6 +170,36 @@ def polygon_area_m2(points: list[Point2D]) -> float:
     return abs(total) / 2.0
 
 
+def point_in_polygon(point: Point2D, polygon: list[Point2D], *, tolerance: float = 1e-9) -> bool:
+    """Ray-cast containment test. Points on the boundary count as inside.
+
+    The boundary case is not pedantry here: an obstruction traced right up to a
+    ridge, or a facet polygon sharing a vertex with one, would otherwise be
+    rejected for touching the edge it legitimately abuts.
+    """
+    n = len(polygon)
+    if n < 3:
+        raise ValueError("a polygon needs at least 3 vertices")
+
+    for i in range(n):
+        a, b = polygon[i], polygon[(i + 1) % n]
+        abx, aby = b.x - a.x, b.y - a.y
+        apx, apy = point.x - a.x, point.y - a.y
+        if abs(abx * apy - aby * apx) <= tolerance * max(1.0, abs(abx) + abs(aby)):
+            t = (apx * abx + apy * aby) / ((abx * abx + aby * aby) or 1.0)
+            if -tolerance <= t <= 1.0 + tolerance:
+                return True
+
+    inside = False
+    for i in range(n):
+        a, b = polygon[i], polygon[(i + 1) % n]
+        if (a.y > point.y) != (b.y > point.y):
+            x = (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x
+            if point.x < x:
+                inside = not inside
+    return inside
+
+
 def sloped_area_m2(projected_area: float, pitch_deg: float) -> float:
     """Plan-view area -> true sloped surface area.
 

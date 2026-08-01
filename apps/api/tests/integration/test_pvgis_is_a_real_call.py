@@ -40,8 +40,14 @@ def test_every_request_carries_the_case_geometry(client, stub_requests) -> None:
     """The stub validates the contract; this pins that it was actually asked."""
     _analysed(client)
 
+    from app.services.roof import build_roof_model
+
+    # Derived from the calibration, not transcribed: a literal set here would
+    # need editing every time the roof is re-traced, and would pass vacuously
+    # if it ever drifted to a superset of what is really requested.
+    expected = {round(f.pvgis_aspect_deg) for f in build_roof_model().facets}
     aspects = {round(float(r["aspect"])) for r in stub_requests}
-    assert aspects <= {-169, -79, 11, 101}, f"unexpected aspects requested: {aspects}"
+    assert aspects <= expected, f"unexpected aspects requested: {aspects}"
 
     for request in stub_requests:
         assert float(request["angle"]) == 25.0

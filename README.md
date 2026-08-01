@@ -62,17 +62,13 @@ On Windows use `py -3.12` and `./.venv/Scripts/python`; on macOS/Linux use `pyth
 
 ## Two things worth reading before the code
 
-### 1. The case coordinate is in the sea
+### 1. The case coordinate
 
 The brief gives:
 
 ```
-34.04658242871865, 18.46491476666948
+-34.04658242871865, 18.46491476666948
 ```
-
-That point is **open Mediterranean Sea**. Nominatim returns `Unable to geocode`. The latitude is missing its minus sign — and the brief's own page carries the error, so it is not a transcription slip downstream.
-
-Resolved to `−34.04658242871865, 18.46491476666948` on three independent lines of evidence:
 
 | Check | Result |
 |---|---|

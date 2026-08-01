@@ -39,6 +39,15 @@ class ActionKind(StrEnum):
     CHANGE_PREVIOUS_VALUE = "change_previous_value"
     NAVIGATE = "navigate"
     CONFIRM = "confirm"
+    #: "Email this to the customer."
+    #:
+    #: Never itself a send. It sets a pending confirmation and shows who would
+    #: receive it; only a `CONFIRM` on the very next turn causes anything to
+    #: leave the building. Kept a distinct kind rather than folded into
+    #: `NAVIGATE` or `PROVIDE_VALUE` so that "a message can request a send" is
+    #: something the type system states and the exhaustive `match` in
+    #: `handle_message` forces every reader to account for.
+    SEND_PROPOSAL = "send_proposal"
     RESET = "reset"
     CANCEL = "cancel"
     UNSUPPORTED_REQUEST = "unsupported_request"

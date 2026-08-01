@@ -48,6 +48,13 @@ const common = {
   // environment and check this rather than trusting a flag. `ALLOW_REPLAY_
   // PROPOSALS` below is refused at start-up without it.
   APP_ENV: "test",
+  // Belongs beside APP_ENV, and for the same reason. A developer with working
+  // SMTP credentials in `.env` — which is exactly what testing the live email
+  // path requires — would otherwise have them inherited by every stack, and
+  // the API *refuses to start* under `APP_ENV=test`. That guard is doing its
+  // job; a suite that cannot boot is a confusing way to meet it.
+  EMAIL_MODE: "console",
+  SALESPERSON_EMAIL: "",
   LOG_LEVEL: "WARNING",
   DATABASE_URL: sqliteUrl(dbPath),
   API_BASE_URL: `http://127.0.0.1:${port}`,

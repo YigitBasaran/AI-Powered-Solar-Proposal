@@ -70,6 +70,25 @@ services:
       - ollama-models:/root/.ollama
     restart: unless-stopped
 
+  # A local SMTP sink, so the email path can be exercised for real without an
+  # external account, a domain, or the risk of mail reaching a live address.
+  #
+  # Opt-in, like ollama above: the default stack runs with EMAIL_MODE=console,
+  # which renders the message and sends nothing at all.
+  #
+  #   docker compose --profile mail up -d
+  #   # set on the api service: EMAIL_MODE=smtp SMTP_HOST=mailpit SMTP_PORT=1025
+  #   #                         SMTP_USE_TLS=false EMAIL_FROM=proposals@solarvis.test
+  #   # read the inbox at http://localhost:8025
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: solarvis-mailpit
+    profiles: ["mail"]
+    ports:
+      - "1025:1025"  # SMTP
+      - "8025:8025"  # web inbox
+    restart: unless-stopped
+
 volumes:
   solarvis-data:
   solarvis-storage:

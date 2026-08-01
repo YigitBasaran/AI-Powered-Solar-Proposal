@@ -246,17 +246,88 @@ def test_pdf_html_contains_the_case_figures(client, proposal) -> None:
     assert "not a site survey" in flat
 
 
+def test_the_served_pdf_carries_the_executive_summary(client, proposal, monkeypatch) -> None:
+    """Regression: the route must render the projection the share page is served.
+
+    `aiSummary` is a column on the proposal row, not a key inside
+    `proposal_data_json`. Rendering straight from the stored blob therefore
+    dropped the executive summary from every PDF a customer actually
+    downloaded, while the share page kept showing it.
+
+    Every other PDF test in this file builds its own context from the public
+    payload, which is the enriched projection - so none of them could see it.
+    This one goes through the route, which is the only place the wiring exists.
+    """
+    from app.api.v1 import proposals as route
+    from app.services.pdf import render_html
+
+    captured = {}
+    build = route.build_context
+
+    def _capture(snapshot, **kwargs):
+        captured["context"] = build(snapshot, **kwargs)
+        return captured["context"]
+
+    async def _skip_chromium(html: str) -> bytes:
+        return b"%PDF-not-the-subject"
+
+    monkeypatch.setattr(route, "build_context", _capture)
+    monkeypatch.setattr(route, "render_pdf", _skip_chromium)
+
+    assert client.get(f"/api/v1/proposals/{proposal['shareToken']}/pdf").status_code == 200
+
+    summary = client.get(f"/api/v1/proposals/{proposal['shareToken']}").json()["aiSummary"]
+    assert summary, "the fixture proposal has no summary, so this would prove nothing"
+    assert captured["context"]["ai_summary"] == summary
+    assert summary in " ".join(render_html(captured["context"]).split())
+
+
 # ---------------------------------------------------------------------------
 # View tracking (bonus)
 # ---------------------------------------------------------------------------
 
 
-def test_view_is_recorded_and_counted(client) -> None:
+def test_a_view_is_recorded_and_counted(client) -> None:
+    token = finalised(client)["shareToken"]
+    first = client.post(f"/api/v1/proposals/{token}/view").json()
+
+    assert first["viewCount"] == 1
+    assert first["counted"] is True
+
+
+def test_an_immediate_second_request_is_the_same_visit(client) -> None:
+    """This test used to assert the opposite, and the old assertion was wrong.
+
+    The share page posts here on every mount, so a customer scrolling back,
+    refreshing, or reopening a tab produced a new "view" each time. The count
+    is the number an operator reads to decide whether to follow up, and one
+    person reading a proposal once should not present as seven openings.
+
+    So a repeat from the same reader inside the dedup window is not counted -
+    and it is suppressed by *not inserting a row*, which keeps the count, the
+    first-viewed and the last-viewed timestamps consistent with one another.
+    """
     token = finalised(client)["shareToken"]
     first = client.post(f"/api/v1/proposals/{token}/view").json()
     second = client.post(f"/api/v1/proposals/{token}/view").json()
+
     assert first["viewCount"] == 1
+    assert second["viewCount"] == 1
+    assert second["counted"] is False
+
+
+def test_a_different_reader_is_counted_separately(client) -> None:
+    """Dedup must not collapse two genuinely different people into one."""
+    token = finalised(client)["shareToken"]
+    client.post(f"/api/v1/proposals/{token}/view")
+
+    second = client.post(
+        f"/api/v1/proposals/{token}/view",
+        headers={"user-agent": "a-completely-different-browser/2.0"},
+    ).json()
+
     assert second["viewCount"] == 2
+    assert second["counted"] is True
 
 
 def test_view_count_is_exposed_on_the_share_payload(client) -> None:
@@ -265,6 +336,7 @@ def test_view_count_is_exposed_on_the_share_payload(client) -> None:
     views = client.get(f"/api/v1/proposals/{token}").json()["views"]
     assert views["viewCount"] == 1
     assert views["lastOpenedAt"]
+    assert views["firstOpenedAt"]
 
 
 def test_viewing_an_unknown_proposal_is_not_found(client) -> None:

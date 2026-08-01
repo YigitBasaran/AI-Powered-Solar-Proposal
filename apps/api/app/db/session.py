@@ -147,15 +147,25 @@ async def init_db() -> None:
     """
     engine = get_engine()
 
-    # Checked before `create_all` for readability only: `alembic_version` is not
-    # in the ORM metadata, so `create_all` never creates it either way.
     async with engine.begin() as conn:
         managed = await conn.run_sync(
             lambda sync_conn: sync_conn.dialect.has_table(sync_conn, "alembic_version")
         )
-        await conn.run_sync(Base.metadata.create_all)
 
     if managed:
+        # `create_all` is deliberately NOT run on this path. It creates any
+        # table the metadata declares and the database lacks - including one a
+        # pending migration is about to create - and then that migration fails
+        # with `table customers already exists`, leaving the database stuck one
+        # revision behind for good.
+        #
+        # It went unnoticed while every migration only *added columns*, which
+        # `create_all` cannot do to an existing table. The first migration to
+        # introduce a new table would have broken start-up on every deployment
+        # with a persistent volume. On a managed database the migrations are the
+        # authority, and running anything else alongside them is what caused the
+        # conflict.
+        #
         # Deliberately *not* wrapped in a swallow-everything. A failed upgrade
         # leaves the schema genuinely wrong, and booting into that state means
         # every write fails at runtime instead of the container failing to
@@ -164,6 +174,9 @@ async def init_db() -> None:
             await conn.run_sync(_upgrade_to_head)
         logger.info("database upgraded to alembic head")
         return
+
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
 
     # Stamping needs its own transaction: it opens a second Alembic-managed
     # context over the same connection.

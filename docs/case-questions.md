@@ -43,6 +43,10 @@ Chosen because each removes a specific reason this tool would currently lose a d
 
 **Hard part:** keeping immutability while allowing revision. The temptation is to edit in place; the discipline is to supersede.
 
+> **Since answering this, the first slice has been built.** Customers, customer-linked projects, a frozen customer snapshot on each proposal, delivery by email with explicit confirmation and idempotent retry, a derived revision chain, and an append-only activity timeline. It is the smallest coherent version of the third item above, and it deliberately stops short of a CRM: no pipeline stages, no lead scoring, no campaigns, no e-signature, no acceptance workflow.
+>
+> Two things it confirmed. **The immutability discipline held** — a revision is a forked *project*, so "supersede rather than edit" needed no new mechanism, and `isSuperseded` is derived at read time rather than written onto an issued document. And **the honest answer really does get worse**: SMTP can tell you a relay accepted a message and nothing more, so the delivery model has four statuses and refuses to offer `delivered` or `opened`. See [`known-limitations.md`](known-limitations.md#customers-and-email-delivery).
+
 ---
 
 ## Question 2 — Technical bottlenecks

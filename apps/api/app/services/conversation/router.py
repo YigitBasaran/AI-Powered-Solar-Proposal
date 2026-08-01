@@ -84,6 +84,29 @@ _RESET = re.compile(
 
 _CANCEL = re.compile(r"\b(cancel|never ?mind|forget (?:it|that)|leave it|stop)\b")
 
+#: An imperative to send the proposal.
+#:
+#: Deliberately narrow, and deliberately *after* the question detector in the
+#: pipeline - so "can you email this?" and "what would the email say?" are
+#: answered rather than acted on. Both halves are required: a verb that
+#: instructs, and an object that is the proposal or a pronoun standing for it.
+#:
+#: There is no pattern here for a *recipient*, and that is the point. A message
+#: cannot name who receives the proposal - the address comes from the frozen
+#: customer snapshot - so no phrasing, and no model output, can redirect one.
+_SEND_VERB = re.compile(r"\b(send|email|e-mail|mail|share|forward)\b")
+_SEND_OBJECT = re.compile(r"\b(proposal|quote|link|document|pdf|it|this|that|them|him|her)\b")
+
+
+def _is_send_request(text: str) -> bool:
+    """An imperative to send the proposal, and not merely a sentence about one.
+
+    Both halves are required: a verb that instructs, and an object that is the
+    proposal or a pronoun standing for it. "Send" alone could be about anything;
+    "the proposal" alone is a topic, not a command.
+    """
+    return bool(_SEND_VERB.search(text) and _SEND_OBJECT.search(text))
+
 #: A correction to something already given.
 _CHANGE = re.compile(
     r"\b(actually|instead|correction|scratch that|i meant|i made a mistake|"
@@ -309,7 +332,16 @@ def classify(message: Normalised, *, step: ProjectStep) -> ConversationAction | 
     # Read the step's value once, here, because two later decisions need it.
     extraction = _EXTRACTORS[step][1](message) if step in _EXTRACTORS else None
 
-    # 3. Destructive commands.
+    # 3. Outward-facing and destructive commands.
+    #
+    # Sending is placed here - after the question detector, before the
+    # extractors - for the same reason reset is. "Can you email this?" is a
+    # question about the mechanism and is already answered above; what reaches
+    # this line is an unquestioned imperative. And it must come before the
+    # extractors, or "send it to them" at the consumption step would be read as
+    # an attempt at a number.
+    if _is_send_request(text):
+        return ConversationAction(kind=ActionKind.SEND_PROPOSAL, topic=Topic.PROPOSAL)
     if _RESET.search(text):
         return ConversationAction(kind=ActionKind.RESET, topic=Topic.GENERAL)
     if _CANCEL.search(text):

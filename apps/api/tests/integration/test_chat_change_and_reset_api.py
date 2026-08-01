@@ -81,7 +81,10 @@ def test_changing_the_system_size_recalculates_the_layout_but_not_the_rate(clien
     after = _project(client, project_id)
 
     assert after["selectedSystemSizeKwp"] == 9.6
-    assert after["analysis"]["layout"]["placedPanelCount"] == 24
+    # The largest option is a 22-panel shortfall on this roof, and asking for it
+    # through chat must surface that rather than silently reporting 24.
+    assert after["analysis"]["layout"]["placedPanelCount"] == 22
+    assert after["analysis"]["layout"]["capacityWarning"] is not None
     assert (
         after["analysis"]["energy"]["totalAnnualProductionKwh"]
         != before["energy"]["totalAnnualProductionKwh"]

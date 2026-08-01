@@ -5,21 +5,29 @@ import { Layers, Loader2, Ruler, Satellite, Square, Sun } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import type Konva from "konva";
 
-import { Card, SectionTitle, SourceBadge, cn } from "@/components/ui/primitives";
+import {
+  Card,
+  SectionTitle,
+  SourceBadge,
+  cn,
+} from "@/components/ui/primitives";
 import { area, degrees, metres } from "@/lib/format";
 import type { Analysis, MapConfig, RoofModel } from "@/types/api";
 import type { LayerToggles } from "./RoofStage";
 
 // Konva touches `window` at import time, so the stage only ever renders client-side.
-const RoofStage = dynamic(() => import("./RoofStage").then((m) => m.RoofStage), {
-  ssr: false,
-  loading: () => (
-    <div className="flex h-[520px] items-center justify-center rounded-[10px] bg-[#0a1421] text-white/70">
-      <Loader2 className="size-4 animate-spin" />
-      <span className="ml-2 text-xs">Loading roof workspace…</span>
-    </div>
-  ),
-});
+const RoofStage = dynamic(
+  () => import("./RoofStage").then((m) => m.RoofStage),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="flex h-[520px] items-center justify-center rounded-[10px] bg-[#0a1421] text-white/70">
+        <Loader2 className="size-4 animate-spin" />
+        <span className="ml-2 text-xs">Loading roof workspace…</span>
+      </div>
+    ),
+  },
+);
 
 const TOGGLE_META = [
   { key: "satellite", label: "Satellite", icon: Satellite },
@@ -34,12 +42,14 @@ export function RoofWorkspace({
   analysis,
   mapConfig,
   onStageReady,
+  onCaptureReady,
   busy,
 }: {
   roof: RoofModel | null;
   analysis: Analysis | null;
   mapConfig: MapConfig | null;
   onStageReady?: (stage: Konva.Stage | null) => void;
+  onCaptureReady?: (capture: () => Promise<string | null>) => void;
   busy?: string | null;
 }) {
   const [toggles, setToggles] = useState<LayerToggles>({
@@ -107,6 +117,7 @@ export function RoofWorkspace({
           selectedFacetId={selectedFacetId}
           onSelectFacet={setSelectedFacetId}
           onStageReady={onStageReady}
+          onCaptureReady={onCaptureReady}
         />
         {busy ? (
           <div
@@ -116,7 +127,10 @@ export function RoofWorkspace({
             className="absolute inset-0 flex items-center justify-center bg-[#0a1421]/70 backdrop-blur-[1px]"
           >
             <div className="flex items-center gap-2 rounded-lg bg-surface px-3.5 py-2 text-[13px] shadow">
-              <Loader2 className="size-4 animate-spin text-navy-700" aria-hidden />
+              <Loader2
+                className="size-4 animate-spin text-navy-700"
+                aria-hidden
+              />
               {busy}
             </div>
           </div>
@@ -128,7 +142,8 @@ export function RoofWorkspace({
           <SectionTitle
             action={
               <span className="text-[11.5px] text-slate-muted">
-                {metres(roof.groundMetresPerSourcePixel, 4)}/px · pitch {degrees(roof.pitchDeg, 0)}
+                {metres(roof.groundMetresPerSourcePixel, 4)}/px · pitch{" "}
+                {degrees(roof.pitchDeg, 0)}
               </span>
             }
           >
@@ -153,9 +168,12 @@ export function RoofWorkspace({
                       : "border-slate-line hover:bg-surface-2",
                   )}
                 >
-                  <div className="text-[12px] font-semibold text-slate-ink">{facet.label}</div>
+                  <div className="text-[12px] font-semibold text-slate-ink">
+                    {facet.label}
+                  </div>
                   <div className="mt-0.5 text-[11px] text-slate-muted">
-                    {degrees(facet.compassAzimuthDeg)} · {area(facet.slopedAreaM2)}
+                    {degrees(facet.compassAzimuthDeg)} ·{" "}
+                    {area(facet.slopedAreaM2)}
                   </div>
                   <div
                     className={cn(
@@ -172,10 +190,13 @@ export function RoofWorkspace({
 
           {selected ? (
             <div className="mt-3 rounded-lg bg-surface-2 px-3 py-2 text-[12px] text-slate-body">
-              <strong className="font-semibold text-slate-ink">{selected.label}</strong> ·
-              compass {degrees(selected.compassAzimuthDeg)} · PVGIS aspect{" "}
-              {degrees(selected.pvgisAspectDeg)} · plan {area(selected.projectedAreaM2)} ·
-              sloped {area(selected.slopedAreaM2)}
+              <strong className="font-semibold text-slate-ink">
+                {selected.label}
+              </strong>{" "}
+              · compass {degrees(selected.compassAzimuthDeg)} · PVGIS aspect{" "}
+              {degrees(selected.pvgisAspectDeg)} · plan{" "}
+              {area(selected.projectedAreaM2)} · sloped{" "}
+              {area(selected.slopedAreaM2)}
             </div>
           ) : null}
         </div>

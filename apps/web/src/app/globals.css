@@ -30,6 +30,20 @@
   --color-surface: #ffffff;
   --color-surface-2: #fcfcfb;
 
+  /* The navigation rail. Same family as the header band (--color-navy-900,
+     #0f2742) but a step darker, so the two read as one structure with the rail
+     sitting behind the band rather than competing with it.
+
+     Contrast against #0a1c30, measured:
+       --color-rail-ink   #e8eef5  → 14.4:1  (nav labels, AAA)
+       --color-rail-muted #9fb3c8  →  6.9:1  (secondary text, AA at any size)
+       --color-rail-hover #16385c  → the navy-800 already used for hover
+     Both clear the 4.5:1 floor this project holds itself to for small text. */
+  --color-rail: #0a1c30;
+  --color-rail-ink: #e8eef5;
+  --color-rail-muted: #9fb3c8;
+  --color-rail-active: #1f4a77;
+
   --color-solar-500: #eda100;
   --color-solar-600: #c98500;
   --color-solar-100: #fdf3e0;

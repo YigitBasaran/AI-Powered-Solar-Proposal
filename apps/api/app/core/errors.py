@@ -181,3 +181,132 @@ class LlmUnavailableError(AppError):
     code = "LLM_UNAVAILABLE"
     status_code = 502
     message = "The local language model is not available."
+
+
+class CustomerNotFoundError(AppError):
+    code = "CUSTOMER_NOT_FOUND"
+    status_code = 404
+    message = "That customer does not exist."
+
+
+class DeletionRefusedError(AppError):
+    """Deleting this would destroy something that was already issued.
+
+    A proposal is a document a customer is holding a link to, and a project
+    owns its proposals by cascade. So a project that has issued one cannot be
+    deleted, and neither can a customer whose projects have - archiving is what
+    exists instead, and the message says so.
+
+    409 rather than 403: nothing about the caller is wrong, the *state* makes
+    the request unsafe. It becomes possible again if the thing that blocked it
+    goes away.
+    """
+
+    code = "DELETION_REFUSED"
+    status_code = 409
+    message = "This cannot be deleted because a proposal has already been issued from it."
+
+
+class RecipientUnavailableError(AppError):
+    """There is nobody to send this proposal to.
+
+    Distinct from a validation error on the request: the request was fine, the
+    *proposal* has no customer - because it was finalised before one was
+    linked, or was a walk-in estimate. Recoverable by assigning a customer,
+    which is what the message says.
+    """
+
+    code = "RECIPIENT_UNAVAILABLE"
+    status_code = 409
+    message = "This proposal has no customer to send to."
+
+
+class SendConfirmationRequiredError(AppError):
+    """The request did not carry an explicit confirmation.
+
+    Sending is irreversible and outward-facing: the customer sees it, and there
+    is no recall. So the confirmation is a required field on the request rather
+    than an inferred intent - opening a preview, viewing a recipient or
+    retrying a *read* can never satisfy it.
+    """
+
+    code = "SEND_CONFIRMATION_REQUIRED"
+    status_code = 409
+    message = "Sending a proposal requires an explicit confirmation."
+
+
+class DeliveryInProgressError(AppError):
+    """Another request already holds this delivery.
+
+    409 rather than 502: nothing is broken, an equivalent request is simply
+    already in flight. No message is composed and no provider is called.
+    """
+
+    code = "DELIVERY_IN_PROGRESS"
+    status_code = 409
+    message = "This proposal is already being sent."
+
+
+class ProposalAlreadySentError(AppError):
+    """This exact proposal has already gone to this exact recipient.
+
+    Refused rather than silently repeated, because the second copy arrives in a
+    real person's inbox. An explicit resend is a separate, deliberate action.
+    """
+
+    code = "PROPOSAL_ALREADY_SENT"
+    status_code = 409
+    message = "This proposal has already been sent to that address."
+
+
+class DeliveryNotFoundError(AppError):
+    code = "DELIVERY_NOT_FOUND"
+    status_code = 404
+    message = "That delivery does not exist."
+
+
+class EmailProviderUnavailableError(AppError):
+    """The configured provider cannot send, and nothing pretends otherwise.
+
+    Deliberately *not* a fallback to console. A development provider standing
+    in for a misconfigured relay would report a send that never left the
+    building - and the operator would find out when the customer said they
+    never received anything.
+    """
+
+    code = "EMAIL_PROVIDER_UNAVAILABLE"
+    status_code = 503
+    message = "Email is not configured, so this proposal cannot be sent."
+
+
+class EmailSendFailedError(AppError):
+    code = "EMAIL_SEND_FAILED"
+    status_code = 502
+    message = "The proposal could not be emailed."
+
+
+class EmailSendTimeoutError(AppError):
+    """The relay did not answer in time, and the outcome is genuinely unknown.
+
+    Its own code because it is *ambiguous* in a way a refusal is not: the
+    message may have been accepted before the connection went quiet. Reported
+    as such rather than as a failure, so nobody reads "not sent" into it.
+    """
+
+    code = "EMAIL_SEND_TIMEOUT"
+    status_code = 504
+    message = "The mail server did not respond in time, so the outcome is unknown."
+
+
+class CustomerEmailExistsError(AppError):
+    """Another customer already holds this address.
+
+    Carries `details.customerId` so the caller can offer "use the existing
+    customer" rather than a dead end - which is the whole point of making the
+    address unique. A duplicate-email error that does not say *which* record
+    collided forces the operator to go and search for it by hand.
+    """
+
+    code = "CUSTOMER_EMAIL_EXISTS"
+    status_code = 409
+    message = "A customer with that email address already exists."

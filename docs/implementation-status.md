@@ -4,7 +4,21 @@ Live build log and requirement-traceability matrix. Updated at the end of every 
 
 **Nothing is marked ✅ until it actually runs and its tests pass.** Legend: ✅ done · 🔨 in progress · ⬜ not started
 
-_Last updated 2026-07-31: **1,289 API + 61 web + 124 E2E passing** (7 API tests `@live`-deselected); Ruff and strict MyPy clean over 58 source files. Two changes since: the roof calibration is now traced against **live Google imagery** and bound to it by request and imagery signatures, with `MAPS_MODE` deleted entirely; and the conversational router gained a global field-update layer ahead of step validation, a per-project electricity tariff, and real project context for the model. See [`conversation.md`](conversation.md) and [`known-limitations.md`](known-limitations.md)._
+_Last updated 2026-08-01: **1,615 API + 93 web + 140 E2E passing** (7 API tests `@live`-deselected); Ruff and strict MyPy clean over 65 source files. Verified in Docker as well as locally — see [`testing.md`](testing.md#what-only-the-container-can-prove)._
+
+_Latest increment — **customers, proposal delivery and activity history**. Four new tables (`customers`, `proposal_deliveries`, `activity_events`, plus `projects.customer_id`), five new migrations, an email provider abstraction with `console` and `smtp` and no vendor SDK, explicit two-step send confirmation with an idempotent delivery claim, view deduplication, the open-notification the brief asked for as a bonus, and three new frontend routes. Deliberately not a CRM: no pipeline, no scoring, no campaigns, no e-signature, no acceptance workflow. See [`known-limitations.md`](known-limitations.md#customers-and-email-delivery) for what `sent` does and does not mean._
+
+_Four defects were found and fixed while building it, three of them pre-existing:_
+
+| Defect | Consequence | Proof |
+|---|---|---|
+| The served PDF passed `proposal_data_json` to `build_context`, but `aiSummary` is a *column* | Every PDF a customer downloaded silently omitted the executive summary. Invisible to tests, which all built their context from the enriched public payload | `test_the_served_pdf_carries_the_executive_summary` |
+| `CARRIED_FORWARD` omitted `electricity_tariff_eur_per_kwh` | A forked revision silently re-priced every financial figure at the configured case rate — a plausible payback quoted at a price the customer does not pay | `test_a_revision_keeps_the_customers_tariff` |
+| `init_db` ran `create_all` *before* the Alembic upgrade on a managed database | The first migration to add a **new table** would fail with `table customers already exists` on every deployment with a persistent volume, and fail identically on every retry | `test_start_up_does_not_pre_create_a_table_a_migration_will_add` |
+| `email-preview` returned 409 for a proposal with no customer | The panel could not explain why sending was unavailable — a failed request and a dead end. Found by the E2E spec, not by a unit test | `test_the_preview_of_a_customerless_proposal_explains_rather_than_errors` |
+| The `b2c3d4e5f6a7` downgrade used plain `op.drop_column` on an inline-FK column | SQLite 3.40.1 (the container) refuses this; 3.45.3 (local) allows it. A deployed database would have been stranded at that revision with no way back. **Not findable locally** — the developer engine does not have the limitation | Found by running the stack in Docker; guarded by `test_every_migration_can_be_downgraded` |
+
+_One existing test changed behaviour deliberately: `test_view_is_recorded_and_counted` asserted that two consecutive requests count 1 then 2. The share page posts on every mount, so that made one person reading a proposal present as several openings. It is now three tests covering deduplication, a distinct reader, and the first/last timestamps._
 
 ---
 
@@ -84,14 +98,20 @@ _Last updated 2026-07-31: **1,289 API + 61 web + 124 E2E passing** (7 API tests 
 
 The geometry engine and the committed calibration are done; the `/dev/roof-calibration` UI is not yet built.
 
-**Calibration result** — `apps/api/app/data/fixed_roof_calibration.json`, in source-map pixels:
+**Calibration result** — `apps/api/app/data/google_roof_calibration.json`, in source-map pixels, after the operator correction of 2026-08-01:
 
 | Quantity | Value |
 |---|---|
-| Footprint | 11.216 m × 7.143 m = **80.11 m²** |
-| Ridge | 4.073 m |
+| Footprint | quadrilateral, eaves 11.360 / 7.143 / 11.216 / 6.979 m = **79.69 m²** |
+| Ridge | 4.374 m |
 | Vertices / edges / facets | 6 / 9 (4 eave, 4 hip, 1 ridge) / 4 |
-| Facet azimuths | N 10.6° · E 100.6° · S 190.6° · W 280.6° |
+| Obstructions | 1 chimney, **2.99 m²** in plan, on the north facet |
+| Facet azimuths | N 10.5° · E 100.6° · S 187.6° · W 278.0° |
+| Roof capacity | **22 panels** (N 6 · S 9 · W 3 · E 4, east turned 45°) |
+
+`v_corner_a` moved 0.218 m and `v_ridge_0` moved 0.309 m, each to a point the operator marked on a 9× plate of the production raster. The two marks cross-check: under the model's uniform pitch the corner alone predicts a 4.381 m ridge, and the separately marked ridge end implies 4.374 m — 7 mm apart.
+
+Because the roof is no longer symmetric, **the south facet is now the largest** (31.0 m² sloped, against north's 30.0) while still being the worst aspect at −34° latitude. And because the chimney costs north three bays while array rotation wins only one back on the east triangle, the largest offered system (9.6 kWp) no longer fits: 22 panels, 8.8 kWp, with a capacity warning.
 
 Topology matches the brief's reference overlay exactly: four outer eaves, one central ridge, four hips, two trapezoids and two triangles. Visual confirmation: [`images/roof-calibration-derivation.png`](images/roof-calibration-derivation.png).
 
@@ -104,7 +124,7 @@ Parameters are chosen by **stability, not taste**: sweeping tolerance and erosio
 
 **A coordinate-space bug the debug overlay caught.** Segmentation points are window-relative and were being passed through as source-map pixels, offsetting the entire calibration by the 410 px window origin. The numbers looked entirely plausible — correct dimensions, correct aspect ratio, correct facet azimuths — and only rendering the overlay on the imagery exposed it. This is precisely the failure mode the three-coordinate-space discipline exists to prevent.
 
-**Capacity, measured.** The earlier forecast that 9.6 kWp would be infeasible was **wrong**. The calibrated roof holds exactly 24 panels — north 9, south 9, west 3, east 3 — so all three case sizes are satisfiable. See [`location-verification.md`](location-verification.md) §6.
+**Capacity, measured — twice.** The forecast at step 3 that 9.6 kWp would be infeasible was wrong against the bare calibrated roof, which holds 24 panels. Modelling the chimney has made it right again for a different reason: the roof holds **22** — north 6, south 9, west 3, east 4 — so 3.6 and 6.0 kWp are satisfiable and 9.6 kWp is a shortfall that drives PVGIS and the financials from the feasible 8.8 kWp. See [`location-verification.md`](location-verification.md) §6.
 
 ---
 

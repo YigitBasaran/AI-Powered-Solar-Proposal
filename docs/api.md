@@ -34,6 +34,56 @@ Every failure the client can see has the same shape, so the frontend never has t
 | `FX_RATE_UNAVAILABLE` | 502 | No live, cached or fixture rate — **parity is never substituted** |
 | `ROOF_CALIBRATION_MISSING` | 500 | Calibration file missing or invalid |
 | `LLM_UNAVAILABLE` | 502 | Model unreachable and fallback disabled |
+| `CUSTOMER_NOT_FOUND` | 404 | Unknown customer |
+| `CUSTOMER_EMAIL_EXISTS` | 409 | Address already held — `details.customerId` names the record it collided with |
+| `RECIPIENT_UNAVAILABLE` | 409 | The proposal has no customer, so there is nobody to email |
+| `SEND_CONFIRMATION_REQUIRED` | 409 | `confirm` was not literally `true` |
+| `DELIVERY_IN_PROGRESS` | 409 | Another request already holds this send; no provider call was made |
+| `PROPOSAL_ALREADY_SENT` | 409 | Already sent to this address — pass `resendNonce` for a deliberate resend |
+| `DELIVERY_NOT_FOUND` | 404 | Unknown delivery for this proposal |
+| `EMAIL_PROVIDER_UNAVAILABLE` | 503 | Email is not configured. **Never falls back to console** |
+| `EMAIL_SEND_FAILED` | 502 | The relay refused the message |
+| `EMAIL_SEND_TIMEOUT` | 504 | The relay did not answer — the outcome is genuinely **unknown**, not "not sent" |
+
+---
+
+## Customers
+
+| Method | Route | Notes |
+|---|---|---|
+| `POST` | `/customers` | `{firstName,lastName,email,phone?,companyName?,address?,displayName?}` → `201`. Email is stored lower-cased and is globally unique |
+| `GET` | `/customers?q=&limit=&cursor=&includeArchived=` | Substring search over name, email and company. Keyset pagination |
+| `GET` | `/customers/{id}` | |
+| `PATCH` | `/customers/{id}` | Partial. An absent key is untouched; an explicit `null` clears |
+| `POST` | `/customers/{id}/archive` | Soft delete. Issued proposals are unaffected |
+
+## Projects, extended
+
+| Method | Route | Notes |
+|---|---|---|
+| `POST` | `/projects` | Body is **optional**: `{customerId?, name?}`. Posting no body still works |
+| `POST` | `/projects/{id}/customer` | Assign or change. After finalisation this **forks a revision** and returns it |
+| `GET` | `/projects?customerId=` | Narrows the list to one person. What lets a customer's own screen serve its projects from the paged project route rather than from the unpaginated array on `GET /customers/{id}` — one query, one page size, one delete affordance |
+| `GET` | `/projects/{id}/revisions` | The whole lineage, oldest first. `isSuperseded` is derived, never stored |
+| `GET` | `/projects/{id}/activity` | Append-only timeline across the whole revision chain |
+
+## Proposal delivery
+
+These take the **internal proposal id**, never the public share token — a send
+endpoint reachable with the token would let anyone forwarded a proposal link
+cause mail to be sent from this system.
+
+| Method | Route | Notes |
+|---|---|---|
+| `GET` | `/proposals/{proposalId}/email-preview` | Renders exactly what would be sent. **Sends nothing, writes nothing.** `to` is null when there is no customer |
+| `POST` | `/proposals/{proposalId}/send` | `{confirm: true, resendNonce?}`. `confirm` must be literally `true` |
+| `GET` | `/proposals/{proposalId}/deliveries` | History. The recipient is **masked** here |
+| `POST` | `/proposals/{proposalId}/deliveries/{deliveryId}/retry` | Requires confirmation again |
+
+A delivery has four statuses — `pending`, `sending`, `sent`, `failed`. There is
+no `delivered`, `bounced` or `opened`: SMTP provides none of them. `sent` means
+*the provider accepted the message*. `providerSends` is `false` in console
+mode, which is what lets a client avoid reporting a send that never happened.
 
 ---
 
@@ -122,6 +172,10 @@ Live mode validates status, content type, and that the payload is not suspicious
 The calibrated roof with all derived measurements, in **source-map pixels** — the client applies its own display transform, so one payload renders at any canvas size.
 
 Includes per-facet azimuth, PVGIS aspect, projected and sloped area; per-edge type, plan length and true 3-D length.
+
+Layout facets carry `arrayRotationDeg`: how far that facet's array is turned from its eave. The panel polygons already carry the result, so it is for reading rather than for drawing.
+
+Also `obstructionGeometry`: things standing on the roof that no panel may be placed over, each with `id`, `label`, `kind`, `facetId` and a `sourcePixelPolygon`. Facets carry `obstructedAreaM2` and `usableProjectedAreaM2` alongside their gross area, and the roof carries `totalObstructedAreaM2` — the roof's own size stays a statement about the roof, and how much of it is usable stays a separate, visible question. The array is empty when a calibration declares none.
 
 ---
 

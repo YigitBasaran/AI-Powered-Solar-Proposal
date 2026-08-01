@@ -52,6 +52,8 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
         "ALLOW_REPLAY_PROPOSALS",
         "FX_MODE",
         "LLM_PROVIDER",
+        "EMAIL_MODE",
+        "SALESPERSON_EMAIL",
     )
     previous = {key: os.environ.get(key) for key in keys}
     os.environ.update(
@@ -80,6 +82,18 @@ def offline_env(pvgis_stub) -> Iterator[Path]:
             "ALLOW_REPLAY_PROPOSALS": "true",
             "FX_MODE": "fixture",
             "LLM_PROVIDER": "rules",
+            # Pinned like every other provider above, and for a sharper
+            # reason. A developer with working SMTP credentials in `.env` -
+            # which is exactly what testing the live path requires - would
+            # otherwise have those inherited here, and `Settings` refuses to
+            # construct at all under `APP_ENV=test`. The whole suite fails to
+            # collect, which is a confusing way to discover a guard that is
+            # working correctly. Console mode is also what the console-outbox
+            # assertions read.
+            "EMAIL_MODE": "console",
+            # Empty by default so the open-notification tests opt in explicitly
+            # rather than inheriting a real salesperson address.
+            "SALESPERSON_EMAIL": "",
         }
     )
 

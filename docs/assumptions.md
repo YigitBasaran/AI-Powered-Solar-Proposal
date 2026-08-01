@@ -29,10 +29,16 @@ An assumption stated is a decision the reader can check. An assumption buried in
 |---|---|
 | **A-GEO-1**: each facet is planar with a level eave | The pitch correction would be applied along the wrong axis. See [`geometry.md`](geometry.md) |
 | Uniform **25° pitch** on all four facets, as the brief specifies | Sloped areas and panel capacity scale with `1/cos(pitch)` |
-| The roof is a symmetric hip: 4 eaves, 4 hips, 1 ridge, 2 trapezoids + 2 triangles | Matches the brief's reference overlay |
-| Hips run at 45° in plan, so `ridge length = long − short` | A geometric consequence of equal pitch, not a guess. Gives 4.073 m here |
-| The footprint is rectangular in plan | Fitted by minimum-area rectangle. A genuinely irregular roof would need per-vertex tracing in `/dev/roof-calibration` |
-| **No obstructions** — no chimneys, vents, skylights or HVAC | Panels may be placed over a real obstruction. The raster centre in fact lands on a roof vent, which is detected as a segmentation problem but *not* modelled as an exclusion zone |
+| Panels lie in the roof plane, so rotating one changes packing but not yield | Tilt and azimuth come from the facet, never from the panel. `PANEL_ROTATION_STEP_DEG` therefore buys panels, not efficiency — and the arrays it turns are not buildable with standard rails. See [`known-limitations.md`](known-limitations.md#rotated-arrays-are-not-buildable-as-drawn) |
+| The roof is a hip: 4 eaves, 4 hips, 1 ridge, 2 trapezoids + 2 triangles | Matches the brief's reference overlay. It is **no longer symmetric** — see below |
+| Uniform pitch is applied to all four facets even though the corrected plan geometry no longer implies it | Taking the operator's two marks literally leaves the hips at 45.20/47.22/44.16/45.84° in plan, and holding the ridge height the facets would want pitches spanning **1.68°**. Pitch here is a configured assumption that was never measured from imagery, so four pitches are not derived from two hand-placed dots. Recorded in the calibration's `operator_correction.unmodelled_residual` |
+| The footprint is a general quadrilateral in plan | It **was** a fitted minimum-area rectangle; the operator moved `v_corner_a` against the raster, so opposite eaves now differ (11.360/11.216 and 7.143/6.979 m) |
+
+### Obstructions
+
+One is modelled: a **chimney of 2.99 m² in plan** on the north facet, outlined by the operator on the raster and stored in the calibration's `obstructions` block. It is subtracted from the facet before panel placement, drawn in red on the workspace and the proposal, and costs the roof three panel bays — capacity 24 → 21. Array rotation then wins one back on the east triangle, so the roof holds **22** and the largest offered system still does not fit.
+
+That is the only one. Vents, skylights and HVAC are still unmodelled, and a panel could be placed over any of them.
 
 ## Panels
 
@@ -44,6 +50,7 @@ An assumption stated is a decision the reader can check. An assumption buried in
 | Inter-panel gap | 0.02 m |
 | Roof-edge setback | **0.0 m** — the brief specifies none |
 | Orientation | Portrait and landscape both evaluated per facet |
+| Array angle | Each facet's array may be turned from its eave, searched in 5° steps. **Not buildable with standard rails** — set `PANEL_ROTATION_STEP_DEG=0` to disable |
 
 > The zero setback is the brief's figure, not a safe default. Most jurisdictions require a fire/access setback at ridge and eaves, which would materially reduce capacity. `ROOF_EDGE_SETBACK_M` is configurable, and a 1 m setback is what the capacity-warning test uses.
 

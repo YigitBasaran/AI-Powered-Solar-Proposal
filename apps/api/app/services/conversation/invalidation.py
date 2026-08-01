@@ -138,8 +138,17 @@ DEPENDS_ON_SYSTEM_SIZE: frozenset[str] = frozenset(
         "layout.requestedPanelCount",
         "layout.placedPanelCount",
         "layout.feasibleSystemSizeKwp",
+        # Appears and disappears with the size, because whether the request
+        # exceeds roof capacity is a function of the size. It was missing until
+        # the chimney was modelled: before that every offered size fitted, so no
+        # size change could ever make the warning move and the omission was
+        # invisible.
+        "layout.capacityWarning",
         "layout.facets[].facetId",
         "layout.facets[].orientation",
+        # Which facets are used changes with the size, and each carries its own
+        # array angle - so this moves for the same reason `orientation` does.
+        "layout.facets[].arrayRotationDeg",
         "layout.facets[].panelCount",
         "layout.facets[].panels[].id",
         "layout.facets[].panels[].sourcePixelPolygon[].x",

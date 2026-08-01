@@ -267,12 +267,58 @@ class Settings(BaseSettings):
     summary_timeout_seconds: float = 15.0
 
     # --- email -------------------------------------------------------------
+    #: `console` records the rendered message and sends nothing; `smtp` sends.
+    #:
+    #: The two the case brief names, and no vendor SDK behind either. Console is
+    #: never reported as delivery: the provider name travels on the delivery
+    #: record, so the UI can say "recorded locally" rather than "sent".
     email_mode: EmailMode = EmailMode.CONSOLE
     smtp_host: str = ""
     smtp_port: int = 0
     smtp_username: str = ""
     smtp_password: str = ""
+    smtp_use_tls: bool = True
+
+    #: How long a single send may take, end to end.
+    #:
+    #: Short on purpose. The send happens inside a request, and a relay that
+    #: hangs would otherwise hold a worker until the client gave up - leaving a
+    #: delivery whose true outcome nobody can determine.
+    smtp_timeout_seconds: float = 10.0
+
+    #: The envelope sender. Required for `smtp`, and deliberately not defaulted
+    #: to anything: a plausible-looking default address is how mail starts
+    #: arriving from a domain nobody controls.
+    email_from: str = ""
+    email_from_name: str = "SolarVis"
+    email_reply_to: str = ""
+
+    #: Where the "your proposal was opened" notification goes. Empty disables
+    #: it, which is the honest default - there is no operator account to infer
+    #: an address from.
     salesperson_email: str = ""
+
+    #: Master switch for outbound proposal email, independent of the provider.
+    proposal_email_enabled: bool = True
+
+    #: Whether the rendered PDF is attached to the proposal email.
+    #:
+    #: Off by default. Rendering runs Chromium inside the request, attachments
+    #: hurt deliverability, and the artefact this product issues is a web page -
+    #: the link is the deliverable. Opt in where those trade-offs are acceptable.
+    proposal_email_attach_pdf: bool = False
+
+    #: Salt for the stored view hash.
+    #:
+    #: Without one, `sha256(ip)` is a lookup table: the IPv4 space is small
+    #: enough to enumerate in full, so an unsalted digest identifies the address
+    #: exactly. Empty means unsalted, which is what the column held before.
+    view_hash_salt: str = ""
+
+    #: How long after a counted view an identical one is treated as the same
+    #: visit. A customer scrolling back and forth is one person reading, not
+    #: five separate openings.
+    proposal_view_dedup_minutes: float = 30.0
 
     # --- case constants ----------------------------------------------------
     case_capex_amount: float = 10_000.0
@@ -287,6 +333,19 @@ class Settings(BaseSettings):
     panel_gap_m: float = 0.02
     roof_edge_setback_m: float = 0.0
     roof_pitch_deg: float = 25.0
+
+    #: Angular step, in degrees, for the per-facet array-rotation search.
+    #:
+    #: `0` disables the search, and every array is laid parallel to its facet's
+    #: eave - which is the only geometry a standard rail-and-clamp mounting
+    #: system supports. A non-zero value lets each facet's array be turned to
+    #: fit more panels; on the case roof that is +2 panels and requires bespoke
+    #: sub-framing. See docs/known-limitations.md before enabling it in
+    #: anything a customer will act on.
+    panel_rotation_step_deg: float = 5.0
+    #: Upper bound of the search. Beyond 90 deg a rectangle repeats itself, and
+    #: the two orientations already cover the other half.
+    panel_rotation_max_deg: float = 90.0
 
     allowed_system_sizes_kwp: tuple[float, ...] = (3.6, 6.0, 9.6)
 
@@ -367,6 +426,29 @@ class Settings(BaseSettings):
                 f"ALLOW_REPLAY_PROPOSALS is only permitted when APP_ENV is one of "
                 f"{sorted(TEST_ENVIRONMENTS)}; APP_ENV is {self.app_env!r}. A proposal "
                 f"must be backed by a live PVGIS observation."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _smtp_is_refused_in_a_test_environment(self) -> Settings:
+        """Automated tests must not be *able* to send real email.
+
+        Left as a convention - "don't configure SMTP in CI" - it holds until the
+        day a `.env` is copied, a compose file is reused, or a developer runs
+        the suite against their own configuration. The failure is not a red
+        test: it is real mail arriving at a real customer from a test run, and
+        nothing in the suite would notice.
+
+        So it is mechanical, and it is the *settings* that refuse rather than
+        the sender: in a recognised test environment, `EMAIL_MODE=smtp` is a
+        start-up failure. Same shape, and the same reasoning, as
+        `_replay_proposals_are_confined_to_test_environments` above.
+        """
+        if self.email_mode is EmailMode.SMTP and self.app_env.lower() in TEST_ENVIRONMENTS:
+            raise ValueError(
+                f"EMAIL_MODE=smtp is refused when APP_ENV is one of "
+                f"{sorted(TEST_ENVIRONMENTS)}; APP_ENV is {self.app_env!r}. An automated "
+                f"test must never be able to send real email."
             )
         return self
 

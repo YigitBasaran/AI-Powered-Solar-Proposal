@@ -114,6 +114,47 @@ def _pvgis_status(settings: Settings) -> dict[str, Any]:
     }
 
 
+def _email_status(settings: Settings) -> dict[str, Any]:
+    """Which provider will send, and whether it could.
+
+    No outbound call, like every other check here - a readiness probe that
+    opened an SMTP connection would be a fine way to get an IP blocked.
+
+    `ready` is what the send route will do: false here means a send returns 503
+    rather than silently falling back to console. `sends` is the field that
+    keeps console mode honest at a glance - it is `false`, because console
+    records a message and transmits nothing.
+    """
+    from app.services.email import build_sender
+
+    if not settings.proposal_email_enabled:
+        return {
+            "mode": settings.email_mode.value,
+            "provider": None,
+            "sends": False,
+            "ready": True,
+            "detail": "PROPOSAL_EMAIL_ENABLED is off; proposals can still be shared by link.",
+        }
+
+    sender = build_sender(settings)
+    ready_to_send, reason = sender.available()
+    sends = sender.name != "console"
+
+    return {
+        "mode": settings.email_mode.value,
+        "provider": sender.name,
+        "sends": sends,
+        "ready": ready_to_send,
+        "notificationRecipient": bool(settings.salesperson_email),
+        "detail": reason
+        or (
+            None
+            if sends
+            else "Console mode records the message locally and sends nothing."
+        ),
+    }
+
+
 @router.get("/ready")
 async def ready() -> dict[str, Any]:
     settings = get_settings()
@@ -131,6 +172,7 @@ async def ready() -> dict[str, Any]:
             "dataProvider": settings.fx_data_provider,
             "ready": True,
         },
+        "email": _email_status(settings),
         "llm": {
             "provider": settings.llm_provider.value,
             "model": (

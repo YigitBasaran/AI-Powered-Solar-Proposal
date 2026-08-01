@@ -11,10 +11,11 @@ from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import EmailMode, Settings, get_settings
+from app.core.config import Settings, get_settings
 from app.core.errors import NotFoundError, ValidationError
 from app.db.session import commit_before_response, get_session
 from app.models.tables import Project
+from app.services import activity, proposal_email
 from app.services import proposal as proposal_service
 from app.services.pdf import build_context, render_html, render_pdf
 from app.services.summary import generate_summary
@@ -75,6 +76,25 @@ async def finalize(
     proposal = await proposal_service.finalise_proposal(
         session, project, settings=settings, ai_summary=summary
     )
+
+    # Atomic with the finalisation. Losing "this proposal was issued" while
+    # keeping the proposal would misrepresent the record in the one place an
+    # operator goes to find out what was sent and when.
+    await activity.record(
+        session,
+        event_type=activity.PROPOSAL_FINALISED,
+        actor="user",
+        project_id=project.id,
+        customer_id=project.customer_id,
+        proposal_id=proposal.id,
+        metadata={
+            "revisionNumber": proposal.revision_number,
+            "reference": proposal.reference,
+            "systemSizeKwp": proposal.feasible_system_size_kwp,
+            "annualProductionKwh": proposal.annual_production_kwh,
+        },
+    )
+
     # The share link is handed out in this response; the row it points at has
     # to exist before the customer can follow it.
     await commit_before_response(session)
@@ -156,30 +176,56 @@ async def record_proposal_view(
     token = _validate_token(share_token)
     proposal = await proposal_service.load_by_token(session, token)
 
-    count = await proposal_service.record_view(
+    outcome = await proposal_service.record_view(
         session,
         proposal,
         user_agent=request.headers.get("user-agent"),
         referrer=request.headers.get("referer"),
         client_ip=request.client.host if request.client else None,
+        settings=settings,
     )
+
+    if outcome.counted:
+        # Best-effort, and the actor is the customer - the one participant who
+        # is not the operator. Carries the count and nothing else: no user
+        # agent, no referrer, and above all no address, hashed or otherwise.
+        await activity.record_best_effort(
+            session,
+            event_type=activity.PROPOSAL_VIEWED,
+            actor="customer",
+            project_id=proposal.project_id,
+            proposal_id=proposal.id,
+            metadata={"viewCount": outcome.view_count},
+        )
+
     # The returned count must be readable by the next request that asks.
     await commit_before_response(session)
 
-    # Notification must never be able to break the customer's page view.
-    try:
-        if settings.email_mode is EmailMode.CONSOLE:
-            logger.info(
-                "[Proposal Viewed]\n  Proposal: %s\n  Opened at: now\n  View count: %d",
-                proposal.share_token[:12],
-                count,
+    # The brief's bonus: notify on open. Only for a counted view, so a refresh
+    # or a link unfurler cannot page the salesperson - and wrapped, because the
+    # customer is looking at the page right now and nothing they see may depend
+    # on an outbound email succeeding.
+    if outcome.counted and outcome.view_id:
+        try:
+            await proposal_email.notify_opened(
+                session,
+                proposal,
+                view_id=outcome.view_id,
+                view_count=outcome.view_count,
+                settings=settings,
             )
-        else:  # pragma: no cover - SMTP path is configuration-dependent
-            logger.info("SMTP notification requested for %s", proposal.share_token[:12])
-    except Exception:
-        logger.exception("proposal view notification failed; continuing")
+            await commit_before_response(session)
+        except Exception:
+            logger.exception("proposal view notification failed; continuing")
 
-    return {"recorded": True, "viewCount": count}
+    return {
+        "recorded": True,
+        "viewCount": outcome.view_count,
+        # Stated rather than implied, so a client can tell "we counted you" from
+        # "you were already counted a minute ago" without guessing from a total
+        # that did not move.
+        "counted": outcome.counted,
+    }
 
 
 @router.get("/proposals/{share_token}/layout-snapshot")
@@ -212,14 +258,32 @@ async def get_proposal_pdf(
         if path.is_file():
             layout_bytes = path.read_bytes()
 
+    # The same projection the share page is served, which is what keeps the two
+    # documents in agreement. The stored snapshot alone is *not* equivalent:
+    # `aiSummary` lives on the proposal row rather than inside the JSON blob, so
+    # rendering straight from `proposal_data_json` silently drops the executive
+    # summary from every served PDF.
     context = build_context(
-        proposal.proposal_data_json,
+        proposal_service.public_payload(proposal),
         share_token=proposal.share_token,
         created_at=proposal.created_at.strftime("%d %B %Y"),
         settings=settings,
         layout_image_bytes=layout_bytes,
     )
     pdf_bytes = await render_pdf(render_html(context))
+
+    # Recorded as its own event, deliberately *not* as a page view. A download
+    # is a different act from opening the proposal, and folding it into the view
+    # count would inflate the one number an operator uses to judge whether the
+    # customer has actually looked at it.
+    await activity.record_best_effort(
+        session,
+        event_type=activity.PROPOSAL_PDF_DOWNLOADED,
+        actor="customer",
+        project_id=proposal.project_id,
+        proposal_id=proposal.id,
+    )
+    await commit_before_response(session)
 
     return Response(
         content=pdf_bytes,

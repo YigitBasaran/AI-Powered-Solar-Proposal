@@ -1,5 +1,11 @@
 import { expect, test } from "./fixtures/proposal";
-import { CASE_INPUTS, EXPECTED, INVARIANTS, expectedFor } from "./fixtures/expected-values";
+import {
+  CASE_INPUTS,
+  EXPECTED,
+  EXPECTED_ROOF,
+  INVARIANTS,
+  expectedFor,
+} from "./fixtures/expected-values";
 import { expectCompactMoney, expectRounded, parseDisplayedNumber } from "./helpers/assertions";
 
 /**
@@ -42,9 +48,13 @@ test.describe("@p0 end-to-end workflow", () => {
     for (const [facetId, panels] of Object.entries(expected.panelsByFacet)) {
       expect(counts[facetId], `panels on ${facetId}`).toBe(panels);
     }
-    expect(counts["facet_s"], "south stays empty at -34° latitude").toBe(0);
+    // South is the largest facet and has the most free bays, yet it is filled
+    // last and least: at -34° latitude it is the weakest producer.
+    expect(counts["facet_s"], "south takes only the leftovers").toBe(
+      Math.min(...Object.values(expected.panelsByFacet)),
+    );
 
-    // The system size fits exactly, so no shortfall warning is shown.
+    // 15 panels still fit on a 21-panel roof, so no shortfall warning.
     await expect(solarFlow.capacityWarning).toBeHidden();
     expect(consoleCapture.significant()).toEqual([]);
   });
@@ -63,24 +73,36 @@ test.describe("@p0 end-to-end workflow", () => {
     await expectRounded(solarFlow.kpi("annual-production"), expected.annualProductionKwh, 0);
 
     const counts = await roofView.panelCounts();
-    expect(counts["facet_n"]).toBe(9);
-    expect(counts["facet_s"]).toBe(0);
-    expect(counts["facet_e"]).toBe(0);
-    expect(counts["facet_w"]).toBe(0);
+    for (const facetId of ["facet_n", "facet_s", "facet_e", "facet_w"]) {
+      expect(counts[facetId], `panels on ${facetId}`).toBe(
+        expected.panelsByFacet[facetId] ?? 0,
+      );
+    }
   });
 
-  test("9.6 kWp: fills the roof exactly", async ({ solarFlow, roofView }) => {
+  test("9.6 kWp: asks for more than the roof holds, and says so", async ({
+    solarFlow,
+    roofView,
+  }) => {
     const expected = EXPECTED["9.6"];
 
     await solarFlow.open();
     await solarFlow.completeIntake({ size: 9.6 });
 
-    await expect(solarFlow.kpi("system-size")).toHaveText("9.6 kWp");
+    // The KPI reports what will be installed, not what was asked for.
+    await expect(solarFlow.kpi("system-size")).toHaveText(
+      `${expected.actualCapacityKwp} kWp`,
+    );
     await expectRounded(solarFlow.kpi("annual-production"), expected.annualProductionKwh, 0);
 
     const counts = await roofView.panelCounts();
-    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(24);
-    await expect(solarFlow.capacityWarning).toBeHidden();
+    expect(Object.values(counts).reduce((a, b) => a + b, 0)).toBe(
+      expected.actualPanelCount,
+    );
+
+    // 24 requested, 21 placed: the customer must be told, not quietly served a
+    // smaller system priced as if it were the one they chose.
+    await expect(solarFlow.capacityWarning).toBeVisible();
   });
 });
 
@@ -137,8 +159,10 @@ test.describe("@p0 workflow invariants", () => {
     await roofView.selectFacet("facet_n");
     const detail = page.getByText(/PVGIS aspect/);
     await expect(detail).toBeVisible();
-    // -169.4° is a north-facing roof in PVGIS's south-is-zero convention.
-    await expect(detail).toContainText("-169.4°");
+    // Close to ±180 is a north-facing roof in PVGIS's south-is-zero convention.
+    await expect(detail).toContainText(
+      `${EXPECTED_ROOF.facetAspects.facet_n.toFixed(1)}°`,
+    );
   });
 
   test("the KPI note reconciles with the coverage figure", async ({ solarFlow }) => {

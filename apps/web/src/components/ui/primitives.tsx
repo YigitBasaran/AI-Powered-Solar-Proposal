@@ -40,7 +40,9 @@ export function SectionTitle({
 }) {
   return (
     <div className="mb-3 flex items-baseline justify-between gap-3">
-      <h2 className="text-sm font-semibold tracking-tight text-slate-ink">{children}</h2>
+      <h2 className="text-sm font-semibold tracking-tight text-slate-ink">
+        {children}
+      </h2>
       {action}
     </div>
   );
@@ -90,7 +92,11 @@ export function SourceBadge({
         aria-hidden
         className={cn(
           "size-1.5 rounded-full",
-          tone === "live" ? "bg-good-600" : tone === "cache" ? "bg-navy-600" : "bg-solar-500",
+          tone === "live"
+            ? "bg-good-600"
+            : tone === "cache"
+              ? "bg-navy-600"
+              : "bg-solar-500",
         )}
       />
       {label}
@@ -114,7 +120,9 @@ export function Kpi({
   testId?: string;
 }) {
   return (
-    <Card className={cn("p-3.5", emphasis && "border-navy-700/25 bg-[#f7fafd]")} >
+    <Card
+      className={cn("p-3.5", emphasis && "border-navy-700/25 bg-[#f7fafd]")}
+    >
       <div className="text-[10.5px] font-medium uppercase tracking-wide text-slate-muted">
         {label}
       </div>
@@ -176,7 +184,7 @@ export function Button({
 }: {
   children: ReactNode;
   onClick?: () => void;
-  variant?: "primary" | "secondary" | "ghost";
+  variant?: "primary" | "secondary" | "ghost" | "danger" | "danger-outline";
   disabled?: boolean;
   type?: "button" | "submit";
   className?: string;
@@ -188,6 +196,12 @@ export function Button({
     secondary:
       "border border-slate-line bg-surface text-slate-ink hover:bg-surface-2 disabled:text-slate-muted",
     ghost: "text-navy-800 hover:bg-[#eef4fa] disabled:text-slate-muted",
+    // Destructive actions read as destructive before they are clicked, and are
+    // never styled as plain text: a delete that looks like a link is one
+    // mis-click from being pressed by someone who thought it navigated.
+    danger: "bg-negative text-white hover:bg-[#b02f2f] disabled:bg-slate-rule",
+    "danger-outline":
+      "border border-negative/40 bg-surface text-negative hover:bg-negative-soft disabled:text-slate-muted",
   } as const;
 
   return (
@@ -207,6 +221,164 @@ export function Button({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * A labelled form control.
+ *
+ * The label is bound with `htmlFor`, and the error is bound with
+ * `aria-describedby` plus `aria-invalid` — so a screen reader announces *why*
+ * a field is rejected rather than only that it is red. This application had no
+ * form controls at all before customers existed, so these are the first.
+ */
+export function Field({
+  label,
+  htmlFor,
+  error,
+  hint,
+  required,
+  children,
+}: {
+  label: string;
+  htmlFor: string;
+  error?: string | null;
+  hint?: string;
+  required?: boolean;
+  children: ReactNode;
+}) {
+  const errorId = `${htmlFor}-error`;
+  const hintId = `${htmlFor}-hint`;
+  return (
+    <div className="flex flex-col gap-1">
+      <label
+        htmlFor={htmlFor}
+        className="text-[12px] font-medium text-slate-ink"
+      >
+        {label}
+        {required ? <span className="ml-0.5 text-negative">*</span> : null}
+      </label>
+      {children}
+      {hint ? (
+        <p id={hintId} className="text-[11px] text-slate-muted">
+          {hint}
+        </p>
+      ) : null}
+      {error ? (
+        <p
+          id={errorId}
+          className="text-[11px] text-negative"
+          data-testid={`${htmlFor}-error`}
+        >
+          {error}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
+export function Input({
+  id,
+  value,
+  onChange,
+  type = "text",
+  placeholder,
+  invalid,
+  disabled,
+  autoComplete,
+  className,
+  testId,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: "text" | "email" | "tel" | "search";
+  placeholder?: string;
+  invalid?: boolean;
+  disabled?: boolean;
+  autoComplete?: string;
+  className?: string;
+  testId?: string;
+}) {
+  return (
+    <input
+      id={id}
+      type={type}
+      value={value}
+      disabled={disabled}
+      placeholder={placeholder}
+      autoComplete={autoComplete}
+      aria-invalid={invalid || undefined}
+      aria-describedby={invalid ? `${id}-error` : undefined}
+      data-testid={testId ?? id}
+      onChange={(event) => onChange(event.target.value)}
+      className={cn(
+        "w-full rounded-lg border bg-surface px-2.5 py-1.5 text-[13px] text-slate-ink",
+        "placeholder:text-slate-muted focus-visible:outline-2 focus-visible:outline-offset-1",
+        "focus-visible:outline-navy-700 disabled:bg-surface-2 disabled:text-slate-muted",
+        invalid ? "border-negative" : "border-slate-line",
+        className,
+      )}
+    />
+  );
+}
+
+/** A label/value pair, lifted from `AnalysisPanels` so both can use it. */
+export function Row({
+  label,
+  children,
+  testId,
+}: {
+  label: string;
+  children: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 py-1">
+      <dt className="text-[12px] text-slate-muted">{label}</dt>
+      <dd
+        className="text-[13px] font-medium text-slate-ink"
+        data-testid={testId}
+      >
+        {children}
+      </dd>
+    </div>
+  );
+}
+
+/**
+ * A transient "that worked" message.
+ *
+ * `role="status"` rather than `role="alert"`: a success is announced politely,
+ * without interrupting whatever a screen-reader user is in the middle of. It
+ * is a live region, so the announcement happens even though the element was
+ * not present when the page loaded — which is the whole difference between a
+ * confirmation a sighted user sees and one everybody gets.
+ */
+export function SavedNotice({
+  children = "Saved",
+  testId = "saved-notice",
+}: {
+  children?: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <span
+      role="status"
+      data-testid={testId}
+      className="inline-flex items-center gap-1.5 rounded-full bg-[#e8f6ec] px-2.5 py-1 text-[12px] font-medium text-good-700"
+    >
+      <svg viewBox="0 0 16 16" className="size-3.5" aria-hidden fill="none">
+        <path
+          d="M3.5 8.5l3 3 6-7"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+      </svg>
+      {children}
+    </span>
   );
 }
 

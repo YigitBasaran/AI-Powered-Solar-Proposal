@@ -14,8 +14,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import secrets
-from datetime import UTC, datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import func, select
@@ -25,8 +27,9 @@ from app.core.config import Settings, get_settings
 from app.core.errors import NotFoundError, ProposalIncompleteError
 from app.domain.models import DataSource
 from app.integrations.pvgis import classify_endpoint
-from app.models.tables import Project, Proposal, ProposalView
+from app.models.tables import Customer, Project, Proposal, ProposalView, _utcnow, iso_utc
 from app.services.conversation.invalidation import detect_staleness
+from app.services.revisions import revision_number_for
 
 logger = logging.getLogger("solarvis.proposal")
 
@@ -37,11 +40,99 @@ def generate_share_token() -> str:
     return secrets.token_urlsafe(SHARE_TOKEN_BYTES)
 
 
-def hash_ip(raw: str | None) -> str | None:
-    """Store a hash, never the address itself."""
+#: User agents that are not a person looking at a proposal.
+#:
+#: Link unfurlers are the ones that actually matter here: pasting a share link
+#: into a chat app fetches it immediately, and without this the operator sees
+#: "viewed" before the customer has opened anything at all - the single most
+#: misleading thing this feature could report.
+CRAWLER_AGENTS = re.compile(
+    r"bot|crawler|spider|slurp|preview|fetch|curl|wget|headless|monitor|"
+    r"whatsapp|telegram|slackbot|discord|facebookexternalhit|twitterbot|linkedinbot",
+    re.IGNORECASE,
+)
+
+
+def hash_ip(raw: str | None, *, salt: str = "") -> str | None:
+    """Store a hash, never the address itself.
+
+    Salted, because an unsalted digest of an IP address is not anonymisation:
+    the entire IPv4 space is four billion values, so a rainbow table over it is
+    trivial to build and the hash identifies the address exactly. The salt is
+    per-deployment, so a leaked column cannot be resolved without it.
+
+    An empty salt reproduces the previous unsalted behaviour, which is what
+    existing rows contain.
+    """
     if not raw:
         return None
-    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+    return hashlib.sha256(f"{salt}{raw}".encode()).hexdigest()[:32]
+
+
+def is_crawler(user_agent: str | None) -> bool:
+    return bool(user_agent and CRAWLER_AGENTS.search(user_agent))
+
+
+@dataclass(frozen=True)
+class ViewOutcome:
+    """What `record_view` decided, and why.
+
+    `counted` is the interesting field: a view that was suppressed as a repeat
+    or as a crawler still returns the current total, so the customer's page
+    behaves identically, but nothing downstream treats it as a fresh opening.
+    """
+
+    counted: bool
+    view_count: int
+    view_id: str | None
+    reason: str | None = None
+
+
+def build_reference(share_token: str, revision_number: int) -> str:
+    """The human reference, e.g. `SOL-A1B2C3-R2`.
+
+    For quoting in an email subject or over the phone. Deliberately *not* an
+    identifier: it is derived from a prefix of the token, so it is not
+    guaranteed unique and nothing resolves anything by it. The token stays the
+    only way to reach a proposal.
+    """
+    return f"SOL-{share_token[:6].upper()}-R{revision_number}"
+
+
+def customer_snapshot(customer: Customer | None) -> dict[str, Any] | None:
+    """Freeze who this proposal is for, at the moment it is issued.
+
+    A snapshot rather than a join, for exactly the reason the figures are one.
+    A corrected surname or a new address six months later must not restate a
+    document that has already been sent.
+    """
+    if customer is None:
+        return None
+    return {
+        "customerId": customer.id,
+        "displayName": customer.display_name,
+        "firstName": customer.first_name,
+        "lastName": customer.last_name,
+        "email": customer.email,
+        "phone": customer.phone,
+        "companyName": customer.company_name,
+        "address": customer.address,
+        "capturedAt": datetime.now(UTC).isoformat(),
+    }
+
+
+def public_customer(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
+    """The only customer data an unauthenticated caller ever sees.
+
+    An **allow-list**, not a redaction: the projection names the one field it
+    publishes, so a column added to the snapshot later cannot leak by default.
+    The proposal page is reachable by anyone holding the link, and the email
+    address is the one field on that record that is worth harvesting.
+    """
+    if not snapshot:
+        return None
+    name = snapshot.get("displayName")
+    return {"displayName": name} if isinstance(name, str) and name else None
 
 
 def _require(snapshot: dict[str, Any], *path: str) -> Any:
@@ -196,9 +287,22 @@ async def finalise_proposal(
     fx = snapshot["exchangeRate"]
 
     token = generate_share_token()
+    # Derived from the project chain, then frozen. There is one revision
+    # mechanism in this application - a forked project - and this reads it
+    # rather than introducing a counter that could disagree with it.
+    revision_number = await revision_number_for(session, project)
+    customer = (
+        await session.get(Customer, project.customer_id)
+        if project.customer_id is not None
+        else None
+    )
+
     proposal = Proposal(
         project_id=project.id,
         share_token=token,
+        revision_number=revision_number,
+        reference=build_reference(token, revision_number),
+        customer_snapshot_json=customer_snapshot(customer),
         requested_system_size_kwp=layout["requestedSystemSizeKwp"],
         feasible_system_size_kwp=layout["feasibleSystemSizeKwp"],
         requested_panel_count=layout["requestedPanelCount"],
@@ -255,24 +359,7 @@ async def load_by_token(session: AsyncSession, token: str) -> Proposal:
     return proposal
 
 
-async def record_view(
-    session: AsyncSession,
-    proposal: Proposal,
-    *,
-    user_agent: str | None,
-    referrer: str | None,
-    client_ip: str | None,
-) -> int:
-    session.add(
-        ProposalView(
-            proposal_id=proposal.id,
-            user_agent=(user_agent or "")[:512] or None,
-            referrer=(referrer or "")[:512] or None,
-            ip_hash=hash_ip(client_ip),
-        )
-    )
-    await session.flush()
-
+async def _view_count(session: AsyncSession, proposal: Proposal) -> int:
     count = (
         await session.execute(
             select(func.count())
@@ -283,18 +370,109 @@ async def record_view(
     return int(count)
 
 
+async def record_view(
+    session: AsyncSession,
+    proposal: Proposal,
+    *,
+    user_agent: str | None,
+    referrer: str | None,
+    client_ip: str | None,
+    settings: Settings | None = None,
+) -> ViewOutcome:
+    """Count a customer opening their proposal - once per visit, not per render.
+
+    Two things are deliberately *not* counted.
+
+    A **repeat within the dedup window** from the same reader. The page fetches
+    on every mount, so scrolling back, refreshing, or reopening a tab all hit
+    this route; counting each one turns one person reading a proposal into
+    "viewed 7 times", which is the number an operator uses to decide whether to
+    follow up.
+
+    A **crawler**. Link unfurlers matter most: pasting the share link into a
+    chat fetches it at once, so without this the proposal reads as viewed
+    before the customer has seen anything.
+
+    Both are suppressed by *not inserting a row*, so the count, the first-viewed
+    and last-viewed timestamps all stay consistent with each other - there is
+    one source of truth and no flag to keep in step with it.
+    """
+    settings = settings or get_settings()
+
+    if is_crawler(user_agent):
+        logger.info("proposal %s fetched by a crawler; not counted", proposal.share_token[:8])
+        return ViewOutcome(
+            counted=False, view_count=await _view_count(session, proposal), view_id=None,
+            reason="crawler",
+        )
+
+    ip_hash = hash_ip(client_ip, salt=settings.view_hash_salt)
+    agent = (user_agent or "")[:512] or None
+
+    # `is_()` rather than `==` for the null cases: in SQL, `NULL = NULL` is not
+    # true, so a reader behind a proxy that strips the address would never match
+    # itself and every refresh would count again.
+    cutoff = _utcnow() - timedelta(minutes=settings.proposal_view_dedup_minutes)
+    same_reader = (
+        ProposalView.ip_hash.is_(None) if ip_hash is None else ProposalView.ip_hash == ip_hash,
+        ProposalView.user_agent.is_(None) if agent is None else ProposalView.user_agent == agent,
+    )
+    recent = (
+        await session.execute(
+            select(ProposalView.id)
+            .where(
+                ProposalView.proposal_id == proposal.id,
+                *same_reader,
+                # Compared naive, because that is what SQLite stores.
+                ProposalView.opened_at >= cutoff.replace(tzinfo=None),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if recent is not None:
+        return ViewOutcome(
+            counted=False, view_count=await _view_count(session, proposal), view_id=None,
+            reason="duplicate",
+        )
+
+    view = ProposalView(
+        proposal_id=proposal.id,
+        user_agent=agent,
+        referrer=(referrer or "")[:512] or None,
+        ip_hash=ip_hash,
+    )
+    session.add(view)
+    await session.flush()
+
+    return ViewOutcome(
+        counted=True, view_count=await _view_count(session, proposal), view_id=view.id
+    )
+
+
 async def view_stats(session: AsyncSession, proposal: Proposal) -> dict[str, Any]:
+    """Count, first opened and last opened - all derived, nothing denormalised.
+
+    `firstOpenedAt` is min(opened_at) rather than a stored column, so it cannot
+    drift from the rows it summarises. It answers a different question to the
+    last one: "have they looked at all" versus "are they still looking".
+    """
     rows = (
         await session.execute(
-            select(func.count(), func.max(ProposalView.opened_at))
+            select(
+                func.count(),
+                func.min(ProposalView.opened_at),
+                func.max(ProposalView.opened_at),
+            )
             .select_from(ProposalView)
             .where(ProposalView.proposal_id == proposal.id)
         )
     ).one()
-    count, last = rows
+    count, first, last = rows
     return {
         "viewCount": int(count or 0),
-        "lastOpenedAt": last.isoformat() if last else None,
+        "firstOpenedAt": iso_utc(first),
+        "lastOpenedAt": iso_utc(last),
     }
 
 
@@ -306,7 +484,7 @@ def public_payload(proposal: Proposal, stats: dict[str, Any] | None = None) -> d
     """
     return {
         "shareToken": proposal.share_token,
-        "createdAt": proposal.created_at.isoformat(),
+        "createdAt": iso_utc(proposal.created_at),
         "capacityWarning": proposal.capacity_warning,
         "aiSummary": proposal.ai_summary,
         "layoutSnapshotUrl": (
@@ -315,16 +493,27 @@ def public_payload(proposal: Proposal, stats: dict[str, Any] | None = None) -> d
             else None
         ),
         **proposal.proposal_data_json,
+        # After the snapshot spread, deliberately. These keys are the
+        # projection's own guarantees, and a snapshot that happened to carry a
+        # key of the same name must not be able to override them - least of all
+        # `customer`, which is the allow-list that keeps the email address off
+        # an unauthenticated route.
+        "revisionNumber": proposal.revision_number or 1,
+        "reference": proposal.reference,
+        "customer": public_customer(proposal.customer_snapshot_json),
         **({"views": stats} if stats else {}),
     }
 
 
 __all__ = [
     "Proposal",
+    "build_reference",
+    "customer_snapshot",
     "existing_proposal",
     "finalise_proposal",
     "generate_share_token",
     "load_by_token",
+    "public_customer",
     "public_payload",
     "record_view",
     "validate_ready",

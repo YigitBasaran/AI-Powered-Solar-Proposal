@@ -300,12 +300,17 @@ def test_energy_is_calculated_per_occupied_facet(analysis) -> None:
     assert len(analysis["energy"]["totalMonthlyProductionKwh"]) == 12
 
 
-def test_the_north_facet_is_used_and_the_south_facet_is_not(analysis) -> None:
-    """Production-first allocation at a southern-hemisphere site."""
-    used = {f["facetId"] for f in analysis["layout"]["facets"]}
-    assert "facet_n" in used
-    assert "facet_s" not in used
-    assert {"facet_e", "facet_w"} <= used
+def test_the_south_facet_is_filled_last_at_a_southern_hemisphere_site(analysis) -> None:
+    """Production-first allocation, now that south can no longer be skipped.
+
+    South used to take no panels at 6.0 kWp because north, east and west held
+    all fifteen between them. Excluding the chimney costs north three bays, so
+    the last three now have to go somewhere - and south, the worst aspect, is
+    where they land, with fewer panels than any facet ranked above it.
+    """
+    used = {f["facetId"]: len(f["panels"]) for f in analysis["layout"]["facets"]}
+    assert {"facet_n", "facet_e", "facet_w"} <= set(used)
+    assert used["facet_s"] <= min(used[f] for f in ("facet_n", "facet_e", "facet_w"))
 
 
 def test_production_provenance_is_recorded(analysis) -> None:
@@ -363,8 +368,11 @@ def test_analysis_is_persisted_on_the_project(client) -> None:
     assert project["currentStep"] == "proposal"
 
 
-@pytest.mark.parametrize(("reply", "panels"), [("3.6", 9), ("largest", 24)])
+@pytest.mark.parametrize(("reply", "panels"), [("3.6", 9), ("largest", 22)])
 def test_the_other_two_system_sizes_also_complete(client, reply, panels) -> None:
+    """`largest` asks for 24 and gets 22: the roof holds no more once the
+    chimney is excluded. The run must still complete and still price what fits.
+    """
     project_id = complete_intake(client, reply)
     analysis = client.post(f"/api/v1/projects/{project_id}/run-analysis").json()["analysis"]
     assert analysis["layout"]["placedPanelCount"] == panels

@@ -103,7 +103,7 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=[settings.web_base_url],
         allow_credentials=False,
-        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["*"],
         expose_headers=[REQUEST_ID_HEADER],
     )

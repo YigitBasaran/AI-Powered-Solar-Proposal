@@ -34,10 +34,26 @@ Ordered by how much each would move the number.
 ### No shading analysis
 No near-object shading (trees, neighbouring buildings, the roof's own dormers) and no horizon shading. On a real site this is frequently the **largest single error** in the production estimate. PVGIS accepts a horizon profile, so the integration point exists.
 
-### No obstruction detection
-Chimneys, vents, skylights and HVAC units are not detected and not excluded. The optimiser already works against a Shapely polygon, so obstructions would be holes in it — the placement code needs no change, only the input.
+### Obstructions are modelled but not detected
+One obstruction is now excluded: the **chimney on the north facet**, 2.99 m² in plan. It is a hole in the Shapely polygon the optimiser already worked against, so no placement code changed — only the input. `assert_layout_valid` names the obstruction if a panel is ever found standing on one, and `tests/unit/test_obstructions.py` proves the exclusion by rebuilding the roof without it and watching capacity go back from 21 to 24.
 
-Concretely on this property: the raster centre lands on a **roof vent**, which the calibration script detects as a segmentation problem but the model does not treat as an exclusion zone. A panel could be placed over it.
+**It was outlined by hand, not detected.** Automatic detection was attempted and abandoned: brightness segmentation finds the roof's own rendered eave lines and the neighbouring wall before it finds a chimney, and a chimney reads as dark (shaded face plus cast shadow) about as often as bright. So every other obstruction on this roof — vents, skylights, HVAC — remains unmodelled, and a panel could still be placed over one. The raster centre in particular lands on a **roof vent** that is detected as a segmentation problem but is not an exclusion zone.
+
+Anything added here must also be traced by hand, and a mis-declared `facet_id` is refused at load rather than silently subtracting nothing.
+
+### Rotated arrays are not buildable as drawn
+`PANEL_ROTATION_STEP_DEG=5` lets the optimiser turn each facet's array to fit more panels. On this roof it finds one extra bay on the east triangle at **45°**, taking capacity from 21 to 22. The figure is real; the installation is not.
+
+On a pitched roof the panel is coplanar with the roof, so turning it changes **nothing** about tilt, azimuth or yield — it only changes packing. Against that single extra panel:
+
+- **Mounting.** Hooks are fixed to the rafters and rails run parallel to the eave. A landscape or portrait panel presents a frame edge parallel to the rails for the clamp to grip. At 45° no edge is parallel to anything, so the array needs a bespoke sub-frame above the rails.
+- **Certification.** Module makers specify where on the frame a clamp may sit, and the mechanical load rating depends on it. A diagonal mount supports the panel outside those zones — the rating and the mechanical warranty no longer apply.
+- **Wind.** Racking edge-zone load tables assume rows parallel to the roof edges. A diagonal array is outside them.
+- **Soiling.** The frame stands ~35–40 mm proud. An edge parallel to the fall line sheds water and dust; a diagonal edge dams them. At a dusty site this is a recurring yield loss that eats the gain.
+
+**Set `PANEL_ROTATION_STEP_DEG=0` for anything a customer will act on.** It is on by default because it was asked for, not because it is recommended. And it does not solve the shortfall it was reached for: 22 panels is still short of the 24 the largest system needs.
+
+The honest lever for that shortfall is module power, not packing geometry: 21 panels at 457 W is 9.6 kWp, and 450–500 W modules are mainstream. `PANEL_POWER_WP` is configurable, but `required_panel_count` insists a system size be a whole number of panels, so the `ALLOWED_SYSTEM_SIZES_KWP` ladder has to move with it.
 
 ### Zero roof-edge setback
 `ROOF_EDGE_SETBACK_M=0.0` is the brief's figure, not a safe default. Most jurisdictions require fire/access setbacks at ridge and eaves, which materially reduce capacity. The value is configurable and a 1 m setback is what the capacity-warning tests use.
@@ -49,7 +65,12 @@ Documented and tested, but it is still an assumption. Dormers, valleys, multi-pi
 The imagery date is unknown and may predate changes to the property. Near-nadir capture is assumed; off-nadir parallax displaces a roof relative to its footprint and is not corrected.
 
 ### Calibration method
-The footprint comes from a minimum-area rectangle fit, which suits this rectangular hip roof and would not suit an irregular one. `/dev/roof-calibration` exists so a human can correct it, and a human **should** confirm it against current imagery before any commercial use.
+The footprint started as a minimum-area rectangle fit. It is no longer one: an operator inspected the raster and moved `v_corner_a` and `v_ridge_0`, so the outline is a general quadrilateral and the hips are no longer all at 45° in plan. Two consequences are worth stating plainly.
+
+- **The automated derivation script no longer reproduces the committed geometry.** `scripts/derive_roof_calibration.py` would discard both corrections. The calibration's `derivation` field says so.
+- **The plan geometry and the single 25° pitch are now ~1.7° inconsistent.** Uniform pitch on a rectangle forces `ridge = long − short` and 45° hips; the corrected outline satisfies neither exactly. Pitch was never measured from imagery — it is the brief's figure — so per-facet tilt is not derived from two hand-placed marks. The residual is recorded, not modelled.
+
+The gradient-response method that produced the original registration was *not* trusted for these two points: it locks onto the shadow bands beside the true edges, so its preferred positions are not reliably the correct ones. A human **should** confirm the outline against current imagery before any commercial use.
 
 ---
 
@@ -198,10 +219,45 @@ The serialised write path also makes *how long a transaction is held* load-beari
 
 ---
 
+## Customers and email delivery
+
+### `sent` means the provider accepted the message
+Not that it arrived, not that it reached an inbox, and certainly not that anyone read it. SMTP offers no way to know any of those, so the schema has four statuses — `pending`, `sending`, `sent`, `failed` — and deliberately no `delivered`, `bounced` or `opened`. A status column that offered those would outlive whoever added it and would eventually be filled in with guesses.
+
+### Delivery is at-least-once, not exactly-once
+Every send is keyed on a deterministic idempotency key, so a double click, a refresh mid-send and a client retry collapse into one row. What that cannot cover is an **ambiguous timeout**: a relay may accept a message and then go quiet, and a later retry then produces a second copy in a real inbox. Avoiding it needs a transaction spanning the database and the mail server, which does not exist. The row stays `sending` and the UI says *"may still be in flight"* rather than guessing.
+
+### Console mode records; it does not send
+`EMAIL_MODE=console` renders the message, validates its headers, logs it and transmits nothing. The provider name travels on the delivery record, so every surface that reports it says *"recorded locally (console mode)"* rather than *"sent"*. This is the likeliest honesty failure in the feature, because every development run exercises it.
+
+### There is no email-open tracking
+The bonus the brief asks for is implemented as **proposal-page views**: a request to `POST /proposals/{token}/view`. Nothing observes whether an email was opened, and no tracking pixel is embedded — it would be both invasive and a poor measure of what it claims. The UI and the notification both say *"page view"* and never *"open"*.
+
+### View counts are best-effort, not analytics
+A repeat from the same reader within `PROPOSAL_VIEW_DEDUP_MINUTES` is not counted, and a user-agent deny-list drops crawlers and link unfurlers. Both are heuristics. A customer on a different device counts twice; a crawler with a novel user agent counts once. The count is a signal for a salesperson, not a metric.
+
+### Deleting a customer destroys their proposals
+`DELETE /customers/{id}` cascades: their projects go, and with them every proposal, transcript, view record and delivery. **An issued proposal's share link stops resolving**, and somebody may be holding it — this is the one operation in the application that can invalidate a document already sent. The confirmation counts exactly what will be destroyed before it happens, and `POST /customers/{id}/archive` is the non-destructive alternative that keeps every document intact. Deleting a *project* is refused outright once it has issued a proposal, or once a revision has been built on it.
+
+### Customer email addresses are globally unique
+There is no tenancy to scope them by, so two people sharing a household inbox need one record. Chosen because this screen picks who receives an email and ambiguity there is worse than the restriction. Reversing it means dropping the unique index and adding a disambiguating step to the picker.
+
+### The send happens inside the request
+There is no job queue. `smtplib` is blocking, so the call runs in a worker thread with an explicit timeout, and the delivery row is committed as `sending` *before* the provider is called so a process that dies mid-send leaves evidence rather than silence. A slow relay still occupies a worker. A queue is the obvious next step.
+
+### Email validation is conservative, not RFC-complete
+The domain module requires an unquoted dot-atom local part and a dotted domain with an alphabetic TLD. Legal-but-exotic addresses — quoted local parts, domain literals like `user@[192.168.0.1]` — are refused. Adding `pydantic[email]` would relax this in one line if it ever bites.
+
+---
+
 ## Data and privacy
 
 - Proposals contain a home address, consumption and financial position. Access control is the unguessable token and nothing else.
-- View tracking hashes IPs and never stores them raw, but there is no retention policy and no disclosure to the viewer.
+- **There is no authentication anywhere in this application.** Customer records, project routes and the delivery endpoints are exactly as open as `GET /projects/{id}` has always been. Adding customer names, addresses and email addresses raises the stakes of that considerably. It is mitigated — the public proposal projection is an allow-list that publishes a display name and nothing else, and the send routes take the internal proposal id rather than the share token — but it is **not solved**, and it is the first thing a real deployment needs.
+- The customer email address is stored, and it is deliberately *not* published: it never appears in a public URL, in the public proposal payload, in the rendered PDF, in an activity event, or in a log line. Logs and audit rows carry a masked form (`a***@example.com`).
+- Activity metadata is a per-event-type allow-list of scalars. Message bodies, subjects, provider responses, credentials, raw IP addresses and unmasked recipients cannot be stored there even by a caller that passes them.
+- View tracking hashes IPs and never stores them raw. The hash is salted per deployment via `VIEW_HASH_SALT` — without a salt, `sha256(ip)` is a lookup table over a four-billion-value space and identifies the address exactly. There is still no retention policy and no disclosure to the viewer.
+- There is no rate limiting on any route. The idempotency key and the delivery claim bound *duplicate* sends; they do not bound abuse.
 - Bundled imagery is licensed for **evaluation of this submission only** — see [`LICENSE-NOTICE.md`](../LICENSE-NOTICE.md). Anyone reusing this repository must supply their own imagery or run in live mode with their own key.
 
 ---

@@ -210,7 +210,10 @@ async def test_recomputing_for_system_size_preserves_the_roof_and_the_rate(offli
     assert updated["roof"] == original["roof"]
     assert updated["exchangeRate"] == original["exchangeRate"]
     assert updated["layout"]["requestedSystemSizeKwp"] == 9.6
-    assert updated["layout"]["placedPanelCount"] == 24
+    # 22, not 24: the roof cannot take the largest system once the chimney is
+    # excluded. The recompute must still carry the roof and the rate forward.
+    assert updated["layout"]["placedPanelCount"] == 22
+    assert updated["layout"]["capacityWarning"] is not None
     assert updated["energy"]["totalAnnualProductionKwh"] != original["energy"][
         "totalAnnualProductionKwh"
     ]

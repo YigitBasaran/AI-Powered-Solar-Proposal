@@ -66,7 +66,11 @@ test.describe("@p0 boot and provenance", () => {
       }
     });
 
-    await page.goto("/");
+    // Opened on a real project: the workspace no longer creates one on load,
+    // and this test needs the *loaded* workspace — the imagery fetch it
+    // performs is precisely what could leak a key or reach a third party.
+    const { projectId } = await api.createProject();
+    await page.goto(`/?project=${projectId}`);
     await expect(page.getByRole("textbox", { name: "Message" })).toBeEnabled({
       timeout: 30_000,
     });

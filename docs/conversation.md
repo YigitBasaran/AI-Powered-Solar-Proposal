@@ -332,6 +332,20 @@ The conversation moves to the child, and the browser follows it via `ChatRespons
 
 One word wiping consumption, system size and the analysis is a hostile default. Reset is two-step, and the confirmation is honoured only when it answers the **immediately preceding** message — an offer made five turns ago is not something a later *"yes"* can be assumed to answer. The pending offer lives in that message's `payload_json`, so no column and no migration were needed.
 
+### Sending asks first, on the same mechanism
+
+*"Send the proposal"* is an `ActionKind.SEND_PROPOSAL`, and it never sends. It names the recipient — masked, because the reply is stored verbatim in the transcript — and sets `pendingConfirmation: "send_proposal"`. Only a `CONFIRM` on the **very next turn** causes anything to leave the building, which is the reset mechanism reused rather than a second confirmation concept.
+
+That placement in the pipeline does most of the work. It sits **after** the question detector, so *"can you email this?"* and *"what would the email say?"* are answered rather than acted on, and **before** the extractors, so *"send it to them"* at the consumption step is not read as an attempt at a number. Both halves of the pattern are required — a verb that instructs and an object that is the proposal — so *"my email provider is slow"* is not a send.
+
+Three things make it hard to send to the wrong person:
+
+- **The message cannot name a recipient.** The address comes from the proposal's frozen customer snapshot. `ExtractedValues` has no field an address could occupy, so no phrasing and no model output has anywhere to put one. Asserted on the type, not on behaviour.
+- **A stale confirmation is unreachable, not expired.** Because the pending offer is read from the last assistant message only, any intervening turn ends it. Nothing has to be timed out or cleaned up.
+- **The state machine cannot send.** It is pure: it returns `send_confirmed: True` and the route does the I/O, the same way it returns `changed_inputs` and the route performs the recomputation. So "what does it take to send an email from here" is answerable by reading one function.
+
+The reply reports what actually happened, composed from the delivery record — including *"Recorded … in console mode — nothing was actually sent"*, and, on failure, the public link so the operator can send it themselves.
+
 ---
 
 ## Provider telemetry

@@ -65,6 +65,10 @@ class ProjectState:
     has_finalised_proposal: bool = False
     proposal_snapshot: dict[str, Any] | None = None
     proposal_share_token: str | None = None
+    #: The recipient's masked address, or None when the proposal has no
+    #: customer. Masked because this string is composed into an assistant
+    #: message and stored verbatim in the chat transcript.
+    proposal_recipient_masked: str | None = None
     #: Which inputs a recomputation currently in flight is changing. Empty
     #: means "recalculating, cause unrecorded", which is treated as the widest
     #: possible blast radius rather than the narrowest.
@@ -96,6 +100,15 @@ class StepOutcome:
     pending_confirmation: str | None = None
     #: Which project inputs this message changed, for selective recomputation.
     changed_inputs: frozenset[str] = field(default_factory=frozenset)
+    #: True only when the customer has just confirmed a send that was offered on
+    #: the immediately preceding turn.
+    #:
+    #: The state machine is pure - it cannot send anything - so this is how it
+    #: tells the route to. Same shape as `changed_inputs`, which is how it asks
+    #: for a recomputation it also cannot perform. Keeping the decision here and
+    #: the I/O in the route is what makes "what does it take to send an email"
+    #: answerable by reading one function.
+    send_confirmed: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +460,21 @@ def _confirm(
                 "resolved_longitude": loc.resolved_longitude,
             },
         )
+    if project.pending_confirmation == "send_proposal":
+        # Reachable only when the *immediately preceding* assistant message set
+        # this key - `_pending_confirmation` reads the last message and no
+        # further back - so a "yes" answering something else, or a stale one
+        # from earlier in the conversation, cannot send anything.
+        #
+        # No `updates`: sending changes no project field. The route performs the
+        # send and reports the outcome, because this function cannot do I/O and
+        # should not pretend to know whether a mail server accepted anything.
+        return StepOutcome(
+            assistant_message="",  # the route composes this from the real result
+            next_step=project.current_step,
+            updates={},
+            send_confirmed=True,
+        )
     if project.pending_confirmation == "reset":
         return StepOutcome(
             assistant_message="Starting over.\n\n" + WELCOME,
@@ -477,6 +505,44 @@ def _confirm(
         project,
         f"Right — {prompt}" if prompt else "Understood.",
         accepted=True,
+    )
+
+
+def _send_proposal(project: ProjectState) -> StepOutcome:
+    """Offer to send. Never sends.
+
+    Two refusals come first, and both are about not doing something
+    irreversible on an assumption. There must be a finalised proposal - a
+    "send" before anything is issued has no document to attach to - and there
+    must be somebody to send it to.
+
+    When it can proceed, it states the recipient and stops. Sending is the next
+    turn's business, and only if that turn is an unambiguous confirmation.
+    """
+    if not project.has_finalised_proposal:
+        return _stay(
+            project,
+            "There is no finalised proposal to send yet. Once you finalise it I can "
+            "email the link to your customer.",
+            accepted=False,
+        )
+
+    if not project.proposal_recipient_masked:
+        return _stay(
+            project,
+            "This proposal has no customer linked, so there is nobody to email it to. "
+            "Add a customer to the project, finalise a new revision, and I can send it.",
+            accepted=False,
+        )
+
+    return _stay(
+        project,
+        f"I'll email the proposal link to {project.proposal_recipient_masked}. "
+        f"They'll receive the system size, the annual production, the saving and the "
+        f"payback, with a link to the full proposal.\n\n"
+        f"Shall I send it?",
+        accepted=True,
+        pending_confirmation="send_proposal",
     )
 
 
@@ -568,6 +634,9 @@ def handle_message(
 
         case ActionKind.NAVIGATE:
             return _navigate(project, action, settings)
+
+        case ActionKind.SEND_PROPOSAL:
+            return _send_proposal(project)
 
         case ActionKind.CONFIRM:
             return _confirm(project, action, raw_text, settings)

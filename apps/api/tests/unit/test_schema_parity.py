@@ -170,7 +170,16 @@ def test_foreign_keys_match(from_migrations, from_metadata) -> None:
 
 
 @pytest.mark.parametrize(
-    "table", ["projects", "proposals", "exchange_rate_cache", "proposal_views"]
+    "table",
+    [
+        "projects",
+        "proposals",
+        "exchange_rate_cache",
+        "proposal_views",
+        "customers",
+        "proposal_deliveries",
+        "activity_events",
+    ],
 )
 def test_required_tables_exist(from_migrations, table: str) -> None:
     assert table in from_migrations
@@ -263,26 +272,27 @@ def test_an_existing_database_is_upgraded_in_place(tmp_path, monkeypatch) -> Non
     previous = _previous_revision()
     command.upgrade(_alembic_config(url), previous)
 
-    engine = create_engine(url)
-    try:
-        before = {c["name"] for c in inspect(engine).get_columns("projects")}
-    finally:
-        engine.dispose()
+    before = _schema_of(url)
 
-    # Derived, not named. Hard-coding the column the newest migration happens to
-    # add makes this test need an edit every time one lands - and an edit to a
-    # test is exactly how a test stops asserting what it was written for. This
-    # asks the schema instead, and covers *every* column head adds rather than
-    # one chosen by hand.
-    expected = _columns_added_by_head(tmp_path) - before
+    # Derived, not named, and spanning every table rather than one. Hard-coding
+    # the column the newest migration happens to add makes this test need an
+    # edit every time one lands - and an edit to a test is exactly how a test
+    # stops asserting what it was written for.
+    #
+    # It reads whole `(table, column)` pairs because a migration need not touch
+    # `projects` at all: one that only adds a *new table* would otherwise leave
+    # this fixture looking identical to head and the test would skip itself via
+    # its own guard, silently, on exactly the migration shape most likely to
+    # break start-up.
+    expected = _schema_at_head(tmp_path) - before
     assert expected, "the fixture is not actually behind head"
 
     # Start up against it, exactly as the container does.
     _upgrade_through_the_app(path, monkeypatch)
 
+    after = _schema_of(url)
     engine = create_engine(url)
     try:
-        after = {c["name"] for c in inspect(engine).get_columns("projects")}
         version = engine.connect().execute(
             __import__("sqlalchemy").text("select version_num from alembic_version")
         ).scalar_one()
@@ -294,16 +304,197 @@ def test_an_existing_database_is_upgraded_in_place(tmp_path, monkeypatch) -> Non
     assert version != previous, "the recorded version is still the old one"
 
 
-def _columns_added_by_head(tmp_path: Path) -> set[str]:
-    """Every `projects` column that exists at head, from a throwaway database."""
+def _seed_a_full_deal(url: str) -> None:
+    """A customer, a project, a transcript and an issued proposal."""
+    from sqlalchemy import text
+
+    engine = create_engine(url)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("PRAGMA foreign_keys=ON"))
+            conn.execute(
+                text(
+                    "insert into customers (id, first_name, last_name, display_name, email, "
+                    "created_at, updated_at) values ('c1', 'Anna', 'Schmidt', 'Anna Schmidt', "
+                    "'anna@example.com', '2026-01-01', '2026-01-01')"
+                )
+            )
+            conn.execute(
+                text(
+                    "insert into projects (id, customer_id, current_step, analysis_status, "
+                    "created_at, updated_at) values ('p1', 'c1', 'completed', 'complete', "
+                    "'2026-01-01', '2026-01-01')"
+                )
+            )
+            conn.execute(
+                text(
+                    "insert into chat_messages (id, project_id, role, content, created_at) "
+                    "values ('m1', 'p1', 'user', 'hello', '2026-01-01')"
+                )
+            )
+            conn.execute(
+                text(
+                    "insert into proposals (id, project_id, share_token, "
+                    "requested_system_size_kwp, feasible_system_size_kwp, requested_panel_count, "
+                    "panel_count, annual_production_kwh, annual_savings_eur, original_capex_usd, "
+                    "converted_capex_eur, exchange_rate, exchange_rate_date, "
+                    "exchange_rate_source, exchange_rate_provider, proposal_data_json, "
+                    "created_at) values ('r1', 'p1', 'tok', 6.0, 6.0, 15, 15, 9502.2, 2375.55, "
+                    "10000, 8789.70, 0.87897, '2026-07-24', 'live', 'ECB', '{}', '2026-01-01')"
+                )
+            )
+    finally:
+        engine.dispose()
+
+
+def test_every_migration_can_be_downgraded(tmp_path) -> None:
+    """Every downgrade in the chain runs, one step at a time, head to base.
+
+    A downgrade is not the mirror image of its upgrade, and assuming it is has
+    already cost this chain a defect: SQLite's `DROP COLUMN` refuses to drop a
+    column named in a foreign-key definition, so reversing an
+    `ADD COLUMN ... REFERENCES` fails with
+    `unknown column "customer_id" in foreign key definition` and strands the
+    database at that revision with no way back.
+
+    Nothing here asserts on data - `base` drops every table by design. The
+    assertion is that none of these raises, which is precisely what was never
+    checked: the only prior verification was a shell loop whose output was
+    filtered for the words "Running downgrade", a filter that cannot show a
+    failure. The defect surfaced in a container instead, which is a far worse
+    place to find it.
+    """
+    from alembic.script import ScriptDirectory
+
+    path = tmp_path / "downgrades.db"
+    url = f"sqlite:///{path.as_posix()}"
+    config = _alembic_config(url)
+
+    command.upgrade(config, "head")
+    # Seeded so each downgrade runs against a table with rows in it - an empty
+    # table hides both cascade behaviour and constraint violations.
+    _seed_a_full_deal(url)
+
+    revisions = list(ScriptDirectory(str(MIGRATIONS_DIR)).walk_revisions())
+    assert len(revisions) > 1, "this test needs a chain to walk"
+
+    for _ in revisions:
+        command.downgrade(config, "-1")
+
+    assert _schema_of(url) == set(), "base should leave no application tables"
+
+
+def test_this_chain_upgrades_and_downgrades_without_losing_a_proposal(tmp_path) -> None:
+    """The deployment case: an existing database, moved forward and back.
+
+    Every migration added by the customers/delivery increment is purely
+    additive, so descending through them and climbing back must leave the rows
+    exactly as they were. `projects` is *rebuilt* on the way down - the one
+    operation in this chain that can cascade `proposals` and `chat_messages`
+    away - so this is the test that the rebuild is survivable.
+    """
+    from sqlalchemy import text
+
+    path = tmp_path / "updown.db"
+    url = f"sqlite:///{path.as_posix()}"
+    config = _alembic_config(url)
+
+    command.upgrade(config, "head")
+    _seed_a_full_deal(url)
+    at_head = _schema_of(url)
+
+    # The revision this increment built on. Named rather than derived: it is a
+    # specific historical boundary, and a derived "five steps back" would
+    # silently start testing something else as the chain grows.
+    command.downgrade(config, "9b2c4d6e8f10")
+    command.upgrade(config, "head")
+
+    assert _schema_of(url) == at_head, "the schema after a round trip is not the schema before it"
+
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            assert conn.execute(text("select count(*) from projects")).scalar_one() == 1
+            assert conn.execute(text("select count(*) from proposals")).scalar_one() == 1, (
+                "the projects rebuild cascade-deleted the proposal"
+            )
+            assert conn.execute(text("select count(*) from chat_messages")).scalar_one() == 1
+    finally:
+        engine.dispose()
+
+
+def test_start_up_does_not_pre_create_a_table_a_migration_will_add(tmp_path, monkeypatch) -> None:
+    """`create_all` must not run on a migration-managed database.
+
+    It creates every table the ORM declares and the database lacks - including
+    one that a *pending* migration is about to create. Alembic then reaches its
+    own `op.create_table` and dies on `table customers already exists`, and
+    because the upgrade is deliberately not swallowed, the container fails to
+    start. Worse, it fails identically on every retry: the database is stuck one
+    revision behind with no way forward.
+
+    This was invisible for four migrations because every one of them only added
+    *columns*, which `create_all` cannot do to a table that already exists. The
+    first migration to introduce a new table would have broken start-up on every
+    deployment with a persistent volume.
+
+    Asserted as the rule rather than the instance, so it keeps its meaning after
+    `customers` stops being the newest table: start-up over a database one
+    revision behind must succeed and land on head, whatever that migration does.
+    """
+    from alembic.script import ScriptDirectory
+    from sqlalchemy import text
+
+    path = tmp_path / "managed.db"
+    url = f"sqlite:///{path.as_posix()}"
+
+    previous = _previous_revision()
+    command.upgrade(_alembic_config(url), previous)
+
+    tables_before = {table for table, _ in _schema_of(url)}
+    tables_at_head = {table for table, _ in _schema_at_head(tmp_path)}
+
+    # Start-up must not raise. This is the assertion the bug tripped.
+    _upgrade_through_the_app(path, monkeypatch)
+
+    engine = create_engine(url)
+    try:
+        with engine.connect() as conn:
+            version = conn.execute(text("select version_num from alembic_version")).scalar_one()
+    finally:
+        engine.dispose()
+
+    head = ScriptDirectory(str(MIGRATIONS_DIR)).get_current_head()
+    assert version == head, "start-up did not reach head"
+
+    # And when head does introduce new tables, the migration - not `create_all` -
+    # is what put them there, which is the only way they carry their indexes and
+    # constraints.
+    for table in tables_at_head - tables_before:
+        assert table in {name for name, _ in _schema_of(url)}, f"{table} was never created"
+
+
+def _schema_of(url: str) -> set[tuple[str, str]]:
+    """Every `(table, column)` pair in the database at `url`."""
+    engine = create_engine(url)
+    try:
+        inspector = inspect(engine)
+        return {
+            (table, column["name"])
+            for table in inspector.get_table_names()
+            if table != "alembic_version"
+            for column in inspector.get_columns(table)
+        }
+    finally:
+        engine.dispose()
+
+
+def _schema_at_head(tmp_path: Path) -> set[tuple[str, str]]:
+    """The same, for a throwaway database migrated to head."""
     path = tmp_path / "head-reference.db"
     url = f"sqlite:///{path.as_posix()}"
     command.upgrade(_alembic_config(url), "head")
-    engine = create_engine(url)
-    try:
-        return {c["name"] for c in inspect(engine).get_columns("projects")}
-    finally:
-        engine.dispose()
+    return _schema_of(url)
 
 
 def _previous_revision() -> str:

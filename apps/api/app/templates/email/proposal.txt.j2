@@ -1,0 +1,37 @@
+{#
+  The proposal email, plain text.
+
+  Deterministic and template-driven, never model-written. The language model is
+  allowed to write the executive summary *inside* the proposal, where every
+  number it produces is validated against the snapshot before it is stored. An
+  email is different: it is sent once, it cannot be corrected afterwards, and
+  nobody re-reads it against the figures. So every value here is interpolated
+  from the frozen snapshot and the prose around them is fixed.
+#}
+Hi {{ customer_name }},
+
+Your solar proposal for {{ system_size_kwp }} kWp is ready.
+
+You can view it here:
+{{ public_url }}
+
+At a glance
+-----------
+System size:        {{ system_size_kwp }} kWp ({{ panel_count }} panels)
+Annual production:  {{ annual_production_kwh }} kWh
+Annual saving:      EUR {{ annual_savings_eur }}
+{% if payback_years -%}
+Payback:            about {{ payback_years }} years
+{% else -%}
+Payback:            not within the 20-year analysis period
+{% endif -%}
+Investment:         EUR {{ capex_eur }}
+{% if capacity_warning %}
+Please note: {{ capacity_warning }}
+{% endif %}
+Reference: {{ reference }}
+
+The figures above are estimates based on satellite imagery and modelled solar
+irradiation for your roof. They are not a site survey.
+
+{{ sender_name }}

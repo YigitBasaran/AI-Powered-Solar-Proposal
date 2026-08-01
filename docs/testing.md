@@ -110,12 +110,14 @@ Reproducible with a calculator from the committed captures. `E_y` is `outputs.to
 
 The goldens are pinned against the **replayed** captures, not against live PVGIS, and that distinction is real: a live run on 2026-07-29 returned 1119.83 for the south facet where the capture says 1119.82. Live tests therefore assert invariants and ranges, and only the replay tier asserts exact kWh.
 
+Re-captured on 2026-08-01: correcting the roof moved three of the four facet aspects, so the previous captures described angles the application no longer requests. `scripts/fetch_pvgis_fixtures.py` re-seeded them, and the three superseded files were deleted — two captures whose aspects round to the same integer would otherwise collide silently in the stub's index.
+
 | Facet | PVGIS aspect | 1 kWp yield |
 |---|---:|---:|
-| North | −169.38° | 1678.66 kWh |
-| West | 100.62° | 1515.28 kWh |
+| North | −169.47° | 1678.77 kWh |
+| West | 98.05° | 1503.89 kWh |
 | East | −79.38° | 1367.24 kWh |
-| South | 10.63° | 1119.82 kWh |
+| South | 7.59° | 1114.85 kWh |
 
 ```
 consumption = 1150 × 12                = 13 800 kWh
@@ -126,15 +128,17 @@ payback     = capex(EUR) / savings
 20-year net = −capex(EUR) + 20 × savings
 ```
 
-| Size | Panels | Allocation | Production | Coverage | Savings | Payback | 20-year |
-|---|---:|---|---:|---:|---:|---:|---:|
-| 3.6 kWp | 9 | N 9 | 9 × 0.4 × 1678.66 = **6043.18** | 43.79 % | €1510.79 | 5.82 yr | €21 426.10 |
-| 6 kWp | 15 | N 9, W 3, E 3 | 3.6×1678.66 + 1.2×1515.28 + 1.2×1367.24 = **9502.20** | 68.86 % | €2375.55 | 3.70 yr | €38 721.30 |
-| 9.6 kWp | 24 | N 9, S 9, W 3, E 3 | + 3.6×1119.82 = **13 533.55** | 98.07 % | €3383.39 | 2.60 yr | €58 878.10 |
+| Size | Requested | Placed | Allocation | Production | Coverage | Savings | Payback | 20-year |
+|---|---:|---:|---|---:|---:|---:|---:|---:|
+| 3.6 kWp | 9 | 9 | N 6, W 3 | 2.4×1678.77 + 1.2×1503.89 = **5833.72** | 42.27 % | €1458.43 | 6.03 yr | €20 378.90 |
+| 6 kWp | 15 | 15 | N 6, W 3, E 4, S 2 | + 1.6×1367.24 + 0.8×1114.85 = **8913.18** | 64.59 % | €2228.30 | 3.94 yr | €35 776.30 |
+| 9.6 kWp | 24 | **22** | N 6, S 9, W 3, E 4 | + 2.8×1114.85 = **12 034.76** | 87.21 % | €3008.69 | 2.92 yr | €51 384.10 |
 
-The production column is now literally the formula the code evaluates: the four 1 kWp probes give a specific yield per facet, and production is `installed kWp × specific yield`. It used to agree only because linear scaling of a capture reproduced the same arithmetic.
+The production column is literally the formula the code evaluates: the four 1 kWp probes give a specific yield per facet, and production is `installed kWp × specific yield`. It used to agree only because linear scaling of a capture reproduced the same arithmetic.
 
-The 6 kWp row is the load-bearing one. North and south are the same size and each hold nine panels, yet the last six go on the two small east/west triangles and **south stays empty** — because at −34° latitude west (1515) and east (1367) out-produce south (1120). An allocator ranking by area would fill south, and that assertion would catch it.
+The 6 kWp row is the load-bearing one, and modelling the chimney has made it harder to satisfy by accident. South is now the **largest** facet (31.0 m² to north's 30.0) *and* the one with the **most** free bays (9 to north's 6), so a fill ranked on area or on capacity would use it first. It receives two panels, the leftovers, because at −34° latitude north (1679), west (1504) and east (1367) all out-produce it (1115). East takes four rather than three because its array is turned 45°.
+
+The 9.6 kWp row exercises the capacity warning on the real calibration rather than only under an artificial setback: 24 panels are requested, 22 fit, and every figure to its right is computed from the 8.8 kWp that fits.
 
 Alongside the goldens sit invariants that are safe to compute because each restates a *rule* rather than the calculation: `capacity == panels × 0.4`, `coverage ≤ 100 %`, `savings ≤ consumption × price`, `cashFlow[0] < 0`, `cashFlow[20] == twentyYearNetBenefit`.
 
@@ -158,15 +162,24 @@ Per-worker databases were the first preference and are not practical here: Next 
 
 ### Inventory
 
-124 tests across three Playwright projects and 20 spec files, from the run on 2026-07-29.
+129 tests across three Playwright projects and 21 spec files, measured 2026-07-31.
 
 | Tag | Count | What runs it |
 |---|---:|---|
-| `@p0` | 84 | 69 chromium · 13 degraded · 2 mobile-chromium |
-| `@p1` | 33 | chromium |
+| `@p0` | 88 | 73 chromium · 13 degraded · 2 mobile-chromium |
+| `@p1` | 34 | chromium |
 | `@live` | 7 | opt-in; skipped on a fixture stack, with the reason printed |
 
-`npx playwright test --grep-invert "@live"` → **124 passed**, 2.0 min, from a clean `.next` build. (2026-07-30; 117 before mandatory live PVGIS added `pvgis-failure.spec.ts` and `analysis-failure-ui.spec.ts` and removed the fixture-fallback spec. Faster than the 4.1 min recorded on 2026-07-29 because the probe refactor makes four PVGIS calls per analysis where the old path made seven.)
+`customer-proposal.spec.ts` is the newest: the whole journey through the
+browser — create a customer, link a project, analyse, finalise, preview,
+confirm, open the link as the customer, then edit and prove the issued
+revision is untouched. It also asserts the customer's address appears nowhere
+in the served JSON or the rendered page, and that three page loads count as
+one view. It runs against the console provider, and the settings *refuse* to
+construct with `EMAIL_MODE=smtp` in a test environment, so it cannot send real
+mail even if misconfigured.
+
+`npx playwright test --grep-invert "@live"` → **129 passed**, 2.4 min, from a clean `.next` build. (124 before this increment.) (2026-07-30; 117 before mandatory live PVGIS added `pvgis-failure.spec.ts` and `analysis-failure-ui.spec.ts` and removed the fixture-fallback spec. Faster than the 4.1 min recorded on 2026-07-29 because the probe refactor makes four PVGIS calls per analysis where the old path made seven.)
 
 `E2E_LIVE=pvgis,fx,llm npx playwright test --grep "@live"` → **6 passed, 1 skipped**, 38.9 s, against real PVGIS, the real ECB feed and a locally pulled `qwen3.5:2b`. The skip is live Google Static Maps, which has no API key. That run is what caught the `think: false` defect — see [`local-ai.md`](local-ai.md).
 
@@ -216,7 +229,9 @@ Both `@axe-core/playwright` and `pdfjs-dist` are **devDependencies**, injected b
 | Suite | What it pins |
 |---|---|
 | `test_geometry.py` | Web Mercator scale, the north/south sign convention, winding invariance, cardinal azimuths, PVGIS aspect conversion, surface-frame round-trips, and the **hip-edge guard** |
-| `test_roof_service.py` | The committed calibration itself — topology, areas, A-GEO-1 on real data |
+| `test_roof_service.py` | The committed calibration itself — topology, that the facets tile the footprint exactly, the asymmetry the operator correction introduced, A-GEO-1 on real data |
+| `test_obstructions.py` | The chimney: loaded onto the right facet, refused when declared on the wrong one, absent-key compatibility, and that **no placed panel stands on it** at any system size. The exclusion is proved by rebuilding the roof without the obstruction and watching capacity return from 21 to 24, and the post-condition is proved by moving a panel onto the chimney by hand and asserting it is rejected by name. Array rotation is pinned off here, so these tests measure the obstruction and nothing else |
+| `test_panel_rotation.py` | The per-facet array-angle search: that it **never places fewer panels than lying parallel to the eave**, that only the east triangle gains on this roof, that a turned panel is still exactly 2 × 1 m *on the surface* while becoming a 95.6°/84.4° parallelogram in plan, and that every placement post-condition still holds |
 | `test_layout.py` | Panel physical size, full-footprint containment, overlap, gaps, both orientations, production-first allocation, determinism, honest capacity limits |
 | `test_pvgis.py` | Request parameters, response parsing, monthly/annual consistency, retries, 429/529/5xx, cache, fixture fallback |
 | `test_exchange_rates.py` | Endpoint and ECB provider, every rejection case, the fallback chain, and that **parity is unreachable** |
@@ -249,9 +264,33 @@ Three suites cover the conversational layer end to end:
 | `test_chat_telemetry_api.py` | That `rules_sufficient` and a genuine failure are distinguishable, that every `interpretation` key is present, and that a model-supplied value still faces the state machine |
 | `test_corrections_api.py` | The revision fork: the parent's proposal and link are untouched, the revision finalises to a new token, a repeated change reuses the one child |
 
+Five more cover customers and delivery. The theme running through them is that
+most of the assertions are about **what did not happen**:
+
+| Suite | What it pins |
+|---|---|
+| `test_customers_api.py` | Case-insensitive uniqueness; a duplicate names the record it collided with; a `%` in a search is matched literally rather than matching every customer; a partial update touches only the keys that were sent; archiving hides without deleting |
+| `test_customer_projects.py` | `POST /projects` with no body still works; a revision carries the customer forward; changing the customer after finalisation forks, and the fork is immediately finalisable because nothing needs recomputing |
+| `test_proposal_customer_snapshot.py` | The snapshot is frozen — editing or archiving the customer does not restate an issued proposal; the address appears nowhere in the public payload or the PDF, asserted against the whole serialised body rather than named keys; the *internal* snapshot does keep it, so a "fix" that stopped storing it would fail |
+| `test_proposal_send.py` | The preview sends nothing and creates no delivery row; an unconfirmed request sends nothing; a duplicate is refused; a deliberate resend is allowed; an unavailable provider refuses **without creating a row**; the send route is 404 on a share token; two concurrent claims resolve one-granted-one-refused; a customer display name is escaped in the HTML body |
+| `test_chat_send_api.py` | A question about sending is answered rather than acted on; a bare "yes" with no offer sends nothing; a "yes" separated from the offer by any other turn sends nothing; a message naming a different address cannot redirect the recipient — and `ExtractedValues` has no field an address could go in, asserted on the type |
+
+`test_view_tracking.py` covers the bonus: first/last/count derived rather than
+stored, refreshes deduplicated, link unfurlers and crawlers not counted, the IP
+hash salted, and the open-notification firing once per counted view. One test
+asserts an **ordinary browser is counted** — without it, a deny-list that
+matched everything would pass every other test in the file.
+
 ### Web — unit
 
 `format.test.ts` (money as strings, provenance labels), `components.test.tsx` (chat, progress rail, accessible badges), `calibration.test.ts` (measurement, validation, JSON round-trip), `telemetry.test.ts` and `message-telemetry.test.tsx` (that the fallback chip appears **only** when a model was attempted and failed, and that provider detail stays behind a disclosure).
+
+`send-proposal.test.tsx` covers the two ways the send panel could mislead its
+operator: showing success before the provider has accepted (asserted by holding
+the promise open and checking the success state is absent), and reporting
+console mode as though a message had left the building. The second is the
+likeliest honesty failure in the feature, because every development run
+exercises it.
 
 ---
 
@@ -278,6 +317,51 @@ Each of these was written after a real defect, not in anticipation of one.
 | `test_last_is_a_time_word_unless_it_names_a_choice` | Bare `last` was in the size vocabulary, so "about the same as we used last winter" selected 9.6 kWp — the same shape as the `large` defect, found while writing the live probes. |
 | `test_a_capitalised_question_still_reaches_the_right_help_entry` | The help registry was searched with the message exactly as typed, and its triggers are lowercase, so every capitalised question fell through to the topic default. "Why does a 6 kWp system have 15 panels?" was answered with the list of sizes. Found by live probing, not by any mocked test. |
 | `llm-telemetry.spec.ts` + the `run-analysis` commit | Flushing the "running" status marker instead of committing held SQLite's write lock across three PVGIS calls and an FX lookup. Concurrent writers queued behind it and one past `busy_timeout` failed with "database is locked", surfacing as a 500 on an unrelated request. Exposed by adding a second E2E file to the degraded project — the first time two tests genuinely ran concurrently against that stack. |
+
+---
+
+## What only the container can prove
+
+The local suite runs against the developer machine's Python, and its bundled
+SQLite is **newer than the container's**: 3.45.3 locally against 3.40.1 in the
+Debian-based image. That gap is not cosmetic, and it hid a real defect.
+
+`ALTER TABLE ... DROP COLUMN` exists from SQLite 3.35, but whether it can drop a
+column named in a foreign-key definition depends on the version. 3.45 rewrites
+the clause and succeeds. 3.40.1 refuses:
+
+```
+error in table projects after drop column:
+unknown column "customer_id" in foreign key definition
+```
+
+So the downgrade of `b2c3d4e5f6a7` — which reverses an `ADD COLUMN … REFERENCES`
+— passed every local test and would have stranded a *deployed* database at that
+revision with no way back. It is now a `batch_alter_table` rebuild, which works
+on both, and `test_this_chain_upgrades_and_downgrades_without_losing_a_proposal`
+proves the rebuild does not cascade `proposals` away.
+
+There is no local test that can catch this class of bug, because the local
+engine does not have the limitation. The honest answer is that **migrations are
+verified in the container**, not only in the suite:
+
+```bash
+docker compose up -d --build
+docker compose exec api sh -c "cd /app && python -m alembic downgrade 9b2c4d6e8f10"
+# seed rows, then:
+docker compose restart api      # init_db must upgrade in place and keep them
+```
+
+Two other things were exercised in the container and nowhere else, because the
+settings refuse `EMAIL_MODE=smtp` in a test environment and no automated test
+can therefore reach them:
+
+- A **real SMTP send** through the bundled Mailpit profile — correct `From`,
+  `To` and subject (carrying the proposal reference), the share link present in
+  both the text and HTML parts, and the recipient's own address absent from the
+  body.
+- The **open notification**, which fired once on a counted view and says *"This
+  is a page view, not an email open"*.
 
 ---
 

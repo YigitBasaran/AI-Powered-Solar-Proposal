@@ -20,8 +20,28 @@ Next.js  ── rewrite /api/v1/* ──►  FastAPI
                                      ├── Google Static Maps      (live mode)
                                      ├── PVGIS 5.3               (production)
                                      ├── Frankfurter / ECB       (FX)
+                                     ├── SMTP relay              (optional; console by default)
                                      └── Ollama                  (optional, opt-in)
 ```
+
+Nine tables, and the relationships that matter:
+
+```
+Customer 1 ──< Project 0..1 ──< Proposal 0..1 ──< ProposalDelivery 0..n
+                 │  └── revision_of_project_id (UNIQUE self-FK: a chain, not a tree)
+                 │
+                 └──< ActivityEvent            Proposal ──< ProposalView 0..n
+```
+
+Three lifecycles are kept deliberately separate, none of them stored in another's column:
+
+| Lifecycle | Where | Values |
+|---|---|---|
+| Analysis | `projects.analysis_status` | `pending · running · complete · recalculating · stale · failed` |
+| Proposal | derived from the project chain | none / finalised / superseded |
+| Delivery | `proposal_deliveries.status` | `pending · sending · sent · failed` |
+
+`viewed` is not a status anywhere — it is `first_viewed_at`/`last_viewed_at` derived from `proposal_views`, so it can never overwrite the fact that a proposal was sent.
 
 **The browser never talks to a third party.** That keeps the Google API key server-side, and — just as importantly — keeps the satellite raster **same-origin**, which is the only reason `stage.toDataURL()` works. A direct fetch from the browser would taint the canvas and the layout could never be exported for the PDF.
 
@@ -62,6 +82,20 @@ A panel is 1 × 2 m on the sloped plane and nowhere else. Shapely does containme
 `finalize` writes one JSON blob containing every derived number plus the exchange rate, its date and its source. The share page and the PDF renderer read **that blob and nothing else**.
 
 Neither recomputes anything, so they cannot disagree, and a market move cannot rewrite a document already sent. Test-enforced.
+
+**The customer is part of that snapshot.** `customer_snapshot_json` freezes who the proposal was addressed to, for the same reason the figures are frozen: a corrected surname or a new address six months later must not restate a document that has already been sent.
+
+**A revision is a forked *project*, not a version row.** `projects.revision_of_project_id` is a UNIQUE self-reference, so revisions form a chain and the database — not application timing — refuses a second fork. Everything else is derived from that one mechanism: `revision_number` is the chain depth (computed at finalisation and then frozen, because it is printed in the email), and `isSuperseded` is computed at read time from whether a later proposal exists. Nothing is ever written back onto an issued proposal, which is what makes "supersede rather than edit" structural rather than a convention.
+
+---
+
+### 5. Sending is a separate act from issuing
+
+A proposal is a document; a delivery is an attempt to put it in front of someone. They are separate tables and separate lifecycles, so a failed send leaves a perfectly valid proposal with a working public link — which is exactly the fallback the UI offers.
+
+There is no job queue, so the provider call happens inside the request. What makes that safe is a database claim borrowed wholesale from `services/analysis_claim.py`, because the shape of the problem is identical: insert keyed on a deterministic idempotency key and let the UNIQUE index settle the race, take the row with a conditional `UPDATE … WHERE status IN (…)`, **commit before the slow part**, then write the terminal status fenced on still owning it.
+
+Committing first is the load-bearing step: an ambiguous timeout leaves a durable `sending` row rather than nothing at all, so the evidence that an attempt happened survives the process that made it. What it buys is at-least-once with a stable key — stated plainly in [`known-limitations.md`](known-limitations.md#delivery-is-at-least-once-not-exactly-once) rather than dressed up as exactly-once.
 
 ---
 
@@ -152,6 +186,10 @@ The brief warns against unnecessary distributed infrastructure, and the workload
 Instead: async HTTPX, bounded PVGIS concurrency, a cache keyed on every parameter that changes the answer, memoised layout candidates, and one SQLite file.
 
 The honest limit: PDF rendering spawns Chromium in-request, which is fine at this scale and would need a worker queue under real load. Recorded in [`known-limitations.md`](known-limitations.md).
+
+The same applies to outbound email: `smtplib` is blocking, so the send runs in a worker thread with an explicit timeout rather than on a queue. Adding one for a single outbound call would have been a larger change than the feature.
+
+**No email vendor.** `EMAIL_MODE` is `console` or `smtp`, both stdlib, behind a `ProposalEmailSender` protocol. A Resend or Postmark integration would give real message ids and delivery webhooks; it would also add a vendor, a secret, and a webhook ingestion surface larger than the feature itself. The protocol is where that swap would go.
 
 ---
 

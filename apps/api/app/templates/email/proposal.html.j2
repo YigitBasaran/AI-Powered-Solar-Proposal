@@ -1,0 +1,74 @@
+{#
+  The proposal email, HTML alternative.
+
+  Same values as the text part, from the same frozen snapshot - so the two
+  cannot disagree. Autoescaping is on for this template (see
+  `services/proposal_email.py`): a customer's display name is operator-entered
+  free text and reaches this document unmodified.
+
+  Deliberately plain. Inline styles only, no external stylesheet, no web font
+  and no remote image: mail clients strip most of it, and a remote image is a
+  tracking pixel whether or not it was meant as one.
+#}
+<div style="font-family:-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;
+            font-size:15px; line-height:1.55; color:#1a1a1a; max-width:560px">
+
+  <p>Hi {{ customer_name }},</p>
+
+  <p>Your solar proposal for <strong>{{ system_size_kwp }} kWp</strong> is ready.</p>
+
+  <p>
+    <a href="{{ public_url }}"
+       style="display:inline-block; padding:10px 18px; background:#0f5132; color:#ffffff;
+              text-decoration:none; border-radius:6px">View your proposal</a>
+  </p>
+
+  <p style="font-size:13px; color:#555">
+    Or paste this into your browser:<br />
+    <a href="{{ public_url }}" style="color:#0f5132">{{ public_url }}</a>
+  </p>
+
+  <table cellpadding="0" cellspacing="0"
+         style="border-collapse:collapse; margin:20px 0; font-size:14px">
+    <tr>
+      <td style="padding:5px 22px 5px 0; color:#555">System size</td>
+      <td style="padding:5px 0"><strong>{{ system_size_kwp }} kWp</strong>
+        ({{ panel_count }} panels)</td>
+    </tr>
+    <tr>
+      <td style="padding:5px 22px 5px 0; color:#555">Annual production</td>
+      <td style="padding:5px 0"><strong>{{ annual_production_kwh }} kWh</strong></td>
+    </tr>
+    <tr>
+      <td style="padding:5px 22px 5px 0; color:#555">Annual saving</td>
+      <td style="padding:5px 0"><strong>EUR {{ annual_savings_eur }}</strong></td>
+    </tr>
+    <tr>
+      <td style="padding:5px 22px 5px 0; color:#555">Payback</td>
+      <td style="padding:5px 0">
+        {% if payback_years %}about {{ payback_years }} years
+        {% else %}not within the 20-year analysis period{% endif %}
+      </td>
+    </tr>
+    <tr>
+      <td style="padding:5px 22px 5px 0; color:#555">Investment</td>
+      <td style="padding:5px 0">EUR {{ capex_eur }}</td>
+    </tr>
+  </table>
+
+  {% if capacity_warning %}
+  <p style="padding:10px 14px; background:#fff4e5; border-left:3px solid #b45309;
+            font-size:14px">
+    {{ capacity_warning }}
+  </p>
+  {% endif %}
+
+  <p style="font-size:13px; color:#666">Reference: {{ reference }}</p>
+
+  <p style="font-size:12px; color:#777; border-top:1px solid #e5e5e5; padding-top:12px">
+    The figures above are estimates based on satellite imagery and modelled solar
+    irradiation for your roof. They are not a site survey.
+  </p>
+
+  <p style="font-size:13px">{{ sender_name }}</p>
+</div>

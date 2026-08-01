@@ -64,14 +64,52 @@ test.describe("@p1 concurrency", () => {
     }
   });
 
-  test("view counting survives simultaneous opens", async ({ api }) => {
+  test("view counting survives simultaneous opens by different readers", async ({
+    api,
+    request,
+  }) => {
     const { shareToken } = await api.finalisedProposal("3.6 kWp");
 
-    await Promise.all(Array.from({ length: 6 }, () => api.recordView(shareToken)));
+    // Six *distinct* readers, opened at once. Distinct matters now: identical
+    // requests from one reader are deduplicated into a single visit, because
+    // the share page posts here on every mount and one person refreshing
+    // should not present as six openings.
+    await Promise.all(
+      Array.from({ length: 6 }, (_, index) =>
+        request.post(`/api/v1/proposals/${shareToken}/view`, {
+          headers: { "user-agent": `reader-${index}/1.0` },
+        }),
+      ),
+    );
 
     const { body } = await api.proposal(shareToken);
     // Every write landed: a lost update here would mean a lost write anywhere.
     expect(body.views.viewCount).toBe(6);
+  });
+
+  test("a burst from one reader never counts more than it should", async ({ api, request }) => {
+    const { shareToken } = await api.finalisedProposal("3.6 kWp");
+
+    await Promise.all(
+      Array.from({ length: 6 }, () =>
+        request.post(`/api/v1/proposals/${shareToken}/view`, {
+          headers: { "user-agent": "one-impatient-reader/1.0" },
+        }),
+      ),
+    );
+
+    const { body } = await api.proposal(shareToken);
+    // Deduplication is a read-then-write suppression with no unique index
+    // behind it, so six *simultaneous* identical requests can all pass the
+    // check before any of them commits. That is an accepted limitation: it
+    // exists to stop a human refreshing from inflating the count, and a human
+    // cannot issue six truly simultaneous requests.
+    //
+    // What must hold either way is the bound - a burst can never count for
+    // more than the requests it made, and sequential refreshes collapse to one
+    // (asserted directly in `customer-proposal.spec.ts`).
+    expect(body.views.viewCount).toBeGreaterThanOrEqual(1);
+    expect(body.views.viewCount).toBeLessThanOrEqual(6);
   });
 
   test("two browser sessions do not see each other's project", async ({ browser }) => {
@@ -91,7 +129,10 @@ test.describe("@p1 concurrency", () => {
       ]);
 
       await expect(flowA.kpi("system-size")).toHaveText("3.6 kWp");
-      await expect(flowB.kpi("system-size")).toHaveText("9.6 kWp");
+      // What fits, not what was asked for: 9.6 kWp is a 21-panel shortfall.
+      await expect(flowB.kpi("system-size")).toHaveText(
+        `${EXPECTED["9.6"].actualCapacityKwp} kWp`,
+      );
     } finally {
       await Promise.all(contexts.map((c) => c.close()));
     }

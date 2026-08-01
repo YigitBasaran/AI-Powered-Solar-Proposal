@@ -113,6 +113,39 @@ class RoofEdge(BaseModel):
     true_3d_length_m: float | None = None
 
 
+class RoofObstruction(BaseModel):
+    """Something standing on the roof that a panel cannot be placed over.
+
+    Held in plan (source-pixel and projected-metric) coordinates like everything
+    else in the calibration. Layout converts it into the host facet's surface
+    frame at placement time, because that is the only frame in which a panel's
+    1 x 2 m footprint is actually 1 x 2 m.
+
+    `sloped_area_m2` is the plan area divided by cos(pitch), which is exact here:
+    unlike a hip, an obstruction's footprint is a patch of the facet plane, so
+    the whole patch scales by the same factor (contrast A-GEO-1 for edges).
+    """
+
+    id: str
+    label: str
+    kind: str
+
+    facet_id: str
+
+    source_pixel_polygon: list[Point2D]
+    projected_metric_polygon: list[Point2D]
+
+    projected_area_m2: float
+    sloped_area_m2: float
+
+    @field_validator("source_pixel_polygon", "projected_metric_polygon")
+    @classmethod
+    def _at_least_triangle(cls, v: list[Point2D]) -> list[Point2D]:
+        if len(v) < 3:
+            raise ValueError("an obstruction polygon needs at least 3 vertices")
+        return v
+
+
 class RoofFacet(BaseModel):
     id: str
     label: str
@@ -131,7 +164,16 @@ class RoofFacet(BaseModel):
     projected_area_m2: float
     sloped_area_m2: float
 
+    #: Plan area of the obstructions standing on this facet. Kept separate from
+    #: `projected_area_m2` so the roof's own size stays a statement about the
+    #: roof, and "how much of it is usable" stays a separate, visible question.
+    obstructed_area_m2: float = 0.0
+
     specific_yield_kwh_per_kwp: float | None = None
+
+    @property
+    def usable_projected_area_m2(self) -> float:
+        return max(0.0, self.projected_area_m2 - self.obstructed_area_m2)
 
     @field_validator("source_pixel_polygon", "projected_metric_polygon")
     @classmethod
@@ -153,6 +195,7 @@ class RoofModel(BaseModel):
     vertices: list[RoofVertex]
     edges: list[RoofEdge]
     facets: list[RoofFacet]
+    obstructions: list[RoofObstruction] = Field(default_factory=list)
 
     pitch_deg: float
     ground_m_per_source_px: float
@@ -162,6 +205,13 @@ class RoofModel(BaseModel):
 
     total_projected_area_m2: float
     total_sloped_area_m2: float
+
+    @property
+    def total_obstructed_area_m2(self) -> float:
+        return sum(o.projected_area_m2 for o in self.obstructions)
+
+    def obstructions_on(self, facet_id: str) -> list[RoofObstruction]:
+        return [o for o in self.obstructions if o.facet_id == facet_id]
 
     def vertex(self, vertex_id: str) -> RoofVertex:
         for v in self.vertices:
@@ -193,10 +243,22 @@ class PanelOrientation(StrEnum):
 
 
 class SolarPanel(BaseModel):
+    """One placed panel, in three coordinate systems.
+
+    `surface_polygon` is the only one where the panel is its true physical size:
+    the projection into plan view shortens the up-slope axis by cos(pitch), so a
+    2 x 1 m panel measures 2 x 0.906 m there. Once `rotation_deg` is non-zero the
+    plan-view outline stops being a rectangle at all and becomes a parallelogram
+    - at 46 deg on a 25 deg roof its corners are 95.6 and 84.4 deg. Anything
+    measuring a panel must do it on the surface.
+    """
+
     id: str
     facet_id: str
 
     orientation: PanelOrientation
+    #: Rotation of the panel within the roof plane, anticlockwise from the eave.
+    rotation_deg: float = 0.0
 
     power_wp: int
     surface_width_m: float
@@ -210,6 +272,9 @@ class SolarPanel(BaseModel):
 class FacetLayout(BaseModel):
     facet_id: str
     orientation: PanelOrientation
+    #: Rotation shared by every panel on this facet. An array is laid out as one
+    #: grid, so this is a property of the facet rather than of each panel.
+    rotation_deg: float = 0.0
     panels: list[SolarPanel]
 
     @property

@@ -6,6 +6,7 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  LabelList,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -31,7 +32,13 @@ const INK = "#0b0b0b";
 
 const axisTick = { fontSize: 11, fill: INK_MUTED };
 
-function TooltipCard({ title, rows }: { title: string; rows: [string, string][] }) {
+function TooltipCard({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: [string, string][];
+}) {
   return (
     <div className="rounded-lg border border-slate-line bg-surface px-2.5 py-2 text-[12px] shadow-md">
       <div className="mb-1 font-semibold text-slate-ink">{title}</div>
@@ -52,9 +59,11 @@ export function MonthlyProductionChart({ monthly }: { monthly: number[] }) {
   }));
 
   return (
-    <div className="h-[220px] w-full">
+    <div className="h-[240px] w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <BarChart data={data} margin={{ top: 8, right: 8, bottom: 4, left: 4 }}>
+        {/* `top: 20` leaves room for the value printed above each bar; at 8 the
+            tallest month's label was clipped by the plot area. */}
+        <BarChart data={data} margin={{ top: 20, right: 8, bottom: 4, left: 4 }}>
           <CartesianGrid stroke={GRID} vertical={false} />
           <XAxis
             dataKey="month"
@@ -75,13 +84,35 @@ export function MonthlyProductionChart({ monthly }: { monthly: number[] }) {
               active && payload?.[0] ? (
                 <TooltipCard
                   title={String(label)}
-                  rows={[["Production", `${number(Number(payload[0].value))} kWh`]]}
+                  rows={[
+                    ["Production", `${number(Number(payload[0].value))} kWh`],
+                  ]}
                 />
               ) : null
             }
           />
           {/* 4px rounded data-end, anchored to the baseline. */}
-          <Bar dataKey="kwh" fill={SERIES} radius={[4, 4, 0, 0]} maxBarSize={34} />
+          <Bar
+            dataKey="kwh"
+            fill={SERIES}
+            radius={[4, 4, 0, 0]}
+            maxBarSize={34}
+          >
+            {/* The figure, above its own bar.
+                A bar chart shows shape well and value badly: reading July off
+                the gridlines gets you "about 1,100", and the question a
+                customer actually asks here is what a given month produces. The
+                tooltip answered it, but only on hover — and not at all on the
+                printed PDF or on a touch screen. */}
+            <LabelList
+              dataKey="kwh"
+              position="top"
+              offset={6}
+              fill={INK_MUTED}
+              fontSize={9}
+              formatter={(value: number) => number(value)}
+            />
+          </Bar>
         </BarChart>
       </ResponsiveContainer>
     </div>
@@ -103,7 +134,10 @@ export function CashFlowChart({
   return (
     <div className="h-[240px] w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={data} margin={{ top: 8, right: 12, bottom: 4, left: 4 }}>
+        <AreaChart
+          data={data}
+          margin={{ top: 8, right: 12, bottom: 4, left: 4 }}
+        >
           <defs>
             <linearGradient id="cashflow-fill" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={SERIES_SOFT} stopOpacity={0.95} />

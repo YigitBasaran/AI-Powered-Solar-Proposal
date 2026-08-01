@@ -4,7 +4,11 @@ import { AlertTriangle, Loader2, Send } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/components/ui/primitives";
-import { FALLBACK_CHIP_LABEL, describeFallback, shouldShowFallbackChip } from "@/lib/telemetry";
+import {
+  FALLBACK_CHIP_LABEL,
+  describeFallback,
+  shouldShowFallbackChip,
+} from "@/lib/telemetry";
 import type { ChatMessage, ProgressStep } from "@/types/api";
 
 export function ProgressRail({ steps }: { steps: ProgressStep[] }) {
@@ -16,7 +20,8 @@ export function ProgressRail({ steps }: { steps: ProgressStep[] }) {
           aria-current={step.state === "active" ? "step" : undefined}
           className={cn(
             "rounded-full border px-2 py-0.5 text-[11px] font-medium",
-            step.state === "done" && "border-good-600/30 bg-[#e8f6ec] text-good-700",
+            step.state === "done" &&
+              "border-good-600/30 bg-[#e8f6ec] text-good-700",
             step.state === "active" && "border-navy-700 bg-navy-900 text-white",
             step.state === "pending" && "border-slate-line text-slate-muted",
           )}
@@ -42,7 +47,10 @@ function MessageTelemetry({ message }: { message: ChatMessage }) {
   if (!interpretation) return null;
 
   return (
-    <details className="mt-1.5 text-[11px] text-slate-muted" data-testid="message-telemetry">
+    <details
+      className="mt-1.5 text-[11px] text-slate-muted"
+      data-testid="message-telemetry"
+    >
       <summary className="cursor-pointer list-none">
         {shouldShowFallbackChip(interpretation) ? (
           // Colour, an icon and the words together: the state has to survive a
@@ -56,18 +64,28 @@ function MessageTelemetry({ message }: { message: ChatMessage }) {
             {FALLBACK_CHIP_LABEL}
           </span>
         ) : (
-          <span className="underline decoration-dotted underline-offset-2">How this was read</span>
+          <span className="underline decoration-dotted underline-offset-2">
+            How this was read
+          </span>
         )}
       </summary>
       <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
         <dt>Configured</dt>
-        <dd data-testid="configured-provider">{interpretation.configuredProvider}</dd>
+        <dd data-testid="configured-provider">
+          {interpretation.configuredProvider}
+        </dd>
         <dt>Attempted</dt>
-        <dd data-testid="attempted-provider">{interpretation.attemptedProvider ?? "none"}</dd>
+        <dd data-testid="attempted-provider">
+          {interpretation.attemptedProvider ?? "none"}
+        </dd>
         <dt>Effective</dt>
-        <dd data-testid="effective-provider">{interpretation.effectiveProvider}</dd>
+        <dd data-testid="effective-provider">
+          {interpretation.effectiveProvider}
+        </dd>
         <dt>Reason</dt>
-        <dd data-testid="fallback-reason">{describeFallback(interpretation.fallbackReason)}</dd>
+        <dd data-testid="fallback-reason">
+          {describeFallback(interpretation.fallbackReason)}
+        </dd>
         {interpretation.modelName ? (
           <>
             <dt>Model</dt>
@@ -143,7 +161,9 @@ export function ChatPanel({
               )}
             >
               {message.content}
-              {message.role === "assistant" ? <MessageTelemetry message={message} /> : null}
+              {message.role === "assistant" ? (
+                <MessageTelemetry message={message} />
+              ) : null}
             </div>
           </div>
         ))}

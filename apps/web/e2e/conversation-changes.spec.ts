@@ -70,7 +70,10 @@ test.describe("@p1 changing a value", () => {
     await expect(solarFlow.kpi("system-size")).toHaveText("6 kWp");
 
     await solarFlow.send("change it to the largest option");
-    await expect(solarFlow.kpi("system-size")).toHaveText("9.6 kWp", { timeout: 90_000 });
+    await expect(solarFlow.kpi("system-size")).toHaveText(
+      `${EXPECTED["9.6"].actualCapacityKwp} kWp`,
+      { timeout: 90_000 },
+    );
     await expect(solarFlow.kpi("annual-production")).toHaveText(
       `${Math.round(EXPECTED["9.6"].annualProductionKwh).toLocaleString("en-GB")} kWh`,
     );
@@ -195,7 +198,10 @@ test.describe("@p1 changing a finalised proposal", () => {
 
     // The proof that the client moved: the next message is accepted and takes
     // effect. Sent to the parent it would hit an immutable project instead.
-    await expect(solarFlow.kpi("system-size")).toHaveText("9.6 kWp", { timeout: 90_000 });
+    await expect(solarFlow.kpi("system-size")).toHaveText(
+      `${EXPECTED["9.6"].actualCapacityKwp} kWp`,
+      { timeout: 90_000 },
+    );
   });
 });
 

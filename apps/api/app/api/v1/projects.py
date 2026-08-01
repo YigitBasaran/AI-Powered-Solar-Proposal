@@ -11,9 +11,9 @@ import contextlib
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends
+from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import Settings, get_settings
@@ -21,18 +21,23 @@ from app.core.errors import (
     AnalysisInProgressError,
     AnalysisSupersededError,
     AppError,
+    DeletionRefusedError,
     InvalidStepTransitionError,
     NotFoundError,
 )
 from app.db.session import commit_before_response, get_session
+from app.domain.customers import mask_email
 from app.domain.models import ProjectStep
 from app.integrations.exchange_rates import ExchangeRateService, SqlExchangeRateCache
-from app.models.tables import ChatMessage, Project, Proposal
+from app.models.tables import ChatMessage, Customer, Project, Proposal, _utcnow, iso_utc
 
 # Imported as a module, not by name: the recompute functions are called
 # through it so a failing recomputation can actually be exercised, and so the
 # route always reaches the current definition rather than one bound at import.
+from app.services import activity, proposal_email
 from app.services import analysis as analysis_service
+from app.services import customers as customer_service
+from app.services import proposal as proposal_service
 from app.services.analysis import run_analysis, serialise_analysis
 from app.services.analysis_claim import (
     claim_analysis,
@@ -46,7 +51,12 @@ from app.services.conversation.context import RECENT_TURN_LIMIT, Turn, build_con
 from app.services.conversation.router import route_message
 from app.services.imagery import require_calibrated_imagery
 from app.services.proposal import existing_proposal
-from app.services.revisions import find_or_create_revision, find_revision, revision_notice
+from app.services.revisions import (
+    find_or_create_revision,
+    find_revision,
+    full_chain,
+    revision_notice,
+)
 from app.services.workflow import (
     ProjectState,
     StepOutcome,
@@ -80,11 +90,33 @@ ASSIGNABLE: frozenset[str] = frozenset(
 )
 
 
+class CreateProjectRequest(BaseModel):
+    """Optional, and the whole body may be omitted.
+
+    The chat-first entry point creates a project before anyone has been named,
+    and every existing client posts no body at all. Both keep working.
+    """
+
+    customerId: str | None = None
+    name: str | None = None
+
+
+class AssignCustomerRequest(BaseModel):
+    customerId: str
+
+
+class RenameProjectRequest(BaseModel):
+    """The label only. Nothing here can move a figure."""
+
+    name: str | None = None
+
+
 class CreateProjectResponse(BaseModel):
     projectId: str
     currentStep: str
     assistantMessage: str
     progress: list[dict[str, Any]]
+    customer: dict[str, Any] | None = None
 
 
 class ChatRequest(BaseModel):
@@ -140,6 +172,13 @@ class ProjectResponse(BaseModel):
     revisionOfProjectId: str | None = None
     revisionProjectId: str | None = None
     hasProposal: bool = False
+    #: An optional human label for telling two projects for one customer apart.
+    name: str | None = None
+    #: The full internal customer record, or null when none is linked. Legacy
+    #: projects predate customers entirely and stay null - no placeholder is
+    #: invented for them, because a fabricated record is indistinguishable from
+    #: a real one the moment it is written.
+    customer: dict[str, Any] | None = None
 
 
 async def _pending_confirmation(session: AsyncSession, project: Project) -> str | None:
@@ -203,6 +242,15 @@ async def _project_state(session: AsyncSession, project: Project) -> ProjectStat
         has_finalised_proposal=proposal is not None,
         proposal_snapshot=proposal.proposal_data_json if proposal is not None else None,
         proposal_share_token=proposal.share_token if proposal is not None else None,
+        # Masked, because the state machine composes it into an assistant
+        # message that is stored verbatim in the transcript. The operator
+        # confirming a send sees the full address in the preview panel, which
+        # is the one surface that needs it.
+        proposal_recipient_masked=(
+            mask_email((proposal.customer_snapshot_json or {}).get("email"))
+            if proposal is not None
+            else None
+        ),
         pending_confirmation=await _pending_confirmation(session, project),
         revision_of_project_id=getattr(project, "revision_of_project_id", None),
     )
@@ -290,6 +338,44 @@ async def _recalculate(
     return sorted(outcome.changed_inputs)
 
 
+async def _send_confirmed_proposal(
+    session: AsyncSession, project: Project, settings: Settings
+) -> str:
+    """Send, and report what actually happened.
+
+    Every outcome is reported in the customer's own words, and none of them is
+    invented: the reply is composed from the delivery record the send produced.
+    A failure says so and offers the link, because a failed email leaves a
+    perfectly good proposal that can simply be copied and pasted.
+
+    Console mode is reported as "recorded" rather than "sent" - the provider
+    travels on the record, so the wording cannot drift from what happened.
+    """
+    proposal = await existing_proposal(session, project)
+    if proposal is None:  # pragma: no cover - the offer requires a proposal
+        return "There is no finalised proposal to send."
+
+    try:
+        delivery = await proposal_email.send(
+            session, proposal, settings=settings, commit=commit_before_response
+        )
+    except AppError as error:
+        link = f"{settings.web_base_url.rstrip('/')}/proposal/{proposal.share_token}"
+        return (
+            f"I could not send it: {error.message}\n\n"
+            f"The proposal itself is fine and the link still works, so you can send "
+            f"it yourself if you prefer:\n{link}"
+        )
+
+    recipient = proposal_email.serialise(delivery)["recipientMasked"]
+    if delivery.provider == "console":
+        return (
+            f"Recorded the email to {recipient} in console mode — nothing was actually "
+            f"sent. Configure SMTP to deliver it for real."
+        )
+    return f"Sent. {recipient} now has a link to the proposal."
+
+
 async def _load(session: AsyncSession, project_id: str) -> Project:
     project = (
         await session.execute(select(Project).where(Project.id == project_id))
@@ -305,11 +391,14 @@ def _to_response(
     *,
     has_proposal: bool = False,
     revision_project_id: str | None = None,
+    customer: Customer | None = None,
 ) -> ProjectResponse:
     step = ProjectStep(project.current_step)
     monthly = project.monthly_consumption_kwh
     size = project.selected_system_size_kwp
     return ProjectResponse(
+        name=project.name,
+        customer=customer_service.serialise(customer) if customer is not None else None,
         revisionOfProjectId=project.revision_of_project_id,
         revisionProjectId=revision_project_id,
         hasProposal=has_proposal,
@@ -332,7 +421,7 @@ def _to_response(
                 "content": m.content,
                 "step": m.step,
                 "parserSource": m.parser_source,
-                "createdAt": m.created_at.isoformat(),
+                "createdAt": iso_utc(m.created_at),
             }
             for m in project.messages
         ],
@@ -340,13 +429,56 @@ def _to_response(
     )
 
 
+async def _customer_of(session: AsyncSession, project: Project) -> Customer | None:
+    if project.customer_id is None:
+        return None
+    return await session.get(Customer, project.customer_id)
+
+
 @router.post("", response_model=CreateProjectResponse, status_code=201)
 async def create_project(
+    payload: CreateProjectRequest | None = Body(default=None),
     session: AsyncSession = Depends(get_session),
 ) -> CreateProjectResponse:
-    project = Project(current_step=ProjectStep.LOCATION.value)
+    # `Body(default=None)` rather than a required model: the sample-output
+    # script and both E2E launchers post this route with no body, and a
+    # customerless project remains legal at the API. The *product* requires one
+    # - the UI has no path that creates a project without picking a customer
+    # first - but enforcing it here would break the quick-estimate harnesses
+    # that predate customers entirely, and would make the case brief's own
+    # single-property flow unrunnable.
+    customer: Customer | None = None
+    if payload is not None and payload.customerId:
+        customer = await customer_service.get_customer(session, payload.customerId)
+
+    # Named on creation when the caller did not name it, so it is identifiable
+    # in a list on the day it is made rather than showing as "Draft project"
+    # beside three others.
+    name = (payload.name or "").strip() if payload is not None else ""
+    if not name and customer is not None:
+        name = f"{customer.display_name} — {_utcnow().strftime('%d %b %Y')}"
+
+    project = Project(
+        current_step=ProjectStep.LOCATION.value,
+        customer_id=customer.id if customer is not None else None,
+        name=name or None,
+    )
     session.add(project)
     await session.flush()
+
+    # Atomic with the creation: the timeline's first entry is not an
+    # observation about the project, it is the fact that it exists.
+    await activity.record(
+        session,
+        event_type=activity.PROJECT_CREATED,
+        actor="user",
+        project_id=project.id,
+        customer_id=project.customer_id,
+        metadata={
+            "projectName": project.name,
+            "customerName": customer.display_name if customer is not None else None,
+        },
+    )
 
     greeting = initial_assistant_message()
     session.add(
@@ -366,6 +498,7 @@ async def create_project(
         currentStep=project.current_step,
         assistantMessage=greeting,
         progress=progress(ProjectStep.LOCATION),
+        customer=customer_service.serialise(customer) if customer is not None else None,
     )
 
 
@@ -384,6 +517,286 @@ async def get_project(
         settings,
         has_proposal=proposal is not None,
         revision_project_id=revision.id if revision is not None else None,
+        customer=await _customer_of(session, project),
+    )
+
+
+@router.get("")
+async def list_projects(
+    q: str | None = Query(default=None, max_length=200),
+    customerId: str | None = Query(default=None, max_length=36),
+    page: int = Query(default=1, ge=1),
+    pageSize: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Every project, newest first, with its customer and proposal if it has one.
+
+    This is the only route that can find a project with **no customer** - a
+    legacy row, or a walk-in estimate taken before anyone was named. Those are
+    reachable from nowhere else: the customer screens are organised by person,
+    and nobody keeps a project id.
+
+    `q` matches the project name, the customer's name and their email, so one
+    search box serves both ways an operator remembers a job.
+
+    `customerId` narrows it to one person. That exists so a customer's own
+    screen can serve its project list from *this* route rather than from the
+    unpaginated array on `GET /customers/{id}` - one query, one page size, one
+    delete affordance, instead of two lists that drift apart.
+    """
+    statement = (
+        select(Project, Customer, Proposal)
+        .outerjoin(Customer, Customer.id == Project.customer_id)
+        .outerjoin(Proposal, Proposal.project_id == Project.id)
+    )
+
+    if customerId:
+        statement = statement.where(Project.customer_id == customerId)
+
+    if q and q.strip():
+        term = f"%{q.strip().lower()}%"
+        statement = statement.where(
+            func.lower(func.coalesce(Project.name, "")).like(term)
+            | func.lower(func.coalesce(Customer.display_name, "")).like(term)
+            | func.lower(func.coalesce(Customer.email, "")).like(term)
+        )
+
+    total = (
+        await session.execute(select(func.count()).select_from(statement.subquery()))
+    ).scalar_one()
+
+    rows = (
+        await session.execute(
+            statement.order_by(Project.created_at.desc(), Project.id.desc())
+            .offset((page - 1) * pageSize)
+            .limit(pageSize)
+        )
+    ).all()
+
+    return {
+        "page": page,
+        "pageSize": pageSize,
+        "total": int(total),
+        "totalPages": max(1, -(-int(total) // pageSize)),
+        "projects": [
+            {
+                "projectId": project.id,
+                "name": project.name,
+                "currentStep": project.current_step,
+                "analysisStatus": project.analysis_status,
+                "isRevision": project.revision_of_project_id is not None,
+                "customer": (
+                    {"customerId": customer.id, "displayName": customer.display_name}
+                    if customer is not None
+                    else None
+                ),
+                "hasProposal": proposal is not None,
+                "shareToken": proposal.share_token if proposal else None,
+                "reference": proposal.reference if proposal else None,
+                "revisionNumber": (proposal.revision_number or 1) if proposal else None,
+                "systemSizeKwp": proposal.feasible_system_size_kwp if proposal else None,
+                "createdAt": iso_utc(project.created_at),
+            }
+            for project, customer, proposal in rows
+        ]
+    }
+
+
+@router.get("/{project_id}/activity")
+async def project_activity(
+    project_id: str,
+    limit: int = Query(default=activity.DEFAULT_PAGE_SIZE, ge=1, le=activity.MAX_PAGE_SIZE),
+    cursor: str | None = Query(default=None, max_length=200),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """The whole lineage's history, newest first.
+
+    Spans every project in the revision chain, because a revision is a separate
+    project row - a timeline scoped to the current one alone would start halfway
+    through the story, missing the original analysis and the first proposal.
+    """
+    project = await _load(session, project_id)
+    chain = await full_chain(session, project)
+
+    events, next_cursor = await activity.list_for_project(
+        session, [member.id for member in chain], limit=limit, cursor=cursor
+    )
+    return {
+        "events": [activity.serialise(event) for event in events],
+        "nextCursor": next_cursor,
+    }
+
+
+@router.get("/{project_id}/revisions")
+async def list_revisions(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Every proposal in this project's lineage, oldest first.
+
+    Reachable from any member of the chain, so it reads the same whether the
+    operator opened the original project or the newest revision. A project that
+    was never finalised appears with a null proposal - it is part of the
+    history either way.
+
+    "Superseded" is *derived* here rather than stored: a proposal is superseded
+    when a later one exists in the same chain. Writing a flag onto the older row
+    would be a mutation of an issued document, which is the one thing this whole
+    subsystem exists to prevent.
+    """
+    project = await _load(session, project_id)
+    chain = await full_chain(session, project)
+
+    rows: list[dict[str, Any]] = []
+    for index, member in enumerate(chain):
+        proposal = await existing_proposal(session, member)
+        rows.append(
+            {
+                "revisionNumber": index + 1,
+                "projectId": member.id,
+                "isCurrent": member.id == chain[-1].id,
+                "proposalId": proposal.id if proposal else None,
+                "shareToken": proposal.share_token if proposal else None,
+                "reference": proposal.reference if proposal else None,
+                "finalisedAt": iso_utc(proposal.created_at) if proposal else None,
+                "systemSizeKwp": proposal.feasible_system_size_kwp if proposal else None,
+                "annualProductionKwh": proposal.annual_production_kwh if proposal else None,
+                "customer": (
+                    proposal_service.public_customer(proposal.customer_snapshot_json)
+                    if proposal
+                    else None
+                ),
+            }
+        )
+
+    latest_finalised = max(
+        (row["revisionNumber"] for row in rows if row["proposalId"]), default=None
+    )
+    for row in rows:
+        row["isSuperseded"] = bool(
+            row["proposalId"] and latest_finalised and row["revisionNumber"] < latest_finalised
+        )
+
+    return {"revisions": rows}
+
+
+@router.patch("/{project_id}", response_model=ProjectResponse)
+async def rename_project(
+    project_id: str,
+    payload: RenameProjectRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> ProjectResponse:
+    """Change the project's label.
+
+    Only the label. Everything that affects a figure goes through the
+    conversation and the analysis pipeline, where it is validated and - once a
+    proposal exists - forks a revision. A rename touches no number, so it does
+    not fork, and it is safe on a finalised project.
+    """
+    project = await _load(session, project_id)
+    name = (payload.name or "").strip()
+    project.name = name or None
+    await session.flush()
+    await commit_before_response(session)
+
+    await session.refresh(project, ["messages"])
+    return _to_response(
+        project,
+        settings,
+        has_proposal=await existing_proposal(session, project) is not None,
+        customer=await _customer_of(session, project),
+    )
+
+
+@router.delete("/{project_id}")
+async def delete_project(
+    project_id: str,
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Delete a project - only while nothing has been issued from it.
+
+    `proposals` and `chat_messages` reference this row ON DELETE CASCADE, so a
+    delete takes the proposal with it and the share link a customer is holding
+    stops resolving. A draft nobody has seen is safe to remove; an issued
+    document is not, and no flag turns that into a soft failure.
+
+    A project that has been *revised* is also refused: deleting it would strip
+    the revision of its parent and break the chain the revision list walks.
+    """
+    project = await _load(session, project_id)
+
+    if await existing_proposal(session, project) is not None:
+        raise DeletionRefusedError(
+            "This project has an issued proposal, and its share link still resolves for the "
+            "customer. Deleting it would break that link.",
+            details={"reason": "issued"},
+        )
+
+    revision = await find_revision(session, project)
+    if revision is not None:
+        raise DeletionRefusedError(
+            "This project has a revision built on it. Delete the revision first, or the "
+            "revision history would lose its origin.",
+            details={"reason": "revised", "revisionProjectId": revision.id},
+        )
+
+    await session.delete(project)
+    await commit_before_response(session)
+    logger.info("deleted project %s", project_id)
+    return {"deleted": True}
+
+
+@router.post("/{project_id}/customer", response_model=ProjectResponse)
+async def assign_customer(
+    project_id: str,
+    payload: AssignCustomerRequest,
+    session: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> ProjectResponse:
+    """Link a project to a customer, or move it to a different one.
+
+    Before finalisation this is an ordinary write. **After** finalisation it
+    forks a revision, through the same `find_or_create_revision` a chat edit
+    uses - because who a proposal is addressed to is part of the document, and
+    the issued one has to keep saying what it said.
+
+    No second mechanism, and no special case: the response is the project that
+    now carries the change, exactly as a chat correction returns the revision it
+    moved to.
+    """
+    project = await _load(session, project_id)
+    customer = await customer_service.get_customer(session, payload.customerId)
+
+    if project.customer_id != customer.id and await existing_proposal(session, project):
+        # `recomputes=False`: the roof, the production and every financial
+        # figure are unchanged by moving the proposal to a different recipient.
+        # The revision is immediately finalisable, which is what makes
+        # "re-issue this to the right person" a single step.
+        project = await find_or_create_revision(session, project, recomputes=False)
+        logger.info("customer change on a finalised project forked revision %s", project.id)
+
+    forked = project.id != project_id
+    project.customer_id = customer.id
+    await session.flush()
+
+    await activity.record(
+        session,
+        event_type=activity.PROJECT_CUSTOMER_ASSIGNED,
+        actor="user",
+        project_id=project.id,
+        customer_id=customer.id,
+        metadata={"displayName": customer.display_name, "forkedRevision": forked},
+    )
+    await commit_before_response(session)
+
+    await session.refresh(project, ["messages"])
+    return _to_response(
+        project,
+        settings,
+        has_proposal=await existing_proposal(session, project) is not None,
+        revision_project_id=None,
+        customer=customer,
     )
 
 
@@ -427,6 +840,14 @@ async def chat(
             project = await find_or_create_revision(session, project)
             notice = revision_notice(parent, proposal.share_token, settings.web_base_url) + "\n\n"
             step = ProjectStep(project.current_step)
+            await activity.record_best_effort(
+                session,
+                event_type=activity.PROJECT_REVISED,
+                actor="user",
+                project_id=project.id,
+                customer_id=project.customer_id,
+                metadata={"reason": action.topic.value},
+            )
 
     # The raw message is preserved verbatim, on whichever project owns the turn.
     session.add(
@@ -462,7 +883,16 @@ async def chat(
 
     recalculated = await _recalculate(session, project, outcome, settings)
 
-    message = notice + outcome.assistant_message
+    # The state machine decided; the I/O happens here, because it cannot.
+    #
+    # `send_confirmed` is set only when the immediately preceding assistant
+    # message offered a send, so this line is unreachable from a bare "yes"
+    # that was answering anything else.
+    send_message = ""
+    if outcome.send_confirmed:
+        send_message = await _send_confirmed_proposal(session, project, settings)
+
+    message = notice + outcome.assistant_message + send_message
     session.add(
         ChatMessage(
             project_id=project.id,
@@ -574,6 +1004,15 @@ async def run_project_analysis(
         await fail_analysis(
             session, claim, code=error.code, message=error.message, details=error.details
         )
+        # The code only. The message can carry an upstream provider's text, and
+        # an audit row is not the place for a third party's prose.
+        await activity.record_best_effort(
+            session,
+            event_type=activity.ANALYSIS_FAILED,
+            project_id=project.id,
+            customer_id=project.customer_id,
+            metadata={"errorCode": error.code},
+        )
         raise
     except Exception as error:  # pragma: no cover - defensive
         logger.exception("analysis failed for project %s", project.id)
@@ -583,6 +1022,18 @@ async def run_project_analysis(
     snapshot = serialise_analysis(result)
     await complete_analysis(
         session, claim, snapshot=snapshot, current_step=ProjectStep.PROPOSAL.value
+    )
+    await activity.record_best_effort(
+        session,
+        event_type=activity.ANALYSIS_COMPLETED,
+        actor="user",
+        project_id=project.id,
+        customer_id=project.customer_id,
+        metadata={
+            "systemSizeKwp": result.layout.feasible_system_size_kwp,
+            "annualProductionKwh": round(result.yield_result.total_annual_production_kwh),
+            "panelCount": result.layout.placed_panel_count,
+        },
     )
     await session.refresh(project)
 

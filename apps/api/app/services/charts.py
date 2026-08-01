@@ -54,7 +54,9 @@ def monthly_production_chart(
     if len(monthly_kwh) != 12:
         raise ValueError("monthly production needs 12 values")
 
-    pad_left, pad_right, pad_top, pad_bottom = 54, 12, 18, 34
+    # `pad_top` leaves room for the value printed above each bar. Without it
+    # the tallest month's label is clipped by the viewBox.
+    pad_left, pad_right, pad_top, pad_bottom = 54, 12, 30, 34
     plot_w = width - pad_left - pad_right
     plot_h = height - pad_top - pad_bottom
 
@@ -92,6 +94,18 @@ def monthly_production_chart(
         parts.append(
             f'<rect x="{x:.1f}" y="{y:.1f}" width="{bar_w:.1f}" '
             f'height="{bar_h:.1f}" rx="{radius:.1f}" fill="{SERIES}"/>'
+        )
+        # The figure, directly above its own bar.
+        #
+        # A bar chart shows *shape* well and *value* badly: reading July off
+        # the gridlines gets you "about 1,100", and the one question a customer
+        # actually asks of this chart is what a given month produces. The label
+        # is small and recessive so the shape still leads, and tabular numerals
+        # keep the twelve of them optically aligned.
+        parts.append(
+            f'<text x="{x + bar_w / 2:.1f}" y="{y - 5:.1f}" text-anchor="middle" '
+            f'font-family="{FONT}" font-size="9" fill="{INK_MUTED}" '
+            f'style="font-variant-numeric:tabular-nums">{value:,.0f}</text>'
         )
         parts.append(
             f'<text x="{x + bar_w / 2:.1f}" y="{height - 12}" text-anchor="middle" '

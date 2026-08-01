@@ -66,10 +66,94 @@ def _utcnow() -> datetime:
         return now
 
 
+def as_utc(value: datetime | None) -> datetime | None:
+    """The read-side counterpart of :func:`_utcnow`.
+
+    SQLite has no timezone type, so a column written as an aware UTC datetime
+    comes back **naive**. The same record therefore serialises two different
+    ways: `...+00:00` from the object still in the identity map after a write,
+    and `...` with no offset once it has been loaded from disk.
+
+    That is not cosmetic. `Date.parse` in a browser reads an ISO string with no
+    offset as *local* time, so a timestamp round-tripped through the database
+    renders hours away from the one returned by the request that created it.
+
+    Every value in these columns is written by `_utcnow`, so a naive value read
+    back *is* UTC - attaching it states what is already true rather than
+    guessing. Same shape as the existing normalisation in
+    `integrations/pvgis.py`.
+    """
+    if value is None:
+        return None
+    return value.replace(tzinfo=UTC) if value.tzinfo is None else value
+
+
+def iso_utc(value: datetime | None) -> str | None:
+    """`as_utc`, serialised. The one way a timestamp leaves this application."""
+    normalised = as_utc(value)
+    return normalised.isoformat() if normalised else None
+
+
+class Customer(Base):
+    """The person a proposal is for.
+
+    Deliberately thin. This is the smallest record that lets a proposal be
+    addressed, found again and attributed - not a CRM contact, which is why
+    there is no pipeline stage, no owner, no tags and no free-form notes.
+    """
+
+    __tablename__ = "customers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+
+    first_name: Mapped[str] = mapped_column(String(120), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(120), nullable=False)
+
+    #: The only name shown to the customer, and the only one that ever appears
+    #: on the public proposal page. Derived from first + last unless set.
+    display_name: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    #: Stored already lower-cased and trimmed, so this unique index *is* the
+    #: case-insensitive uniqueness rule. Normalising on write rather than
+    #: indexing `lower(email)` keeps SQLite and PostgreSQL identical and keeps
+    #: the stored value readable. See `app/domain/customers.py`.
+    email: Mapped[str] = mapped_column(String(320), unique=True, index=True, nullable=False)
+
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    company_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    address: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: Soft delete. A hard delete would strand finalised proposals whose frozen
+    #: snapshot names this person, so the record is retired rather than removed.
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
 class Project(Base):
     __tablename__ = "projects"
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+
+    #: Who this project is for. Nullable, and deliberately so.
+    #:
+    #: Every existing project predates customers, the chat-first entry point
+    #: creates a project before anyone has been named, and a quick estimate for
+    #: a walk-in never needs a record at all. Requiring one here would break all
+    #: three. The requirement lands where it actually matters - a proposal
+    #: cannot be *emailed* to nobody - rather than at the start of the funnel.
+    #:
+    #: ON DELETE SET NULL rather than CASCADE: removing a customer must never
+    #: take their projects, and their issued proposals, with it.
+    customer_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("customers.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+
+    #: An optional human label, for telling two projects for one customer apart.
+    name: Mapped[str | None] = mapped_column(String(160), nullable=True)
 
     current_step: Mapped[str] = mapped_column(String(32), nullable=False, default="location")
 
@@ -208,6 +292,28 @@ class Proposal(Base):
     ai_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
     capacity_warning: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    #: Who this document was for, frozen at finalisation.
+    #:
+    #: A snapshot rather than a join, for the same reason the figures are: a
+    #: proposal is a document someone was sent. Editing the customer afterwards
+    #: - a corrected surname, a new address - must not restate what was issued.
+    #: Null for a project that had no customer, including every legacy row.
+    customer_snapshot_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    #: Depth in the project revision chain: 1 for the first proposal, 2 for the
+    #: proposal of its revision, and so on.
+    #:
+    #: Derived at finalisation and then frozen, because it is printed in the
+    #: email subject and on the document. Recomputing it on read would let a
+    #: reference the customer is holding change under them. Nullable only so
+    #: rows that predate the column can exist; they are read as 1.
+    revision_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    #: The human reference, e.g. `SOL-A1B2C3-R2`. For quoting in an email or on
+    #: the phone. The share token remains the identifier; this is not unique and
+    #: nothing looks anything up by it.
+    reference: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
 
     project: Mapped[Project] = relationship(back_populates="proposals")
@@ -246,6 +352,118 @@ class PvgisCache(Base):
 
     response_json: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+
+
+class ProposalDelivery(Base):
+    """One attempt to put a proposal in front of its customer.
+
+    **Four statuses, and no more.** `pending`, `sending`, `sent`, `failed`.
+    There is no `delivered`, no `bounced` and no `opened`, because SMTP offers
+    no way to know any of them - a status that implied otherwise would be the
+    same dishonesty as a fake success, written into the schema where it would
+    outlive whoever added it. `sent` means, everywhere, *the provider accepted
+    the message*.
+
+    `idempotency_key` is UNIQUE and is the whole duplicate-send defence. It is
+    derived from the proposal, the recipient and the revision, so a double
+    click, a refresh mid-send and a retried request all compute the same value
+    and the database - not application timing - decides which one wins.
+    """
+
+    __tablename__ = "proposal_deliveries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+    proposal_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("proposals.id", ondelete="CASCADE"), index=True
+    )
+
+    channel: Mapped[str] = mapped_column(String(16), nullable=False, default="email")
+
+    #: Frozen at request time from the proposal's customer snapshot, not read
+    #: live. Editing the customer between requesting and retrying a send must
+    #: not silently redirect a message the operator already confirmed.
+    recipient: Mapped[str] = mapped_column(String(320), nullable=False)
+
+    status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+
+    #: `console` or `smtp`. Travels with the record so nothing downstream has to
+    #: re-read configuration to know whether this was a real send - which is
+    #: what keeps "recorded locally" distinguishable from "sent".
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    provider_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    idempotency_key: Mapped[str] = mapped_column(
+        String(64), unique=True, index=True, nullable=False
+    )
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+
+    #: A mapped code and a sanitised message - never a provider traceback. A
+    #: relay's own text can carry a hostname or part of a credential, and this
+    #: column is served to the client.
+    last_error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow
+    )
+
+
+class ActivityEvent(Base):
+    """Append-only project history. Never updated, never deleted in place.
+
+    This is what makes "what happened to this deal, and when" answerable
+    without reconstructing it from six other tables. It is deliberately *not* a
+    general event bus: there are no subscribers, nothing is dispatched, and the
+    only consumer is the timeline the operator reads.
+
+    Metadata is a strict per-event-type allow-list of scalars - see
+    `app/services/activity.py`. An audit trail that quietly accumulates whatever
+    a caller passed is how email bodies, provider responses and full recipient
+    addresses end up in a table nobody thinks of as personal data.
+    """
+
+    __tablename__ = "activity_events"
+    __table_args__ = (Index("ix_activity_project_time", "project_id", "occurred_at"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_uuid_str)
+
+    project_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("projects.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+    customer_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("customers.id", ondelete="SET NULL"), index=True, nullable=True
+    )
+    proposal_id: Mapped[str | None] = mapped_column(
+        String(36), ForeignKey("proposals.id", ondelete="CASCADE"), index=True, nullable=True
+    )
+
+    #: Intentionally *not* a foreign key.
+    #:
+    #: An audit row has to outlive what it describes. "An email was sent" stays
+    #: true after the delivery record it refers to is gone, and a SET NULL would
+    #: quietly erase the only link between the two. Nothing joins on this; it is
+    #: a breadcrumb for an operator reading the timeline.
+    delivery_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    event_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    #: "user" | "system" | "customer" - who caused it, not who is logged in
+    #: (there is no authentication). `customer` means the person holding the
+    #: public link, which is the only actor outside the operator's own session.
+    actor: Mapped[str] = mapped_column(String(32), nullable=False, default="system")
+
+    metadata_json: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+
+    occurred_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, index=True
+    )
 
 
 class ProposalView(Base):

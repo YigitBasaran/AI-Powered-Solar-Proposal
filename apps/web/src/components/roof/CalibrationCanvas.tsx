@@ -2,11 +2,26 @@
 
 import type Konva from "konva";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from "react-konva";
+import {
+  Circle,
+  Group,
+  Image as KonvaImage,
+  Layer,
+  Line,
+  Rect,
+  Stage,
+  Text,
+} from "react-konva";
 
 import { rasterTransform, stagePixelRatio } from "@/lib/raster";
 import type { MapConfig } from "@/types/api";
-import type { CalEdge, CalFacet, CalVertex, EdgeType, Mode } from "./calibrationTypes";
+import type {
+  CalEdge,
+  CalFacet,
+  CalVertex,
+  EdgeType,
+  Mode,
+} from "./calibrationTypes";
 import { EDGE_COLOUR } from "./calibrationTypes";
 
 /**
@@ -42,7 +57,13 @@ export function CalibrationCanvas({
   edgeType: EdgeType;
   selectedVertexIds: string[];
   selectedFacetId: string | null;
-  showLayers: { image: boolean; vertices: boolean; edges: boolean; facets: boolean; labels: boolean };
+  showLayers: {
+    image: boolean;
+    vertices: boolean;
+    edges: boolean;
+    facets: boolean;
+    labels: boolean;
+  };
   onAddVertex: (x: number, y: number) => void;
   onMoveVertex: (id: string, x: number, y: number) => void;
   onPickVertex: (id: string) => void;
@@ -65,7 +86,9 @@ export function CalibrationCanvas({
   useEffect(() => {
     const element = containerRef.current;
     if (!element) return;
-    const observer = new ResizeObserver(([entry]) => entry && setWidth(entry.contentRect.width));
+    const observer = new ResizeObserver(
+      ([entry]) => entry && setWidth(entry.contentRect.width),
+    );
     observer.observe(element);
     setWidth(element.clientWidth);
     return () => observer.disconnect();
@@ -86,7 +109,10 @@ export function CalibrationCanvas({
     [raster.sourceWidthPx, raster.sourceHeightPx, width, height],
   );
   const base = transform.scale;
-  const vertexById = useMemo(() => new Map(vertices.map((v) => [v.id, v])), [vertices]);
+  const vertexById = useMemo(
+    () => new Map(vertices.map((v) => [v.id, v])),
+    [vertices],
+  );
 
   const toStage = useCallback(
     (p: { x: number; y: number }) => transform.toScreen(p),
@@ -127,23 +153,30 @@ export function CalibrationCanvas({
   }, [vertices, base, width, height]);
 
   useEffect(() => {
-    (window as unknown as { __calibrationFit?: () => void }).__calibrationFit = fit;
+    (window as unknown as { __calibrationFit?: () => void }).__calibrationFit =
+      fit;
   }, [fit]);
 
-  const handleWheel = useCallback((event: Konva.KonvaEventObject<WheelEvent>) => {
-    event.evt.preventDefault();
-    const stage = event.target.getStage();
-    const pointer = stage?.getPointerPosition();
-    if (!pointer) return;
-    setView((current) => {
-      const next = Math.min(Math.max(current.scale * (event.evt.deltaY > 0 ? 0.9 : 1.1), 0.2), 20);
-      return {
-        scale: next,
-        x: pointer.x - ((pointer.x - current.x) / current.scale) * next,
-        y: pointer.y - ((pointer.y - current.y) / current.scale) * next,
-      };
-    });
-  }, []);
+  const handleWheel = useCallback(
+    (event: Konva.KonvaEventObject<WheelEvent>) => {
+      event.evt.preventDefault();
+      const stage = event.target.getStage();
+      const pointer = stage?.getPointerPosition();
+      if (!pointer) return;
+      setView((current) => {
+        const next = Math.min(
+          Math.max(current.scale * (event.evt.deltaY > 0 ? 0.9 : 1.1), 0.2),
+          20,
+        );
+        return {
+          scale: next,
+          x: pointer.x - ((pointer.x - current.x) / current.scale) * next,
+          y: pointer.y - ((pointer.y - current.y) / current.scale) * next,
+        };
+      });
+    },
+    [],
+  );
 
   return (
     <div
@@ -163,7 +196,9 @@ export function CalibrationCanvas({
         y={view.y}
         draggable={mode === "pan"}
         onWheel={handleWheel}
-        onDragEnd={(e) => setView((v) => ({ ...v, x: e.target.x(), y: e.target.y() }))}
+        onDragEnd={(e) =>
+          setView((v) => ({ ...v, x: e.target.x(), y: e.target.y() }))
+        }
         onMouseMove={(e) => {
           const stage = e.target.getStage();
           if (stage) onCursor(pointerSource(stage));
@@ -175,7 +210,11 @@ export function CalibrationCanvas({
           if (e.target === stage) {
             if (mode === "add") {
               const p = pointerSource(stage);
-              if (p) onAddVertex(Math.round(p.x * 100) / 100, Math.round(p.y * 100) / 100);
+              if (p)
+                onAddVertex(
+                  Math.round(p.x * 100) / 100,
+                  Math.round(p.y * 100) / 100,
+                );
             } else {
               onPickFacet(null);
             }
@@ -184,7 +223,8 @@ export function CalibrationCanvas({
         style={{
           background: "#0a1421",
           borderRadius: 10,
-          cursor: mode === "add" ? "crosshair" : mode === "pan" ? "grab" : "default",
+          cursor:
+            mode === "add" ? "crosshair" : mode === "pan" ? "grab" : "default",
         }}
       >
         <Layer listening={false}>
@@ -224,7 +264,9 @@ export function CalibrationCanvas({
                   key={facet.id}
                   points={points}
                   closed
-                  fill={active ? "rgba(42,120,214,0.34)" : "rgba(42,120,214,0.15)"}
+                  fill={
+                    active ? "rgba(42,120,214,0.34)" : "rgba(42,120,214,0.15)"
+                  }
                   stroke="rgba(255,255,255,0.5)"
                   strokeWidth={1 / view.scale}
                   onClick={() => onPickFacet(active ? null : facet.id)}
@@ -284,11 +326,14 @@ export function CalibrationCanvas({
                     onTap={() => onPickVertex(vertex.id)}
                     onMouseEnter={(e) => {
                       const c = e.target.getStage()?.container();
-                      if (c) c.style.cursor = mode === "select" ? "move" : "pointer";
+                      if (c)
+                        c.style.cursor = mode === "select" ? "move" : "pointer";
                     }}
                     onMouseLeave={(e) => {
                       const c = e.target.getStage()?.container();
-                      if (c) c.style.cursor = mode === "add" ? "crosshair" : "default";
+                      if (c)
+                        c.style.cursor =
+                          mode === "add" ? "crosshair" : "default";
                     }}
                   />
                   {showLayers.labels ? (

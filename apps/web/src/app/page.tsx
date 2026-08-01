@@ -1,7 +1,7 @@
 "use client";
 
 import type Konva from "konva";
-import { Check, Copy, ExternalLink, FileDown, Sun } from "lucide-react";
+import { Check, Copy, ExternalLink, FileDown } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ChatPanel, ProgressRail } from "@/components/chat/ChatPanel";
@@ -13,15 +13,22 @@ import {
   KpiRow,
   RoofSection,
 } from "@/components/proposal/AnalysisPanels";
+import { FxChip, useStatusChip } from "@/components/layout/StatusBand";
 import { RoofWorkspace } from "@/components/roof/RoofWorkspace";
-import { Button, Callout, Card, SourceBadge, Spinner, cn } from "@/components/ui/primitives";
+import {
+  Button,
+  Callout,
+  Card,
+  SectionTitle,
+  SourceBadge,
+  Spinner,
+  cn,
+} from "@/components/ui/primitives";
 import { ApiRequestError, api } from "@/lib/api";
-import { dataSourceLabel } from "@/lib/format";
 import type {
   Analysis,
   ChatMessage,
   FinalizeResponse,
-  HealthReady,
   MapConfig,
   ProgressStep,
   RoofModel,
@@ -40,6 +47,7 @@ const SYSTEM_SIZES = [
 
 export default function Home() {
   const [projectId, setProjectId] = useState<string | null>(null);
+  const [needsProject, setNeedsProject] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [progress, setProgress] = useState<ProgressStep[]>([]);
   const [currentStep, setCurrentStep] = useState<string>("location");
@@ -49,42 +57,78 @@ export default function Home() {
 
   const [roof, setRoof] = useState<RoofModel | null>(null);
   const [mapConfig, setMapConfig] = useState<MapConfig | null>(null);
-  const [health, setHealth] = useState<HealthReady | null>(null);
+  // Readiness is read by the shared status band now; the workspace keeps only
+  // what it renders itself.
   const [analysis, setAnalysis] = useState<Analysis | null>(null);
   const [analysisStatus, setAnalysisStatus] = useState<string>("pending");
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [proposal, setProposal] = useState<FinalizeResponse | null>(null);
+  /** The document issued before the current edit forked a revision. */
+  const [supersededProposal, setSupersededProposal] = useState<FinalizeResponse | null>(null);
   const [copied, setCopied] = useState(false);
 
   const stageRef = useRef<Konva.Stage | null>(null);
+  const captureRef = useRef<(() => Promise<string | null>) | null>(null);
 
-  // Boot: create a project and load the static roof/map configuration.
+  // Boot: open the project the URL names, or start a new one.
+  //
+  // `?project=<id>` is how every link from the customer and project screens
+  // arrives here. Without honouring it this effect created a *fresh* project on
+  // every visit, so clicking "continue in workspace" on a half-finished job
+  // silently discarded it and presented an empty chat — the work was still in
+  // the database, and nothing in the UI could reach it again.
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [created, roofModel, config, ready] = await Promise.all([
-          api.createProject(),
-          api.roofModel(),
-          api.mapConfig(),
-          api.ready(),
-        ]);
+        const requested = new URLSearchParams(window.location.search).get("project");
+
+        const [roofModel, config] = await Promise.all([api.roofModel(), api.mapConfig()]);
         if (cancelled) return;
-        setProjectId(created.projectId);
-        setProgress(created.progress);
-        setCurrentStep(created.currentStep);
-        setMessages([
-          {
-            role: "assistant",
-            content: created.assistantMessage,
-            step: created.currentStep,
-            parserSource: null,
-            createdAt: new Date().toISOString(),
-          },
-        ]);
         setRoof(roofModel);
         setMapConfig(config);
-        setHealth(ready);
+
+        if (requested) {
+          const existing = await api.getProject(requested);
+          if (cancelled) return;
+          setProjectId(existing.projectId);
+          setProgress(existing.progress);
+          setCurrentStep(existing.currentStep);
+          // The stored transcript, so the conversation resumes where it was
+          // rather than restarting with a greeting.
+          setMessages(existing.messages);
+          setAnalysis(existing.analysis);
+          setAnalysisStatus(existing.analysisStatus);
+          setAnalysisError(existing.analysisError?.message ?? null);
+
+          // Restore the issued proposal too, if there is one. Without this a
+          // reopened project offered "Create proposal" for a document it had
+          // already issued — the link and the PDF were simply missing from a
+          // project that had both.
+          if (existing.hasProposal) {
+            const { revisions } = await api.revisions(requested);
+            const mine = revisions.find((row) => row.projectId === requested);
+            if (!cancelled && mine?.shareToken && mine.proposalId) {
+              setProposal({
+                proposalId: mine.proposalId,
+                shareToken: mine.shareToken,
+                shareUrl: `${window.location.origin}/proposal/${mine.shareToken}`,
+                pdfUrl: api.pdfUrl(mine.shareToken),
+                capacityWarning: null,
+              });
+            }
+          }
+          return;
+        }
+
+        // Nothing is created here any more.
+        //
+        // Opening the workspace used to POST /projects on load, so every visit
+        // - including a stray refresh - left behind a project belonging to
+        // nobody, with no name, that showed up on the all-projects list and
+        // could never be emailed. A project is started deliberately, for a
+        // customer, from /projects/new.
+        if (!cancelled) setNeedsProject(true);
       } catch (caught) {
         if (!cancelled) {
           setError(
@@ -137,7 +181,7 @@ export default function Home() {
   /** Re-read the stored analysis after the server changed or cleared it. */
   const refreshAnalysis = useCallback(async (id: string) => {
     try {
-      const project = await api.project(id);
+      const project = await api.getProject(id);
       setAnalysis(project.analysis);
       setAnalysisStatus(project.analysisStatus);
       setAnalysisError(project.analysisError?.message ?? null);
@@ -182,7 +226,21 @@ export default function Home() {
         // A change to a finalised project forks a revision and the conversation
         // moves with it. Without this the next message would land on the parent,
         // which is immutable — the edit would appear to be silently ignored.
-        if (response.projectId !== projectId) setProjectId(response.projectId);
+        if (response.projectId !== projectId) {
+          setProjectId(response.projectId);
+
+          // And the issued proposal stops being *this* project's proposal.
+          //
+          // It was left in place, so "Open proposal" and "Download PDF" kept
+          // pointing at the document issued before the change — showing the old
+          // figures beside the new ones on screen and reading, correctly but
+          // uselessly, as though the edit had not taken. The old link is not
+          // broken and must not be: it is what the customer was sent. It is
+          // moved out of the way and named, and the revision has to be
+          // finalised to get one of its own.
+          setSupersededProposal(proposal);
+          setProposal(null);
+        }
 
         setAnalysisStatus(response.analysisStatus ?? analysisStatus);
 
@@ -207,7 +265,11 @@ export default function Home() {
         setPending(false);
       }
     },
-    [projectId, runAnalysis, refreshAnalysis, analysis, analysisStatus],
+    // `proposal` is listed because the fork branch reads it to move the issued
+    // document aside. Omitted, the callback closed over the value from when it
+    // was created - null on first render - so the supersession never fired and
+    // the stale link stayed on screen.
+    [projectId, runAnalysis, refreshAnalysis, analysis, analysisStatus, proposal],
   );
 
   const finalize = useCallback(async () => {
@@ -229,11 +291,16 @@ export default function Home() {
       }
       setProposal(result);
 
-      // Export the completed stage so the PDF shows the real satellite layout.
-      // The image is same-origin, so the canvas is not tainted.
-      const stage = stageRef.current;
-      if (stage) {
-        const dataUrl = stage.toDataURL({ pixelRatio: 2, mimeType: "image/png" });
+      // Export a *roof-framed* stage so the PDF shows the panels clearly.
+      //
+      // This used to export the operator's live view, so a proposal issued
+      // while zoomed out to check the neighbourhood shipped a picture in which
+      // the roof was a smudge - and one issued while panned elsewhere shipped
+      // a picture of somewhere else entirely. The capture re-frames on the
+      // roof, takes the shot, and puts the operator's view back.
+      const capture = captureRef.current;
+      const dataUrl = capture ? await capture() : null;
+      if (dataUrl) {
         const blob = await (await fetch(dataUrl)).blob();
         await api.uploadLayoutSnapshot(projectId, blob).catch(() => {
           // A missing snapshot must not block the proposal: the PDF falls back
@@ -254,50 +321,52 @@ export default function Home() {
     setTimeout(() => setCopied(false), 2000);
   }, [proposal]);
 
-  const llm = health?.checks?.llm;
+  // The FX chip describes *this* analysis's rate rather than the deployment's
+  // configuration, so it is published into the shared band by the page that
+  // has the figures.
+  useStatusChip(
+    analysis ? <FxChip retrievalSource={analysis.exchangeRate.retrievalSource} /> : null,
+  );
+
+  // Reached by opening the workspace with no project in the URL. Rather than
+  // manufacturing one, say what is missing and point at the place that starts
+  // a real project — for a real customer, with a name.
+  if (needsProject) {
+    return (
+      <main className="mx-auto flex max-w-2xl flex-col gap-4 p-4 sm:p-6">
+        <h1 className="text-lg font-semibold tracking-tight text-slate-ink">Workspace</h1>
+        <Card className="p-4">
+          <SectionTitle>No project open</SectionTitle>
+          <p className="mb-3 text-[12.5px] text-slate-body" data-testid="no-project-open">
+            The workspace builds a proposal for a specific project. Start one for a customer,
+            or reopen an existing project — every project is listed under its customer and on
+            the projects page.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              onClick={() => {
+                window.location.href = "/projects/new";
+              }}
+              testId="start-a-project"
+            >
+              Add New Project
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => {
+                window.location.href = "/projects";
+              }}
+            >
+              Open an existing project
+            </Button>
+          </div>
+        </Card>
+      </main>
+    );
+  }
 
   return (
     <div className="flex min-h-screen flex-col">
-      <header className="sticky top-0 z-20 border-b border-slate-line bg-navy-900 text-white">
-        <div className="mx-auto flex max-w-[1600px] flex-wrap items-center justify-between gap-3 px-4 py-2.5">
-          <div className="flex items-center gap-2">
-            <Sun className="size-5 text-solar-500" aria-hidden />
-            <span className="text-[15px] font-semibold tracking-tight">solarVis AI</span>
-            <span className="ml-2 hidden text-[12px] text-white/55 sm:inline">
-              AI-powered solar proposal flow
-            </span>
-          </div>
-          <div className="flex items-center gap-2 text-[11.5px]">
-            {llm ? (
-              <span
-                data-testid="status-parser"
-                data-provider={llm.provider}
-                className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5"
-              >
-                Parser: {llm.provider === "ollama" ? `Ollama · ${llm.model}` : "deterministic rules"}
-              </span>
-            ) : null}
-            {mapConfig ? (
-              <span
-                data-testid="status-imagery"
-                data-mode={mapConfig.isLive ? "live" : "stub"}
-                className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5"
-              >
-                Imagery: {mapConfig.isLive ? "live Google" : "test stub"}
-              </span>
-            ) : null}
-            {analysis ? (
-              <span
-                data-testid="status-fx"
-                data-source={analysis.exchangeRate.retrievalSource}
-                className="rounded-full border border-white/15 bg-white/5 px-2 py-0.5"
-              >
-                FX: {dataSourceLabel(analysis.exchangeRate.retrievalSource).label}
-              </span>
-            ) : null}
-          </div>
-        </div>
-      </header>
 
       <main className="mx-auto w-full max-w-[1600px] flex-1 px-4 py-4">
         {error ? (
@@ -374,6 +443,9 @@ export default function Home() {
               onStageReady={(stage) => {
                 stageRef.current = stage;
               }}
+              onCaptureReady={(capture) => {
+                captureRef.current = capture;
+              }}
             />
 
             {analysisStatus === "failed" ? (
@@ -426,6 +498,31 @@ export default function Home() {
                         >
                           {proposal.shareUrl}
                         </code>
+                      </span>
+                    ) : supersededProposal ? (
+                      // The figures on screen are a *draft* revision. Saying so
+                      // is the whole point: the previously issued document is
+                      // still live and still shows the old numbers, and until
+                      // this revision is finalised there is nothing newer to
+                      // send anyone.
+                      <span className="flex flex-col gap-1" data-testid="revision-pending">
+                        <span>
+                          <strong>These figures are not issued yet.</strong> Your change
+                          started a revision — create a proposal to give it its own link.
+                        </span>
+                        <span className="text-[11.5px] text-slate-muted">
+                          The proposal you already sent still shows the previous figures, and
+                          its link keeps working:{" "}
+                          <a
+                            href={`/proposal/${supersededProposal.shareToken}`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-navy-700 underline underline-offset-2"
+                            data-testid="superseded-link"
+                          >
+                            open the issued proposal
+                          </a>
+                        </span>
                       </span>
                     ) : (
                       "Create a shareable proposal with a permanent link and a PDF."

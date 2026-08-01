@@ -93,6 +93,9 @@ export type ProjectResponse = {
   revisionOfProjectId?: string | null;
   revisionProjectId?: string | null;
   hasProposal?: boolean;
+  name?: string | null;
+  /** Null for a project with no customer, including every legacy one. */
+  customer?: Customer | null;
 };
 
 export type MapConfig = {
@@ -134,12 +137,22 @@ export type RoofFacetSummary = {
   slopedAreaM2: number;
 };
 
+/** Something standing on the roof that no panel may be placed over. */
+export type RoofObstruction = {
+  id: string;
+  label: string;
+  kind: string;
+  facetId: string;
+  sourcePixelPolygon: Point[];
+};
+
 export type RoofModel = {
   id: string;
   pitchDeg: number;
   groundMetresPerSourcePixel: number;
   totalProjectedAreaM2: number;
   totalSlopedAreaM2: number;
+  totalObstructedAreaM2: number;
   sourceWidthPx: number;
   sourceHeightPx: number;
   facets: RoofFacetSummary[];
@@ -153,6 +166,7 @@ export type RoofModel = {
     eaveEdgeId: string;
     sourcePixelPolygon: Point[];
   }[];
+  obstructionGeometry: RoofObstruction[];
 };
 
 export type PanelShape = { id: string; sourcePixelPolygon: Point[] };
@@ -265,7 +279,178 @@ export type Proposal = Analysis & {
   capacityWarning: string | null;
   aiSummary: string | null;
   layoutSnapshotUrl: string | null;
-  views?: { viewCount: number; lastOpenedAt: string | null };
+  revisionNumber: number;
+  reference: string | null;
+  /**
+   * The display name only. The public payload is an allow-list, so an email
+   * address cannot appear here even if one is added to the stored snapshot.
+   */
+  customer: { displayName: string } | null;
+  views?: ProposalViews;
+};
+
+/**
+ * Page views, not email opens. There is no open tracking anywhere in this
+ * system, and the wording in the UI has to keep saying so.
+ */
+export type ProposalViews = {
+  viewCount: number;
+  firstOpenedAt: string | null;
+  lastOpenedAt: string | null;
+};
+
+export type Customer = {
+  customerId: string;
+  firstName: string;
+  lastName: string;
+  displayName: string;
+  email: string;
+  phone: string | null;
+  companyName: string | null;
+  address: string | null;
+  archivedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  /** Present on list rows so the operator can see who has work in flight. */
+  projectCount?: number;
+};
+
+/** One of a customer's projects, as their detail page lists it. */
+export type CustomerProject = {
+  projectId: string;
+  name: string | null;
+  currentStep: string;
+  analysisStatus: string;
+  isRevision: boolean;
+  revisionOfProjectId: string | null;
+  hasProposal: boolean;
+  proposalId: string | null;
+  shareToken: string | null;
+  reference: string | null;
+  revisionNumber: number | null;
+  systemSizeKwp: number | null;
+  finalisedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+/**
+ * A page of rows, with what a numbered pager needs to render itself.
+ *
+ * `total` and `totalPages` come from the server: a client that only knows
+ * "there might be more" cannot say "page 3 of 9", and one that counts by
+ * fetching every page has defeated the point of paging.
+ */
+export type Paged<T> = T & {
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+/** A row on the all-projects list. Its customer may be null. */
+export type ProjectSummary = {
+  projectId: string;
+  name: string | null;
+  currentStep: string;
+  analysisStatus: string;
+  isRevision: boolean;
+  customer: { customerId: string; displayName: string } | null;
+  hasProposal: boolean;
+  shareToken: string | null;
+  reference: string | null;
+  revisionNumber: number | null;
+  systemSizeKwp: number | null;
+  createdAt: string;
+};
+
+export type CustomerDetail = {
+  customer: Customer;
+  projects: CustomerProject[];
+  activity: ActivityEvent[];
+};
+
+export type CustomerInput = {
+  firstName: string;
+  lastName: string;
+  email: string;
+  phone?: string | null;
+  companyName?: string | null;
+  address?: string | null;
+  displayName?: string | null;
+};
+
+/** What would be sent. Rendered by the same code that sends it. */
+export type EmailPreview = {
+  /** Null when the proposal has no customer — a preview describes what would
+   *  happen, and "nothing, because there is nobody to send to" is an answer. */
+  to: string | null;
+  toMasked: string | null;
+  subject: string | null;
+  textBody: string | null;
+  htmlBody: string | null;
+  publicUrl: string;
+  revisionNumber: number;
+  reference: string | null;
+  from: string | null;
+  fromName: string;
+  replyTo: string | null;
+  provider: string;
+  /** False in console mode. The UI must not say "sent" when this is false. */
+  providerSends: boolean;
+  providerAvailable: boolean;
+  providerDetail: string | null;
+  includesPdf: boolean;
+};
+
+/**
+ * `sent` means the provider accepted the message - not that it arrived. There
+ * is deliberately no `delivered`, `bounced` or `opened`, because SMTP offers
+ * no way to know any of them.
+ */
+export type DeliveryStatus = "pending" | "sending" | "sent" | "failed";
+
+export type Delivery = {
+  deliveryId: string;
+  proposalId: string;
+  channel: string;
+  recipientMasked: string | null;
+  status: DeliveryStatus;
+  provider: string;
+  providerSends: boolean;
+  attemptCount: number;
+  errorCode: string | null;
+  errorMessage: string | null;
+  requestedAt: string;
+  lastAttemptAt: string | null;
+  sentAt: string | null;
+  failedAt: string | null;
+};
+
+export type ActivityEvent = {
+  eventId: string;
+  eventType: string;
+  actor: "user" | "system" | "customer";
+  projectId: string | null;
+  customerId: string | null;
+  proposalId: string | null;
+  deliveryId: string | null;
+  metadata: Record<string, string | number | boolean>;
+  occurredAt: string;
+};
+
+export type ProposalRevision = {
+  revisionNumber: number;
+  projectId: string;
+  isCurrent: boolean;
+  isSuperseded: boolean;
+  proposalId: string | null;
+  shareToken: string | null;
+  reference: string | null;
+  finalisedAt: string | null;
+  systemSizeKwp: number | null;
+  annualProductionKwh: number | null;
+  customer: { displayName: string } | null;
 };
 
 export type FinalizeResponse = {
@@ -283,6 +468,13 @@ export type HealthCheck = {
   dataProvider?: string;
   ready: boolean;
   detail?: string;
+  /**
+   * Email only: whether this provider actually transmits.
+   *
+   * Distinct from `ready`, and the distinction is the point — console mode is
+   * perfectly ready and sends nothing.
+   */
+  sends?: boolean;
 };
 
 export type HealthReady = {

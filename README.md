@@ -113,6 +113,56 @@ Sample PDF: [`sample-output/example-proposal.pdf`](sample-output/example-proposa
 
 ---
 
+## The customer-to-proposal journey
+
+Beyond the case brief's single-property flow, the app carries a proposal from a
+named customer to a link they have opened:
+
+```
+/customers  →  new customer  →  new project for them  →  [conversational analysis]
+            →  finalise: revision 1, with the customer frozen into the document
+            →  preview the exact email  →  confirm  →  send
+            →  they open the link  →  first viewed · last viewed · view count
+            →  edit  →  revision 2; revision 1 is untouched and still resolves
+```
+
+Three properties are worth stating because they are what the code is shaped around.
+
+**A revision is a forked project, not a new row in a versions table.** That is
+how "supersede rather than edit in place" is enforced: an issued proposal is
+never written to again, and `isSuperseded` is derived at read time from the
+chain rather than stamped onto the older document.
+
+**Sending is a separate act from issuing.** A failed send leaves a perfectly
+valid proposal and a working public link, which is exactly the fallback the UI
+offers. Confirmation is explicit and two-step: previewing, viewing the
+recipient, or retrying a read can never cause a send.
+
+**Nothing claims more than it knows.** `sent` means the provider accepted the
+message. Console mode reports *"recorded locally"*, never *"sent"*. The view
+count is of the proposal **page** — there is no email-open tracking anywhere,
+and the UI never uses the word. See
+[`known-limitations.md`](docs/known-limitations.md#customers-and-email-delivery).
+
+### Trying the email path for real
+
+`EMAIL_MODE=console` is the default and sends nothing. To watch a real message
+arrive without an external account, run the bundled Mailpit profile:
+
+```bash
+docker compose --profile mail up -d
+# then set, for the api service:
+#   EMAIL_MODE=smtp  SMTP_HOST=mailpit  SMTP_PORT=1025
+#   SMTP_USE_TLS=false  EMAIL_FROM=proposals@solarvis.test
+# and read the inbox at http://localhost:8025
+```
+
+`EMAIL_MODE=smtp` is **refused** when `APP_ENV` is `test`, `e2e` or
+`verification` — the settings fail to construct, so no automated run can send
+real mail even if handed a working relay.
+
+---
+
 ## Architecture
 
 ```
@@ -160,7 +210,7 @@ Every mode is surfaced in the UI, in the proposal snapshot, and in the PDF assum
 |---|---|---|
 | `FX_MODE` | `live` | Frankfurter with ECB as the explicit provider |
 | `LLM_PROVIDER` | `rules` | `ollama` · `rules` · `disabled` — the full flow works in all three |
-| `EMAIL_MODE` | `console` | Proposal-view notifications |
+| `EMAIL_MODE` | `console` | `console` renders and logs the message and sends **nothing**; `smtp` hands it to a relay |
 
 **PVGIS has no mode.** Every analysis makes a real HTTP call to `PVGIS_BASE_URL`,
 and an analysis that cannot make one *fails* — no captured payload, no synthetic
@@ -247,7 +297,7 @@ Integration tests run fully offline against a throwaway database: Maps, FX and t
 - No shading analysis, and no detection of chimneys, vents or other roof obstructions.
 - Geocoding is out of scope, and there is no geocoder to check an address against the calibrated property — so a location away from the case coordinate is refused with the case property offered instead, rather than silently accepted.
 - Imagery date is unknown and may predate changes to the property.
-- The roof calibration derives from a minimum-area rectangle fit; a human should confirm it against current imagery before any commercial use.
+- The roof calibration began as a minimum-area rectangle fit and was then corrected by hand against the raster, so the footprint is a general quadrilateral and the plan geometry is ~1.7° inconsistent with the single configured pitch. One obstruction — a 2.99 m² chimney — is modelled and excluded from placement; every other vent or skylight is not. A human should confirm all of it against current imagery before any commercial use.
 - 3D rendering was not attempted. The brief prioritises the 2D flow, and the chosen bonus is proposal-view tracking.
 - **Ollama is verified reachable but is not doing much of the work.** `qwen3.5:2b` was pulled and the `@live` tier passes against it. Measured on 2026-07-29, ten of eleven probe messages are settled deterministically in single-digit milliseconds and the model is consulted once, for the one phrasing no rule covers, taking 2–7 s. It classifies reliably and invents values occasionally — recorded in [`docs/local-ai.md`](docs/local-ai.md) rather than papered over. That is a property of a 2.3 B model, which is why the workflow is built to be correct on `LLM_PROVIDER=rules`.
 - **Revisions chain, they do not branch.** There is no way to hold two alternative drafts of the same finalised proposal side by side, and no UI for browsing the chain.

@@ -1,10 +1,24 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Circle, Group, Image as KonvaImage, Layer, Line, Rect, Stage, Text } from "react-konva";
+import {
+  Circle,
+  Group,
+  Image as KonvaImage,
+  Layer,
+  Line,
+  Rect,
+  Stage,
+  Text,
+} from "react-konva";
 import type Konva from "konva";
 
-import { rasterMatchesContract, rasterTransform, stagePixelRatio } from "@/lib/raster";
+import { frameSourcePoints } from "@/lib/framing";
+import {
+  rasterMatchesContract,
+  rasterTransform,
+  stagePixelRatio,
+} from "@/lib/raster";
 import type { Analysis, MapConfig, Point, RoofModel } from "@/types/api";
 
 /**
@@ -38,6 +52,11 @@ const FACET_FILL_ACTIVE = "rgba(42,120,214,0.3)";
 const FACET_STROKE = "rgba(255,255,255,0.55)";
 const PANEL_FILL = "#123a63";
 const PANEL_STROKE = "#8fc2f2";
+// Red, and not behind a layer toggle: an obstruction is the reason a stretch of
+// roof is empty. Hiding it would leave the layout looking like a mistake, and
+// hiding it during export would put an unexplained gap in the proposal.
+const OBSTRUCTION_FILL = "rgba(255,59,48,0.28)";
+const OBSTRUCTION_STROKE = "#ff3b30";
 
 function midpoint(a: Point, b: Point): Point {
   return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
@@ -51,6 +70,7 @@ export function RoofStage({
   selectedFacetId,
   onSelectFacet,
   onStageReady,
+  onCaptureReady,
   height = 520,
 }: {
   roof: RoofModel | null;
@@ -60,6 +80,8 @@ export function RoofStage({
   selectedFacetId: string | null;
   onSelectFacet?: (facetId: string | null) => void;
   onStageReady?: (stage: Konva.Stage | null) => void;
+  /** Hands the parent a function that exports a roof-framed PNG. */
+  onCaptureReady?: (capture: () => Promise<string | null>) => void;
   height?: number;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -67,6 +89,15 @@ export function RoofStage({
   const [width, setWidth] = useState(720);
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [view, setView] = useState({ scale: 1, x: 0, y: 0 });
+  /**
+   * True only while the proposal image is being taken.
+   *
+   * Edge measurements are useful on screen and actively harmful in the
+   * document: zoomed in for the export they are drawn large, and they sit on
+   * top of the panels they are measuring around — so the one thing the picture
+   * exists to show ends up underneath a dimension label.
+   */
+  const [capturing, setCapturing] = useState(false);
 
   // Both axes. `sourceHeightPx` used to be ignored and the width substituted
   // for it, so a non-square raster would stretch on one axis while the
@@ -101,10 +132,13 @@ export function RoofStage({
         sourceWidthPx: mapConfig.sourceWidthPx,
         sourceHeightPx: mapConfig.sourceHeightPx,
       });
-      setRasterError(check.ok ? null : (check.detail ?? "unexpected raster dimensions"));
+      setRasterError(
+        check.ok ? null : (check.detail ?? "unexpected raster dimensions"),
+      );
       setImage(img);
     };
-    img.onerror = () => setRasterError("The satellite image could not be loaded.");
+    img.onerror = () =>
+      setRasterError("The satellite image could not be loaded.");
     return () => {
       img.onload = null;
       img.onerror = null;
@@ -152,29 +186,79 @@ export function RoofStage({
     setView({ scale: 1, x: 0, y: 0 });
   }, []);
 
+  /**
+   * The view that centres the roof and zooms it to fill the frame.
+   *
+   * The bounding box is taken through `project()` — the same transform every
+   * drawn overlay uses — and **not** by multiplying source pixels by the
+   * display scale. Those two differ by the letterbox offset: a 1280×1280
+   * raster in a 700×520 stage is rendered 520 wide with `offsetX = 90`, and
+   * dropping that shifted the centre by 90 stage-pixels *before* the zoom
+   * multiplied it. At ~5.6× the roof left the frame entirely, which is why the
+   * exported proposal image showed bare imagery with no overlay on it: the
+   * panels were drawn correctly, just outside the picture.
+   */
+  const roofView = useCallback(
+    (padRatio: number, maxZoom: number) =>
+      frameSourcePoints({
+        points: roof?.facetGeometry.flatMap((f) => f.sourcePixelPolygon) ?? [],
+        transform,
+        viewport: { width, height: stageHeight },
+        padRatio,
+        maxZoom,
+      }),
+    [roof, transform, width, stageHeight],
+  );
+
   /** Centre the roof and zoom so it fills the frame comfortably. */
   const fitToRoof = useCallback(() => {
-    if (!roof || roof.facetGeometry.length === 0) return;
-    const points = roof.facetGeometry.flatMap((f) => f.sourcePixelPolygon);
-    const xs = points.map((p) => p.x * displayScale);
-    const ys = points.map((p) => p.y * displayScale);
-    const minX = Math.min(...xs);
-    const maxX = Math.max(...xs);
-    const minY = Math.min(...ys);
-    const maxY = Math.max(...ys);
+    const next = roofView(0.08, 6);
+    if (next) setView(next);
+  }, [roofView]);
 
-    const pad = 40;
-    const scale = Math.min(
-      (width - pad * 2) / Math.max(maxX - minX, 1),
-      (stageHeight - pad * 2) / Math.max(maxY - minY, 1),
-    );
-    const clamped = Math.min(Math.max(scale, 0.4), 6);
-    setView({
-      scale: clamped,
-      x: width / 2 - ((minX + maxX) / 2) * clamped,
-      y: stageHeight / 2 - ((minY + maxY) / 2) * clamped,
-    });
-  }, [roof, displayScale, width, stageHeight]);
+  /**
+   * Export a proposal-grade image of the roof, whatever is currently on screen.
+   *
+   * The proposal used to receive `stage.toDataURL()` of the operator's live
+   * view — so if they had zoomed out to check the neighbourhood, or panned to
+   * a different building, that is what the customer received: a picture in
+   * which the roof was a smudge, or absent. The framing of the document must
+   * not depend on where somebody happened to leave the canvas.
+   *
+   * So the view is moved to the roof, one frame is allowed for Konva to
+   * redraw, the image is taken, and the operator's own view is put back. The
+   * restore matters: exporting is a side effect of finalising, and finalising
+   * should not silently rearrange the screen someone is working on.
+   */
+  const captureRoofImage = useCallback(async (): Promise<string | null> => {
+    const stage = stageRef.current;
+    if (!stage || !roof || roof.facetGeometry.length === 0) return null;
+
+    // Tighter than the on-screen button, and zoomed further. The screen wants
+    // a little context around the roof; the document wants the panels legible,
+    // and nothing else in the frame is doing any work.
+    const framed = roofView(0.03, 12);
+    if (!framed) return null;
+
+    const previous = view;
+    setCapturing(true);
+    setView(framed);
+
+    // Two frames: one for React to commit the new view, one for Konva to draw
+    // it. A single frame exports the *old* transform often enough to matter.
+    await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    try {
+      return stage.toDataURL({ pixelRatio: 2, mimeType: "image/png" });
+    } finally {
+      setCapturing(false);
+      setView(previous);
+    }
+  }, [roof, view, roofView]);
+
+  useEffect(() => {
+    onCaptureReady?.(captureRoofImage);
+  }, [onCaptureReady, captureRoofImage]);
 
   // Deliberately fit to the *image*, not to the roof polygon.
   //
@@ -187,34 +271,48 @@ export function RoofStage({
     if (image) fitToImage();
   }, [image, fitToImage]);
 
-  const handleWheel = useCallback((event: Konva.KonvaEventObject<WheelEvent>) => {
-    event.evt.preventDefault();
-    const stage = event.target.getStage();
-    if (!stage) return;
-    const pointer = stage.getPointerPosition();
-    if (!pointer) return;
+  const handleWheel = useCallback(
+    (event: Konva.KonvaEventObject<WheelEvent>) => {
+      event.evt.preventDefault();
+      const stage = event.target.getStage();
+      if (!stage) return;
+      const pointer = stage.getPointerPosition();
+      if (!pointer) return;
 
-    setView((current) => {
-      const next = Math.min(
-        Math.max(current.scale * (event.evt.deltaY > 0 ? 0.9 : 1.1), 0.3),
-        10,
-      );
-      const worldX = (pointer.x - current.x) / current.scale;
-      const worldY = (pointer.y - current.y) / current.scale;
-      return { scale: next, x: pointer.x - worldX * next, y: pointer.y - worldY * next };
-    });
-  }, []);
+      setView((current) => {
+        const next = Math.min(
+          Math.max(current.scale * (event.evt.deltaY > 0 ? 0.9 : 1.1), 0.3),
+          10,
+        );
+        const worldX = (pointer.x - current.x) / current.scale;
+        const worldY = (pointer.y - current.y) / current.scale;
+        return {
+          scale: next,
+          x: pointer.x - worldX * next,
+          y: pointer.y - worldY * next,
+        };
+      });
+    },
+    [],
+  );
 
   const scaleBar = useMemo(() => {
     if (!metresPerPixel) return null;
     const targetPx = 90;
-    const metres = targetPx / (displayScale * view.scale) * metresPerPixel;
+    const metres = (targetPx / (displayScale * view.scale)) * metresPerPixel;
     const nice = [1, 2, 5, 10, 20, 50].find((n) => n >= metres) ?? 100;
-    return { metres: nice, px: (nice / metresPerPixel) * displayScale * view.scale };
+    return {
+      metres: nice,
+      px: (nice / metresPerPixel) * displayScale * view.scale,
+    };
   }, [metresPerPixel, displayScale, view.scale]);
 
   return (
-    <div ref={containerRef} className="relative w-full" style={{ height: stageHeight }}>
+    <div
+      ref={containerRef}
+      className="relative w-full"
+      style={{ height: stageHeight }}
+    >
       {rasterError ? (
         <div
           data-testid="raster-mismatch"
@@ -234,7 +332,9 @@ export function RoofStage({
         y={view.y}
         draggable
         onWheel={handleWheel}
-        onDragEnd={(e) => setView((v) => ({ ...v, x: e.target.x(), y: e.target.y() }))}
+        onDragEnd={(e) =>
+          setView((v) => ({ ...v, x: e.target.x(), y: e.target.y() }))
+        }
         onClick={(e) => {
           if (e.target === e.target.getStage()) onSelectFacet?.(null);
         }}
@@ -316,6 +416,31 @@ export function RoofStage({
           </Layer>
         ) : null}
 
+        {roof && roof.obstructionGeometry.length > 0 ? (
+          <Layer listening={false}>
+            {roof.obstructionGeometry.map((obstruction) => {
+              const flat = obstruction.sourcePixelPolygon.flatMap((p) => {
+                const q = project(p);
+                return [q.x, q.y];
+              });
+              return (
+                <Line
+                  key={obstruction.id}
+                  points={flat}
+                  closed
+                  fill={OBSTRUCTION_FILL}
+                  stroke={OBSTRUCTION_STROKE}
+                  strokeWidth={2 / view.scale}
+                  lineJoin="round"
+                  shadowColor="#000"
+                  shadowBlur={3 / view.scale}
+                  shadowOpacity={0.5}
+                />
+              );
+            })}
+          </Layer>
+        ) : null}
+
         {toggles.edges && roof ? (
           <Layer listening={false}>
             {roof.edgeGeometry.map((edge) => {
@@ -355,7 +480,7 @@ export function RoofStage({
           </Layer>
         ) : null}
 
-        {toggles.measurements && roof ? (
+        {toggles.measurements && roof && !capturing ? (
           <Layer listening={false}>
             {roof.edgeGeometry.map((edge) => {
               const a = vertices.get(edge.startVertexId);
@@ -368,7 +493,11 @@ export function RoofStage({
               const boxWidth = label.length * fontSize * 0.58 + padding * 2;
               const boxHeight = fontSize + padding * 2;
               return (
-                <Group key={`m-${edge.id}`} x={mid.x - boxWidth / 2} y={mid.y - boxHeight / 2}>
+                <Group
+                  key={`m-${edge.id}`}
+                  x={mid.x - boxWidth / 2}
+                  y={mid.y - boxHeight / 2}
+                >
                   <Rect
                     width={boxWidth}
                     height={boxHeight}
@@ -420,6 +549,9 @@ export function RoofStage({
         <LegendSwatch colour={EDGE_STYLE.eave.stroke} label="Eave" />
         <LegendSwatch colour={EDGE_STYLE.hip.stroke} label="Hip" />
         <LegendSwatch colour={EDGE_STYLE.ridge.stroke} label="Ridge" />
+        {roof && roof.obstructionGeometry.length > 0 ? (
+          <LegendSwatch colour={OBSTRUCTION_STROKE} label="Obstruction" />
+        ) : null}
       </div>
 
       <button

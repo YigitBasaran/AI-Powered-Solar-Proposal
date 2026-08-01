@@ -137,8 +137,10 @@ test.describe("@p0 proposal creation and sharing", () => {
     // Whatever writes the prose, the numbers in it are the ones the backend
     // calculated. A figure that appears nowhere in the analysis would mean the
     // summary invented it.
-    expect(summary).toContain("15 panels");
-    expect(summary).toContain("9,502 kWh");
+    expect(summary).toContain(`${EXPECTED["6"].actualPanelCount} panels`);
+    expect(summary).toContain(
+      `${Math.round(EXPECTED["6"].annualProductionKwh).toLocaleString("en-US")} kWh`,
+    );
     expect(summary).toContain("0.87897");
     expect(summary).toContain("8,789.70");
     expect(summary).not.toMatch(/\b1\.0+\b\s*(exchange|rate)/i);

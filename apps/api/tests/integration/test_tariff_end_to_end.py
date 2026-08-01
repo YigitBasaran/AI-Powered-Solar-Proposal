@@ -253,6 +253,34 @@ def test_a_later_tariff_change_does_not_alter_an_issued_proposal(client) -> None
     assert float(after["financial"]["electricityPriceEurPerKwh"]) == pytest.approx(0.31)
 
 
+def test_a_revision_keeps_the_customers_tariff(client) -> None:
+    """A forked revision must not silently re-price at the case default.
+
+    The tariff belongs to the customer, not to the project row it happens to sit
+    on. A revision that dropped it would recompute every financial figure at the
+    configured case rate - and produce a perfectly plausible payback, quoted at a
+    price the customer does not pay, in a document that looks exactly like the
+    one they already approved.
+
+    The failure is invisible from the revision itself: nothing is missing, no
+    status is wrong, and the only evidence is a number that changed for a reason
+    nobody asked for.
+    """
+    project_id = _analysed(client, tariff="My tariff is actually 0.31 EUR/kWh")
+    assert client.post(f"/api/v1/projects/{project_id}/finalize").status_code == 200
+
+    revision_id = _say(client, project_id, "actually make it the largest option")["projectId"]
+    assert revision_id != project_id, "the change must have forked a revision"
+
+    revision = _project(client, revision_id)
+    assert revision["electricityTariffEurPerKwh"] == pytest.approx(0.31), (
+        "the revision fell back to the configured case rate"
+    )
+    assert float(revision["analysis"]["financial"]["electricityPriceEurPerKwh"]) == pytest.approx(
+        0.31
+    ), "the recomputed figures were priced at the wrong tariff"
+
+
 def test_the_pdf_of_an_issued_proposal_is_unchanged_by_a_later_tariff(client) -> None:
     project_id = _analysed(client, tariff="My tariff is actually 0.31 EUR/kWh")
     assert client.post(f"/api/v1/projects/{project_id}/finalize").status_code == 200

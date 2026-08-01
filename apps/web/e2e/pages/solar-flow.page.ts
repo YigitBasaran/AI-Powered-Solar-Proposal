@@ -42,10 +42,29 @@ export class SolarFlowPage {
     this.capacityWarning = page.getByTestId("capacity-warning");
   }
 
+  /**
+   * Open the workspace on a project of its own.
+   *
+   * The project is created first and opened by id, because the workspace no
+   * longer manufactures one on load. It used to, and every visit — including a
+   * stray refresh — left behind a project belonging to nobody, with no name,
+   * that appeared on the all-projects list and could never be emailed.
+   *
+   * The API is used rather than the `/projects/new` screen deliberately: these
+   * specs are about the *workspace*, and driving three unrelated screens to
+   * reach it would make them fail for reasons that have nothing to do with
+   * what they assert.
+   */
   async open(): Promise<void> {
-    await this.page.goto("/");
-    // The session is created by the boot effect; the chat input is only usable
-    // once the project exists, so this is the real "ready" signal.
+    const created = await this.page.request.post("/api/v1/projects");
+    if (!created.ok()) {
+      throw new Error(`could not start a project: ${created.status()}`);
+    }
+    const { projectId } = (await created.json()) as { projectId: string };
+
+    await this.page.goto(`/?project=${projectId}`);
+    // The chat input is only usable once the project has loaded, so this is
+    // the real "ready" signal.
     await expect(this.chatInput).toBeEnabled({ timeout: 30_000 });
     await expect(this.assistantMessages.first()).toBeVisible();
   }

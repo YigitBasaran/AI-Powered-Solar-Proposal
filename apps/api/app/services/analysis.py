@@ -295,6 +295,11 @@ def serialise_analysis(result: AnalysisResult) -> dict[str, object]:
                 {
                     "facetId": fl.facet_id,
                     "orientation": fl.orientation.value,
+                    # How far this facet's array is turned from its eave. The
+                    # panel polygons already carry the result, so this is for
+                    # reading rather than for drawing - but a proposal that
+                    # shows a skewed array should be able to say why.
+                    "arrayRotationDeg": fl.rotation_deg,
                     "panelCount": fl.panel_count,
                     "panels": [
                         {

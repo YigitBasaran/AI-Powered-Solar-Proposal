@@ -117,9 +117,7 @@ def test_an_obstruction_declared_on_the_wrong_facet_is_refused(
     assert caught.value.details["obstructionId"] == "obst_chimney_0"
 
 
-def test_a_calibration_without_obstructions_still_loads(
-    calibration, tmp_path, settings
-) -> None:
+def test_a_calibration_without_obstructions_still_loads(calibration, tmp_path, settings) -> None:
     """Backward compatibility: the key is optional."""
     del calibration["obstructions"]
     model = _model_from(calibration, tmp_path, settings)
@@ -185,9 +183,7 @@ def test_the_largest_system_becomes_a_shortfall_and_says_so(roof, settings) -> N
     assert "8.4" in layout.capacity_warning
 
 
-def test_a_panel_over_the_chimney_is_rejected_by_the_post_condition(
-    roof, settings
-) -> None:
+def test_a_panel_over_the_chimney_is_rejected_by_the_post_condition(roof, settings) -> None:
     """Proves the guard fires, rather than trusting that it would.
 
     A panel is moved onto the chimney by hand and `assert_layout_valid` must

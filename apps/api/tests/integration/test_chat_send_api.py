@@ -194,9 +194,7 @@ def test_sending_before_finalisation_is_refused(client, outbox) -> None:
     assert outbox.outbox == []
 
 
-def test_sending_a_proposal_with_no_customer_is_refused_with_a_way_forward(
-    client, outbox
-) -> None:
+def test_sending_a_proposal_with_no_customer_is_refused_with_a_way_forward(client, outbox) -> None:
     project = finalised(client, with_customer=False)
     reply = say(client, project["projectId"], "send the proposal")
 
@@ -210,9 +208,7 @@ def test_sending_a_proposal_with_no_customer_is_refused_with_a_way_forward(
 # ---------------------------------------------------------------------------
 
 
-def test_a_message_naming_a_different_recipient_cannot_redirect_the_send(
-    client, outbox
-) -> None:
+def test_a_message_naming_a_different_recipient_cannot_redirect_the_send(client, outbox) -> None:
     """The address comes from the frozen snapshot, never from the message.
 
     Nothing in the extraction types can carry an email address, so no phrasing

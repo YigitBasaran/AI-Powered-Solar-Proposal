@@ -194,9 +194,7 @@ async def test_disagreeing_radiation_databases_fail_the_whole_analysis(
     )
 
     with pytest.raises(PvgisInconsistentProvenanceError) as caught:
-        await run_analysis(
-            monthly_consumption_kwh=1150.0, system_size_kwp=6.0, settings=settings
-        )
+        await run_analysis(monthly_consumption_kwh=1150.0, system_size_kwp=6.0, settings=settings)
 
     assert caught.value.code == "PVGIS_INCONSISTENT_PROVENANCE"
     detail = caught.value.details["radiationDatabases"]

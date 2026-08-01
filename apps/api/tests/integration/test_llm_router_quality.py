@@ -88,11 +88,11 @@ async def test_the_model_produces_valid_structured_output_every_time() -> None:
 
 
 async def test_the_model_classifies_well_enough_to_be_worth_consulting() -> None:
-    results = [( text, (await _classify(text))[0].kind.value, allowed) for text, allowed in CASES]
+    results = [(text, (await _classify(text))[0].kind.value, allowed) for text, allowed in CASES]
     correct = [t for t, got, allowed in results if got in allowed]
 
-    assert len(correct) >= len(CASES) * 0.7, (
-        "accuracy below 70%: " + "; ".join(f"{t!r}->{g}" for t, g, a in results if g not in a)
+    assert len(correct) >= len(CASES) * 0.7, "accuracy below 70%: " + "; ".join(
+        f"{t!r}->{g}" for t, g, a in results if g not in a
     )
 
 

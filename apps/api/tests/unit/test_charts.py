@@ -66,10 +66,7 @@ def test_a_flat_month_does_not_break_the_scale() -> None:
 
 
 def test_the_cash_flow_chart_still_renders() -> None:
-    flow = [
-        {"year": year, "cumulativeCashFlowEur": -10000 + year * 2400}
-        for year in range(21)
-    ]
+    flow = [{"year": year, "cumulativeCashFlowEur": -10000 + year * 2400} for year in range(21)]
     svg = cash_flow_chart(flow, payback_years=4.2)
     assert "<svg" in svg
     assert "nan" not in svg.lower()

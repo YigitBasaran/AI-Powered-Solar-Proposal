@@ -30,7 +30,10 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "respx>=0.21",
-    "ruff>=0.8",
+    # Upper bound because CI gates on `ruff format --check`, and a formatter's
+    # output is allowed to change between minor releases. Unpinned, a green
+    # build could turn red on a day nobody touched the code.
+    "ruff>=0.16,<0.17",
     "mypy>=1.13",
     "types-requests",
 ]

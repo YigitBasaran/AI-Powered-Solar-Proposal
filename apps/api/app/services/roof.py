@@ -135,9 +135,7 @@ def assert_calibration_matches(data: dict[str, Any], cfg: Any) -> None:
     }
     raise RoofCalibrationMismatchError(
         "The roof calibration was traced against a different imagery configuration: "
-        + ", ".join(
-            f"{f} {v['calibration']!r} -> {v['configured']!r}" for f, v in diverged.items()
-        )
+        + ", ".join(f"{f} {v['calibration']!r} -> {v['configured']!r}" for f, v in diverged.items())
         + ". Re-trace the roof, or restore the configuration it was traced against.",
         details={
             "diverged": diverged,
@@ -247,9 +245,7 @@ def build_roof_model(
     obstruction_polygons: dict[str, tuple[list[Point2D], list[Point2D], float]] = {}
     obstructed_by_facet: dict[str, float] = {}
     for o in raw_obstructions:
-        pixel_poly = [
-            Point2D(x=float(p["x"]), y=float(p["y"])) for p in o["source_pixel_polygon"]
-        ]
+        pixel_poly = [Point2D(x=float(p["x"]), y=float(p["y"])) for p in o["source_pixel_polygon"]]
         metric_poly = [
             source_pixel_to_metric(
                 p, source_width_px=src_w, source_height_px=src_h, ground_m_per_source_px=m_per_px
@@ -312,11 +308,7 @@ def build_roof_model(
         # panel across a chimney. Every facet here is convex, so "all vertices
         # inside" is equivalent to "the polygon is inside" and this is a proof,
         # not a heuristic.
-        outside = [
-            p
-            for p in metric_poly
-            if not point_in_polygon(p, host.projected_metric_polygon)
-        ]
+        outside = [p for p in metric_poly if not point_in_polygon(p, host.projected_metric_polygon)]
         if outside:
             raise RoofCalibrationMismatchError(
                 f"Obstruction {o['id']!r} is declared on facet {o['facet_id']!r} but "

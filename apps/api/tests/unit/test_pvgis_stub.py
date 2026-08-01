@@ -204,9 +204,7 @@ def test_flaky_fails_twice_then_succeeds(stub_url) -> None:
     httpx.post(f"{base_url}/__stub/reset", timeout=10.0)
     path = "/__fault/flaky3/api/v5_3/PVcalc"
 
-    codes = [
-        _get(base_url, CASE_ASPECTS["facet_w"][0], path=path).status_code for _ in range(3)
-    ]
+    codes = [_get(base_url, CASE_ASPECTS["facet_w"][0], path=path).status_code for _ in range(3)]
     assert codes == [503, 503, 200]
 
 

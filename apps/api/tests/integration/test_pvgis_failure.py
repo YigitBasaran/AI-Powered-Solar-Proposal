@@ -155,8 +155,6 @@ async def test_one_failed_facet_fails_the_whole_analysis(pvgis_stub, offline_env
     )
 
     with pytest.raises(PvgisUnavailableError) as caught:
-        await run_analysis(
-            monthly_consumption_kwh=1150.0, system_size_kwp=6.0, settings=settings
-        )
+        await run_analysis(monthly_consumption_kwh=1150.0, system_size_kwp=6.0, settings=settings)
 
     assert "facet_e" in str(caught.value.details or caught.value.message)

@@ -404,9 +404,7 @@ class ProposalDelivery(Base):
     last_error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow)
-    last_attempt_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

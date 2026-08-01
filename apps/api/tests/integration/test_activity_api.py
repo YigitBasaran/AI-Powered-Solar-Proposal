@@ -138,9 +138,7 @@ def test_assigning_a_customer_is_recorded_with_the_display_name_only(client) -> 
     )
 
     assigned = next(
-        e
-        for e in _timeline(client, project_id)
-        if e["eventType"] == "project.customer_assigned"
+        e for e in _timeline(client, project_id) if e["eventType"] == "project.customer_assigned"
     )
     assert assigned["metadata"]["displayName"] == "Anna Schmidt"
     assert assigned["metadata"]["forkedRevision"] is False

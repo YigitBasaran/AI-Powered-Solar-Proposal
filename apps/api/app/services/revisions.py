@@ -61,9 +61,7 @@ CARRIED_FORWARD = (
 
 async def find_revision(session: AsyncSession, parent: Project) -> Project | None:
     return (
-        await session.execute(
-            select(Project).where(Project.revision_of_project_id == parent.id)
-        )
+        await session.execute(select(Project).where(Project.revision_of_project_id == parent.id))
     ).scalar_one_or_none()
 
 

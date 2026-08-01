@@ -107,6 +107,7 @@ def _is_send_request(text: str) -> bool:
     """
     return bool(_SEND_VERB.search(text) and _SEND_OBJECT.search(text))
 
+
 #: A correction to something already given.
 _CHANGE = re.compile(
     r"\b(actually|instead|correction|scratch that|i meant|i made a mistake|"

@@ -194,9 +194,7 @@ async def test_a_model_supplied_out_of_range_coordinate_is_discarded(
     )
     # "???" so the rules parser genuinely cannot answer and the model is
     # reached - a written place name is now parsed without one.
-    parsed, _ = await parse_user_message(
-        "???", step=ProjectStep.LOCATION, settings=ollama_settings
-    )
+    parsed, _ = await parse_user_message("???", step=ProjectStep.LOCATION, settings=ollama_settings)
     assert parsed.intent is ChatIntent.UNKNOWN
 
 

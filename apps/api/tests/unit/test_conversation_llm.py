@@ -182,7 +182,7 @@ async def test_a_size_outside_the_whitelist_never_becomes_an_action(offline_env)
 
 
 async def test_a_value_claimed_but_not_named_is_reported_as_domain_rejected(offline_env) -> None:
-    """"They gave a value" plus no value is not a usable answer.
+    """ "They gave a value" plus no value is not a usable answer.
 
     Passing it on would produce a refusal worded as though a figure had been
     read, which is both confusing and untrue.

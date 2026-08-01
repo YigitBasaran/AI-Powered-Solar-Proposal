@@ -135,9 +135,7 @@ async def test_an_expired_claim_can_be_reclaimed(offline_env) -> None:
         await session.commit()
         project_id = project.id
 
-        claim = await claim_analysis(
-            session, project, status="running", settings=get_settings()
-        )
+        claim = await claim_analysis(session, project, status="running", settings=get_settings())
         assert claim.run_id != "a-run-that-died"
 
         stored = (

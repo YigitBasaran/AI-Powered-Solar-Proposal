@@ -15,12 +15,16 @@ from app.services.conversation.normalise import Normalised
 from app.services.conversation.numbers import NUMBER_WORD_TOKENS
 
 # Politeness and discourse markers that can precede a real question.
-FILLERS = r"(?:ok|okay|so|and|but|well|hey|hi|hello|please|sorry|actually|thanks|thank you|" \
-          r"just|quick|question|um|erm)"
+FILLERS = (
+    r"(?:ok|okay|so|and|but|well|hey|hi|hello|please|sorry|actually|thanks|thank you|"
+    r"just|quick|question|um|erm)"
+)
 
 INTERROGATIVE = r"(?:what|why|how|when|where|which|who|whose|whom)"
-AUXILIARY = r"(?:can|could|do|does|did|is|are|was|were|should|would|will|shall|may|might|" \
-            r"am|have|has|cannot)"
+AUXILIARY = (
+    r"(?:can|could|do|does|did|is|are|was|were|should|would|will|shall|may|might|"
+    r"am|have|has|cannot)"
+)
 IMPERATIVE_ASK = r"(?:explain|tell|show|help|define|clarify|describe)"
 
 _LEADING_FILLERS = re.compile(rf"^(?:{FILLERS}[\s,]+)+")
@@ -56,8 +60,27 @@ _Q3 = re.compile(
 #: Tokens that do not make a `?` into a question. "1150?" and "6 kWp?" are
 #: someone checking a value, not asking about the world.
 _UNIT_TOKENS = frozenset(
-    {"kwh", "kw", "kwp", "wp", "mwh", "eur", "euro", "euros", "usd", "dollar", "dollars",
-     "m2", "sqm", "panels", "panel", "yes", "no", "ok", "okay"}
+    {
+        "kwh",
+        "kw",
+        "kwp",
+        "wp",
+        "mwh",
+        "eur",
+        "euro",
+        "euros",
+        "usd",
+        "dollar",
+        "dollars",
+        "m2",
+        "sqm",
+        "panels",
+        "panel",
+        "yes",
+        "no",
+        "ok",
+        "okay",
+    }
 )
 
 _WORD = re.compile(r"[a-z]+")
@@ -132,46 +155,86 @@ def question_kind(message: Normalised) -> ActionKind:
 #: question rather than an unusable figure. It counts only when it is clearly
 #: talking about a rate or a period.
 _TOPIC_PATTERNS: tuple[tuple[Topic, re.Pattern[str]], ...] = (
-    (Topic.PRIVACY, re.compile(
-        r"\b(privacy|gdpr|my data|personal data|stored|storing|store my|delete|who sees|"
-        r"share my|third part)\b")),
-    (Topic.LOCATION, re.compile(
-        r"\b(location|address|coordinate|coordinates|latitude|longitude|lat|lon|geocod|"
-        r"cape town|where is (?:the|this|my)|which (?:house|property|building))\b")),
-    (Topic.PROPOSAL, re.compile(
-        r"\b(proposal|pdf|share link|shareable|download|report|document|finalis|finaliz)\b")),
-    (Topic.FX, re.compile(
-        r"\b(exchange rate|usd|eur\b|euro|currency|conversion|convert|ecb|frankfurter|"
-        r"dollar)\b")),
+    (
+        Topic.PRIVACY,
+        re.compile(
+            r"\b(privacy|gdpr|my data|personal data|stored|storing|store my|delete|who sees|"
+            r"share my|third part)\b"
+        ),
+    ),
+    (
+        Topic.LOCATION,
+        re.compile(
+            r"\b(location|address|coordinate|coordinates|latitude|longitude|lat|lon|geocod|"
+            r"cape town|where is (?:the|this|my)|which (?:house|property|building))\b"
+        ),
+    ),
+    (
+        Topic.PROPOSAL,
+        re.compile(
+            r"\b(proposal|pdf|share link|shareable|download|report|document|finalis|finaliz)\b"
+        ),
+    ),
+    (
+        Topic.FX,
+        re.compile(
+            r"\b(exchange rate|usd|eur\b|euro|currency|conversion|convert|ecb|frankfurter|"
+            r"dollar)\b"
+        ),
+    ),
     # `save` as a verb, not just the noun: "what will I save?" is the most
     # natural way to ask about the annual saving and matched nothing before.
     # PRIVACY is checked first, so "save my data" is still a privacy question.
-    (Topic.FINANCE, re.compile(
-        r"\b(payback|save|saves|saved|saving|savings|cost|costs|capex|price|tariff|roi|"
-        r"return|cash flow|net benefit|money|invoice|bill total)\b")),
-    (Topic.YIELD, re.compile(
-        r"\b(production|produce|generat|yield|output|pvgis|irradiat|shading|shade|"
-        r"cloudy|weather|seasonal|kwh (?:a|per) (?:year|month)|per kwh)\b")),
+    (
+        Topic.FINANCE,
+        re.compile(
+            r"\b(payback|save|saves|saved|saving|savings|cost|costs|capex|price|tariff|roi|"
+            r"return|cash flow|net benefit|money|invoice|bill total)\b"
+        ),
+    ),
+    (
+        Topic.YIELD,
+        re.compile(
+            r"\b(production|produce|generat|yield|output|pvgis|irradiat|shading|shade|"
+            r"cloudy|weather|seasonal|kwh (?:a|per) (?:year|month)|per kwh)\b"
+        ),
+    ),
     # Narrow on `panels` deliberately: a broad match here would take "how many
     # panels does the 9.6 kWp option have?", which is a question about the
     # system options, not about where they ended up.
-    (Topic.LAYOUT, re.compile(
-        r"\b(layout|placement|placed|place|fits?|fitting|spacing|gap|setback|portrait|"
-        r"landscape|arrangement|overlap)\b"
-        r"|\b(?:no|any|zero) panels\b|\bpanels? (?:on|across|per)\b"
-        r"|\b(?:one|each|which|that) (?:side|facet)\b")),
-    (Topic.ROOF, re.compile(
-        r"\b(roof|facet|facets|pitch|azimuth|ridge|hip|hips|eave|eaves|edge|edges|tilt|"
-        r"orientation|slope|square met|area|measurement|satellite|imagery)\b")),
+    (
+        Topic.LAYOUT,
+        re.compile(
+            r"\b(layout|placement|placed|place|fits?|fitting|spacing|gap|setback|portrait|"
+            r"landscape|arrangement|overlap)\b"
+            r"|\b(?:no|any|zero) panels\b|\bpanels? (?:on|across|per)\b"
+            r"|\b(?:one|each|which|that) (?:side|facet)\b"
+        ),
+    ),
+    (
+        Topic.ROOF,
+        re.compile(
+            r"\b(roof|facet|facets|pitch|azimuth|ridge|hip|hips|eave|eaves|edge|edges|tilt|"
+            r"orientation|slope|square met|area|measurement|satellite|imagery)\b"
+        ),
+    ),
     # `option` and `choice` land here: the only thing this workflow offers a
     # choice of is the system size. PROPOSAL, FX and FINANCE are checked first,
     # so "what are my options for sharing the proposal" still goes there.
-    (Topic.SYSTEM_SIZE, re.compile(
-        r"\b(system size|kwp|panel count|how many panels|which size|which option|"
-        r"options?|choices?|the three|three sizes|3\.6|9\.6)\b")),
-    (Topic.CONSUMPTION, re.compile(
-        r"\b(consumption|usage|use per|my bill|units a month|monthly use|kwh|kilowatt hour|"
-        r"annual|monthly)\b")),
+    (
+        Topic.SYSTEM_SIZE,
+        re.compile(
+            r"\b(system size|kwp|panel count|how many panels|which size|which option|"
+            r"options?|choices?|the three|three sizes|3\.6|9\.6)\b"
+        ),
+    ),
+    (
+        Topic.CONSUMPTION,
+        re.compile(
+            r"\b(consumption|usage|use per|my bill|units a month|monthly use|kwh|kilowatt hour|"
+            r"annual|monthly)\b"
+        ),
+    ),
 )
 
 

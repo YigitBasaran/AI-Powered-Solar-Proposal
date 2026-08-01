@@ -98,9 +98,7 @@ class HelpEntry:
     _compiled: tuple[re.Pattern[str], ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "_compiled", tuple(re.compile(t) for t in self.triggers)
-        )
+        object.__setattr__(self, "_compiled", tuple(re.compile(t) for t in self.triggers))
 
     @property
     def settings_keys(self) -> tuple[str, ...]:
@@ -278,9 +276,7 @@ ENTRIES: tuple[HelpEntry, ...] = (
     HelpEntry(
         key="roof_edges",
         topic=Topic.ROOF,
-        triggers=(
-            r"\b(ridge|ridges|hip|hips|eave|eaves|valley|edge|edges)\b",
-        ),
+        triggers=(r"\b(ridge|ridges|hip|hips|eave|eaves|valley|edge|edges)\b",),
         body=(
             "Edges are classified by the two planes that meet along them: an eave is "
             "the low, outer boundary; a ridge is the high line where two facets meet "
@@ -524,9 +520,7 @@ ENTRIES: tuple[HelpEntry, ...] = (
     HelpEntry(
         key="pdf",
         topic=Topic.PROPOSAL,
-        triggers=(
-            r"\bpdf\b|\bdownload\b|\bprint\b",
-        ),
+        triggers=(r"\bpdf\b|\bdownload\b|\bprint\b",),
         body=(
             "The PDF is rendered from the same frozen snapshot as the share page, so "
             "the two cannot disagree. It is generated on request rather than stored."
@@ -600,7 +594,7 @@ ENTRIES: tuple[HelpEntry, ...] = (
             r"\breset\b",
         ),
         body=(
-            "Say what you want it to be - \"actually make it nine hundred kWh\" - and "
+            'Say what you want it to be - "actually make it nine hundred kWh" - and '
             "the value is replaced. Only what genuinely depends on it is "
             "recalculated: changing consumption leaves the roof, the layout, the "
             "modelled production and the exchange rate exactly as they were. Starting "

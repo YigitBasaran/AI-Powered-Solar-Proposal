@@ -190,9 +190,9 @@ async def test_recomputing_for_consumption_never_refetches_the_rate(offline_env)
     assert updated["exchangeRate"]["rate"] == original["exchangeRate"]["rate"]
     assert updated["exchangeRate"]["rateDate"] == original["exchangeRate"]["rateDate"]
     assert updated["exchangeRate"]["retrievedAt"] == original["exchangeRate"]["retrievedAt"]
-    assert (
-        updated["financial"]["convertedCapex"] == original["financial"]["convertedCapex"]
-    ), "CAPEX does not depend on consumption"
+    assert updated["financial"]["convertedCapex"] == original["financial"]["convertedCapex"], (
+        "CAPEX does not depend on consumption"
+    )
 
 
 async def test_recomputing_for_system_size_preserves_the_roof_and_the_rate(offline_env) -> None:
@@ -214,9 +214,10 @@ async def test_recomputing_for_system_size_preserves_the_roof_and_the_rate(offli
     # excluded. The recompute must still carry the roof and the rate forward.
     assert updated["layout"]["placedPanelCount"] == 22
     assert updated["layout"]["capacityWarning"] is not None
-    assert updated["energy"]["totalAnnualProductionKwh"] != original["energy"][
-        "totalAnnualProductionKwh"
-    ]
+    assert (
+        updated["energy"]["totalAnnualProductionKwh"]
+        != original["energy"]["totalAnnualProductionKwh"]
+    )
 
 
 async def test_a_selective_recompute_equals_a_full_reanalysis(offline_env) -> None:

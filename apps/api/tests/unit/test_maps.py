@@ -22,6 +22,7 @@ from app.core.errors import MapsUnavailableError
 
 GOOGLE_URL = "https://maps.googleapis.com/maps/api/staticmap"
 
+
 def _png(width: int = 64, height: int = 64) -> bytes:
     """A real, decodable PNG.
 
@@ -170,7 +171,8 @@ async def test_a_body_that_does_not_decode_is_rejected(live_settings) -> None:
     """`content-type: image/png` on a truncated transfer keeps the header."""
     respx.get(GOOGLE_URL).mock(
         return_value=httpx.Response(
-            200, content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 4096,
+            200,
+            content=b"\x89PNG\r\n\x1a\n" + b"\x00" * 4096,
             headers={"content-type": "image/png"},
         )
     )

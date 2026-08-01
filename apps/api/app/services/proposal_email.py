@@ -302,9 +302,7 @@ async def claim(
         # mid-flight. Reclaimable, and the honest consequence is stated in the
         # docs: if that attempt did reach the relay, this produces a second
         # copy. At-least-once, not exactly-once.
-        logger.warning(
-            "reclaiming a stale delivery %s for proposal %s", delivery.id, proposal.id
-        )
+        logger.warning("reclaiming a stale delivery %s for proposal %s", delivery.id, proposal.id)
         takeable.append(SENDING)
 
     # The conditional UPDATE *is* the lock. Reading the status and then writing

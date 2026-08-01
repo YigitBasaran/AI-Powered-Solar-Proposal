@@ -99,9 +99,7 @@ def _orientation_dims(orientation: PanelOrientation, settings: Settings) -> tupl
     return (w, h) if orientation is PanelOrientation.PORTRAIT else (h, w)
 
 
-def _usable_polygon(
-    roof: RoofModel, facet: RoofFacet, settings: Settings
-) -> BaseGeometry | None:
+def _usable_polygon(roof: RoofModel, facet: RoofFacet, settings: Settings) -> BaseGeometry | None:
     """The part of a facet a panel may stand on, in surface coordinates.
 
     Returns a Polygon, or a MultiPolygon when an obstruction or a large setback
@@ -131,10 +129,7 @@ def _usable_polygon(
         frame = facet_surface_frame(roof, facet)
         for obstruction in obstructions:
             hole = Polygon(
-                [
-                    (p.x, p.y)
-                    for p in frame.polygon_to_surface(obstruction.projected_metric_polygon)
-                ]
+                [(p.x, p.y) for p in frame.polygon_to_surface(obstruction.projected_metric_polygon)]
             )
             if not hole.is_valid:
                 hole = hole.buffer(0)
@@ -562,10 +557,7 @@ def assert_layout_valid(roof: RoofModel, layout: PanelLayout, settings: Settings
                 (
                     o.id,
                     Polygon(
-                        [
-                            (p.x, p.y)
-                            for p in frame.polygon_to_surface(o.projected_metric_polygon)
-                        ]
+                        [(p.x, p.y) for p in frame.polygon_to_surface(o.projected_metric_polygon)]
                     ),
                 )
                 for o in obstructions
@@ -580,9 +572,7 @@ def assert_layout_valid(roof: RoofModel, layout: PanelLayout, settings: Settings
             # "somewhere outside the facet".
             for obstruction_id, hole in holes:
                 if poly.intersection(hole).area > 1e-9:
-                    raise AssertionError(
-                        f"panel {panel.id} stands on obstruction {obstruction_id}"
-                    )
+                    raise AssertionError(f"panel {panel.id} stands on obstruction {obstruction_id}")
             if not usable.covers(poly):
                 raise AssertionError(f"panel {panel.id} is not fully inside {facet.id}")
             boxes.append(poly)

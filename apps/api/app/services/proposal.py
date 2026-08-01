@@ -402,7 +402,9 @@ async def record_view(
     if is_crawler(user_agent):
         logger.info("proposal %s fetched by a crawler; not counted", proposal.share_token[:8])
         return ViewOutcome(
-            counted=False, view_count=await _view_count(session, proposal), view_id=None,
+            counted=False,
+            view_count=await _view_count(session, proposal),
+            view_id=None,
             reason="crawler",
         )
 
@@ -432,7 +434,9 @@ async def record_view(
 
     if recent is not None:
         return ViewOutcome(
-            counted=False, view_count=await _view_count(session, proposal), view_id=None,
+            counted=False,
+            view_count=await _view_count(session, proposal),
+            view_id=None,
             reason="duplicate",
         )
 

@@ -43,7 +43,7 @@ def test_written_numbers_are_read(text, expected) -> None:
 
 
 def test_an_approximator_does_not_move_the_value() -> None:
-    """"around 1150" is 1150. Softening the phrasing does not soften the number."""
+    """ "around 1150" is 1150. Softening the phrasing does not soften the number."""
     assert _value("approximately one thousand one hundred") == 1100
     assert _value("roughly eleven hundred") == 1100
     assert _value("about eleven hundred") == 1100
@@ -56,15 +56,24 @@ def test_an_approximator_does_not_move_the_value() -> None:
 
 @pytest.mark.parametrize(
     "text",
-    ["a little over a thousand", "quite high", "a lot", "no idea", "not sure",
-     "the usual", "same as last year", "loads", "pretty high"],
+    [
+        "a little over a thousand",
+        "quite high",
+        "a lot",
+        "no idea",
+        "not sure",
+        "the usual",
+        "same as last year",
+        "loads",
+        "pretty high",
+    ],
 )
 def test_genuinely_vague_quantities_are_refused(text) -> None:
     assert _value(text) is None
 
 
 def test_a_directional_makes_a_parseable_magnitude_unusable() -> None:
-    """"a little over a thousand" contains 1000 and still is not an answer."""
+    """ "a little over a thousand" contains 1000 and still is not an answer."""
     assert _value("a little over a thousand") is None
     assert _reason("a little over a thousand") == "vague_quantity"
     assert _value("just under eleven hundred") is None
@@ -88,7 +97,7 @@ def test_two_competing_figures_are_refused_rather_than_picked_between() -> None:
 
 @pytest.mark.parametrize(("text", "expected"), [("twenty four", 24), ("thirty five", 35)])
 def test_tens_plus_units_is_addition_not_the_colloquial_hundreds_form(text, expected) -> None:
-    """"twenty four" is 24. "eleven fifty" is 1150. Both must hold at once."""
+    """ "twenty four" is 24. "eleven fifty" is 1150. Both must hold at once."""
     assert _value(text) == expected
 
 

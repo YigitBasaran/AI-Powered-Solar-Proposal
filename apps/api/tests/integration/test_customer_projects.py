@@ -240,9 +240,7 @@ def test_projects_can_be_searched_by_customer_or_by_name(client) -> None:
     )
 
     by_name = client.get("/api/v1/projects", params={"q": f"roof {token}"}).json()["projects"]
-    by_customer = client.get("/api/v1/projects", params={"q": f"finder{token}"}).json()[
-        "projects"
-    ]
+    by_customer = client.get("/api/v1/projects", params={"q": f"finder{token}"}).json()["projects"]
 
     assert len(by_name) == 1
     assert by_name == by_customer, "one search box has to serve both ways of remembering a job"

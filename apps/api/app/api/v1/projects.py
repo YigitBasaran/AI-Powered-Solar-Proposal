@@ -214,22 +214,24 @@ async def _recent_turns(session: AsyncSession, project: Project) -> list[Turn]:
     facts; this is only here so a pronoun has something to point at.
     """
     rows = (
-        await session.execute(
-            select(ChatMessage)
-            .where(ChatMessage.project_id == project.id)
-            .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
-            .limit(RECENT_TURN_LIMIT)
+        (
+            await session.execute(
+                select(ChatMessage)
+                .where(ChatMessage.project_id == project.id)
+                .order_by(ChatMessage.created_at.desc(), ChatMessage.id.desc())
+                .limit(RECENT_TURN_LIMIT)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [Turn(role=row.role, content=row.content) for row in reversed(rows)]
 
 
 async def _project_state(session: AsyncSession, project: Project) -> ProjectState:
     """The read-model the state machine and the answer service both work from."""
     proposal = (
-        await session.execute(
-            select(Proposal).where(Proposal.project_id == project.id).limit(1)
-        )
+        await session.execute(select(Proposal).where(Proposal.project_id == project.id).limit(1))
     ).scalar_one_or_none()
 
     return ProjectState(
@@ -285,9 +287,7 @@ async def _recalculate(
     # SQLite's write lock. A process that dies mid-recompute leaves the project
     # honestly marked as recalculating until its lease expires.
     try:
-        claim = await claim_analysis(
-            session, project, status="recalculating", settings=settings
-        )
+        claim = await claim_analysis(session, project, status="recalculating", settings=settings)
     except AnalysisInProgressError:
         # A chat turn is not worth failing over a busy analysis; the change is
         # already stored, and the snapshot is correctly left describing the
@@ -598,7 +598,7 @@ async def list_projects(
                 "createdAt": iso_utc(project.created_at),
             }
             for project, customer, proposal in rows
-        ]
+        ],
     }
 
 
@@ -823,9 +823,7 @@ async def chat(
         recent=await _recent_turns(session, project),
     )
 
-    routed = await route_message(
-        payload.message, step=step, settings=settings, context=context
-    )
+    routed = await route_message(payload.message, step=step, settings=settings, context=context)
     action = routed.action
 
     # A change to a project whose proposal has been issued forks a revision,
@@ -964,9 +962,7 @@ async def run_project_analysis(
         # client to stop retrying a resource that is actually there and will
         # become valid as soon as intake finishes. `finalize` already answers
         # 409 for the same class of problem.
-        raise InvalidStepTransitionError(
-            "The project has no consumption or system size yet."
-        )
+        raise InvalidStepTransitionError("The project has no consumption or system size yet.")
 
     # Refused here if a batch already holds the claim, before any PVGIS call is
     # made - two concurrent requests must cost four probes, not eight. The claim

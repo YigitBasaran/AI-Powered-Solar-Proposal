@@ -88,9 +88,7 @@ def _roof_text(v: dict[str, Any]) -> str:
         parts.append(f"By facet: {listed}.")
     if edges:
         parts.append(
-            "Edges: "
-            + ", ".join(f"{count} {kind}" for kind, count in edges.items() if count)
-            + "."
+            "Edges: " + ", ".join(f"{count} {kind}" for kind, count in edges.items() if count) + "."
         )
     return " ".join(parts)
 

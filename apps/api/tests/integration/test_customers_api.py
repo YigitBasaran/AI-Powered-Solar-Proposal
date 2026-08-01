@@ -195,9 +195,9 @@ def test_a_wildcard_in_the_query_is_matched_literally(client) -> None:
 
 
 def test_search_returns_nothing_for_an_unmatched_term(client) -> None:
-    found = client.get(
-        "/api/v1/customers", params={"q": f"nobody-{uuid.uuid4().hex}"}
-    ).json()["customers"]
+    found = client.get("/api/v1/customers", params={"q": f"nobody-{uuid.uuid4().hex}"}).json()[
+        "customers"
+    ]
     assert found == []
 
 
@@ -289,9 +289,9 @@ def test_an_explicit_null_clears_a_field(client) -> None:
     """The distinction `exclude_unset` exists for: absent keeps, null clears."""
     customer = create(client, phone="+27 21 555 0100")
 
-    body = client.patch(
-        f"/api/v1/customers/{customer['customerId']}", json={"phone": None}
-    ).json()["customer"]
+    body = client.patch(f"/api/v1/customers/{customer['customerId']}", json={"phone": None}).json()[
+        "customer"
+    ]
     assert body["phone"] is None
 
 

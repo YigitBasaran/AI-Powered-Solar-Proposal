@@ -143,15 +143,17 @@ def test_re_encoding_does_not_read_as_changed_imagery() -> None:
 
 def test_a_brightness_shift_does_not_read_as_changed_imagery() -> None:
     """Why the DC coefficient is neutralised before thresholding."""
-    assert hamming_distance(
-        perceptual_hash(_raster(3)), perceptual_hash(_raster(3, tint=25))
-    ) <= IMAGERY_HASH_MAX_DISTANCE
+    assert (
+        hamming_distance(perceptual_hash(_raster(3)), perceptual_hash(_raster(3, tint=25)))
+        <= IMAGERY_HASH_MAX_DISTANCE
+    )
 
 
 def test_different_ground_reads_as_changed_imagery() -> None:
-    assert hamming_distance(
-        perceptual_hash(_raster(4)), perceptual_hash(_raster(5))
-    ) > IMAGERY_HASH_MAX_DISTANCE
+    assert (
+        hamming_distance(perceptual_hash(_raster(4)), perceptual_hash(_raster(5)))
+        > IMAGERY_HASH_MAX_DISTANCE
+    )
 
 
 def test_verification_refuses_when_the_calibration_records_no_imagery() -> None:

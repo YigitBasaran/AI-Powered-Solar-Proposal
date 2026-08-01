@@ -143,8 +143,7 @@ def validate_request(params: Any) -> tuple[float, float]:
     for forbidden in FORBIDDEN_PARAMS:
         if forbidden in params:
             raise StubContractError(
-                f"{forbidden!r} was sent; the roof geometry decides tilt and azimuth, "
-                f"never PVGIS"
+                f"{forbidden!r} was sent; the roof geometry decides tilt and azimuth, never PVGIS"
             )
 
     lat = _number(params, "lat")

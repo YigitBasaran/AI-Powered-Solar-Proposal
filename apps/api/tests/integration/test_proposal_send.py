@@ -91,18 +91,19 @@ def test_the_preview_renders_the_message_without_sending_it(client, outbox) -> N
     assert preview["subject"].startswith("Your solar proposal")
 
     assert outbox.outbox == [], "the preview sent a message"
-    assert client.get(
-        f"/api/v1/proposals/{finalised['proposalId']}/deliveries"
-    ).json()["deliveries"] == [], "the preview created a delivery record"
+    assert (
+        client.get(f"/api/v1/proposals/{finalised['proposalId']}/deliveries").json()["deliveries"]
+        == []
+    ), "the preview created a delivery record"
 
 
 def test_the_preview_carries_the_real_figures_not_placeholders(client) -> None:
     _, finalised = _ready_to_send(client)
     served = client.get(f"/api/v1/proposals/{finalised['shareToken']}").json()
 
-    preview = client.get(
-        f"/api/v1/proposals/{finalised['proposalId']}/email-preview"
-    ).json()["preview"]
+    preview = client.get(f"/api/v1/proposals/{finalised['proposalId']}/email-preview").json()[
+        "preview"
+    ]
 
     assert "6 kWp" in preview["textBody"]
     assert f"{float(served['energy']['totalAnnualProductionKwh']):,.0f}" in preview["textBody"]
@@ -111,9 +112,9 @@ def test_the_preview_carries_the_real_figures_not_placeholders(client) -> None:
 
 def test_the_preview_reports_that_console_does_not_send(client) -> None:
     _, finalised = _ready_to_send(client)
-    preview = client.get(
-        f"/api/v1/proposals/{finalised['proposalId']}/email-preview"
-    ).json()["preview"]
+    preview = client.get(f"/api/v1/proposals/{finalised['proposalId']}/email-preview").json()[
+        "preview"
+    ]
 
     assert preview["provider"] == "console"
     assert preview["providerSends"] is False, (
@@ -244,9 +245,9 @@ def test_a_deliberate_resend_is_allowed_and_recorded_separately(client, outbox) 
     assert resend.status_code == 200, resend.text
     assert len(outbox.outbox) == 2
 
-    deliveries = client.get(
-        f"/api/v1/proposals/{finalised['proposalId']}/deliveries"
-    ).json()["deliveries"]
+    deliveries = client.get(f"/api/v1/proposals/{finalised['proposalId']}/deliveries").json()[
+        "deliveries"
+    ]
     assert len(deliveries) == 2
     assert {d["status"] for d in deliveries} == {"sent"}
 
@@ -408,9 +409,9 @@ def test_a_provider_failure_is_recorded_and_the_proposal_still_works(
     assert response.status_code == 502
     assert response.json()["error"]["code"] == "EMAIL_SEND_FAILED"
 
-    deliveries = client.get(
-        f"/api/v1/proposals/{finalised['proposalId']}/deliveries"
-    ).json()["deliveries"]
+    deliveries = client.get(f"/api/v1/proposals/{finalised['proposalId']}/deliveries").json()[
+        "deliveries"
+    ]
     assert deliveries[0]["status"] == "failed"
     assert deliveries[0]["errorCode"] == "EMAIL_SEND_FAILED"
 
@@ -434,9 +435,9 @@ def test_a_failed_delivery_can_be_retried_and_succeed(client, outbox, monkeypatc
     )
     assert failed.status_code == 502
 
-    delivery_id = client.get(
-        f"/api/v1/proposals/{finalised['proposalId']}/deliveries"
-    ).json()["deliveries"][0]["deliveryId"]
+    delivery_id = client.get(f"/api/v1/proposals/{finalised['proposalId']}/deliveries").json()[
+        "deliveries"
+    ][0]["deliveryId"]
 
     monkeypatch.undo()
     retried = client.post(
@@ -453,9 +454,9 @@ def test_a_retry_also_requires_confirmation(client, outbox) -> None:
     """A retry is still a send, and the first one may have gone to the wrong person."""
     _, finalised = _ready_to_send(client)
     client.post(f"/api/v1/proposals/{finalised['proposalId']}/send", json={"confirm": True})
-    delivery_id = client.get(
-        f"/api/v1/proposals/{finalised['proposalId']}/deliveries"
-    ).json()["deliveries"][0]["deliveryId"]
+    delivery_id = client.get(f"/api/v1/proposals/{finalised['proposalId']}/deliveries").json()[
+        "deliveries"
+    ][0]["deliveryId"]
 
     response = client.post(
         f"/api/v1/proposals/{finalised['proposalId']}/deliveries/{delivery_id}/retry",
@@ -516,9 +517,10 @@ def test_an_unavailable_provider_refuses_rather_than_recording_a_success(
     assert response.status_code == 503
     assert response.json()["error"]["code"] == "EMAIL_PROVIDER_UNAVAILABLE"
 
-    assert client.get(
-        f"/api/v1/proposals/{finalised['proposalId']}/deliveries"
-    ).json()["deliveries"] == [], "a delivery row was created for a send that never happened"
+    assert (
+        client.get(f"/api/v1/proposals/{finalised['proposalId']}/deliveries").json()["deliveries"]
+        == []
+    ), "a delivery row was created for a send that never happened"
 
     assert client.get(f"/api/v1/proposals/{finalised['shareToken']}").status_code == 200
 

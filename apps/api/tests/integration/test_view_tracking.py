@@ -279,9 +279,7 @@ def test_a_counted_view_notifies_the_salesperson_once(client, monkeypatch) -> No
     assert "[Proposal Viewed]" in sender.outbox[0].text_body
 
 
-def test_the_notification_says_it_is_a_page_view_not_an_email_open(
-    client, monkeypatch
-) -> None:
+def test_the_notification_says_it_is_a_page_view_not_an_email_open(client, monkeypatch) -> None:
     """There is no open tracking, so nothing may imply there is."""
     from app.core.config import get_settings
     from app.services import proposal_email
@@ -306,9 +304,7 @@ def test_the_notification_says_it_is_a_page_view_not_an_email_open(
         assert field in body, f"the notification is missing {field!r}"
 
 
-def test_a_failing_notification_does_not_break_the_customers_page(
-    client, monkeypatch
-) -> None:
+def test_a_failing_notification_does_not_break_the_customers_page(client, monkeypatch) -> None:
     from app.core.config import get_settings
     from app.services import proposal_email
 

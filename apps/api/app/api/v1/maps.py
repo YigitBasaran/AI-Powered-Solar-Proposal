@@ -102,9 +102,7 @@ def build_request_params(settings: Settings) -> dict[str, str | int]:
     return params
 
 
-async def fetch_raster(
-    settings: Settings, *, client: httpx.AsyncClient | None = None
-) -> bytes:
+async def fetch_raster(settings: Settings, *, client: httpx.AsyncClient | None = None) -> bytes:
     """The raster bytes, validated as an image but not yet interpreted.
 
     Shared by the route that serves it and by the verifier that decides whether
@@ -177,9 +175,7 @@ async def satellite(settings: Settings = Depends(get_settings)) -> Response:
             f"The imagery response could not be decoded as an image: {exc}"
         ) from exc
     if not verdict.matches:
-        logger.warning(
-            "satellite imagery does not match the calibration: %s", verdict.reason
-        )
+        logger.warning("satellite imagery does not match the calibration: %s", verdict.reason)
 
     logger.info(
         "served satellite image (%d bytes, imagery %s)",

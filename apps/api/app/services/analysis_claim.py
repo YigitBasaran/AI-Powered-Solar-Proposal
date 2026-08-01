@@ -181,9 +181,7 @@ async def fail_analysis(
     )
 
 
-async def release_stale_claim(
-    session: AsyncSession, claim: AnalysisClaim, *, status: str
-) -> None:
+async def release_stale_claim(session: AsyncSession, claim: AnalysisClaim, *, status: str) -> None:
     """Hand the project back after a recompute failure, if still the owner."""
     await _fenced_write(
         session,

@@ -202,9 +202,7 @@ def _search_filter(statement: Select[Any], query: str) -> Select[Any]:
             func.lower(Customer.first_name).like(term, escape=_LIKE_ESCAPE),
             func.lower(Customer.last_name).like(term, escape=_LIKE_ESCAPE),
             func.lower(Customer.email).like(term, escape=_LIKE_ESCAPE),
-            func.lower(func.coalesce(Customer.company_name, "")).like(
-                term, escape=_LIKE_ESCAPE
-            ),
+            func.lower(func.coalesce(Customer.company_name, "")).like(term, escape=_LIKE_ESCAPE),
         )
     )
 
@@ -306,9 +304,7 @@ async def page_of_customers(
         filters = _search_filter(filters, query.strip())
 
     total = (
-        await session.execute(
-            select(func.count()).select_from(filters.subquery())
-        )
+        await session.execute(select(func.count()).select_from(filters.subquery()))
     ).scalar_one()
 
     rows = (
@@ -362,9 +358,7 @@ async def projects_for(session: AsyncSession, customer_id: str) -> list[dict[str
     ]
 
 
-async def project_counts(
-    session: AsyncSession, customer_ids: list[str]
-) -> dict[str, int]:
+async def project_counts(session: AsyncSession, customer_ids: list[str]) -> dict[str, int]:
     """How many projects each of these customers has.
 
     One grouped query rather than one per row: a list of fifty customers should

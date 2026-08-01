@@ -147,11 +147,7 @@ def _email_status(settings: Settings) -> dict[str, Any]:
         "ready": ready_to_send,
         "notificationRecipient": bool(settings.salesperson_email),
         "detail": reason
-        or (
-            None
-            if sends
-            else "Console mode records the message locally and sends nothing."
-        ),
+        or (None if sends else "Console mode records the message locally and sends nothing."),
     }
 
 

@@ -112,9 +112,7 @@ def _sender_address(settings: Settings) -> str:
 
 def build_mime(message: EmailMessage, settings: Settings) -> MimeMessage:
     """The wire format, with every header checked before it is set."""
-    subject = assert_header_safe(message.subject.strip(), field_name="Subject")[
-        :MAX_SUBJECT_LENGTH
-    ]
+    subject = assert_header_safe(message.subject.strip(), field_name="Subject")[:MAX_SUBJECT_LENGTH]
     recipient = assert_header_safe(message.to.strip(), field_name="Recipient")
     sender = assert_header_safe(_sender_address(settings), field_name="Sender")
     display = assert_header_safe(settings.email_from_name.strip(), field_name="Sender name")
@@ -260,9 +258,7 @@ class SmtpEmailSender:
             # Blocking stdlib call, moved off the event loop. The outer timeout
             # bounds the whole attempt rather than one socket read - a relay can
             # accept the connection and then stall indefinitely.
-            await asyncio.wait_for(
-                asyncio.to_thread(self._deliver, mime), timeout=timeout + 1.0
-            )
+            await asyncio.wait_for(asyncio.to_thread(self._deliver, mime), timeout=timeout + 1.0)
         except TimeoutError as error:
             # Deliberately its own code. A timeout is *ambiguous*: the relay may
             # have accepted the message before going quiet, so the caller must

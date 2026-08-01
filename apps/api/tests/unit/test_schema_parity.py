@@ -264,7 +264,6 @@ def test_an_existing_database_is_upgraded_in_place(tmp_path, monkeypatch) -> Non
     brings it to head with the new column present.
     """
 
-
     path = tmp_path / "existing.db"
     url = f"sqlite:///{path.as_posix()}"
 
@@ -293,9 +292,11 @@ def test_an_existing_database_is_upgraded_in_place(tmp_path, monkeypatch) -> Non
     after = _schema_of(url)
     engine = create_engine(url)
     try:
-        version = engine.connect().execute(
-            __import__("sqlalchemy").text("select version_num from alembic_version")
-        ).scalar_one()
+        version = (
+            engine.connect()
+            .execute(__import__("sqlalchemy").text("select version_num from alembic_version"))
+            .scalar_one()
+        )
     finally:
         engine.dispose()
 

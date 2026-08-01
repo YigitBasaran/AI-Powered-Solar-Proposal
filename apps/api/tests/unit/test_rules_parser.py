@@ -135,7 +135,7 @@ def test_the_unit_decides_which_number_is_the_consumption(text) -> None:
 
 
 def test_a_unit_qualified_figure_is_refused_rather_than_replaced() -> None:
-    """"-500 kWh and maybe 1150" is an answer of -500, and an invalid one."""
+    """ "-500 kWh and maybe 1150" is an answer of -500, and an invalid one."""
     parsed = parse_message("-500 kWh, or maybe 1150", step=CONSUMPTION)
     assert parsed.monthly_consumption_kwh is None
 

@@ -179,7 +179,7 @@ def location_offer(settings: Settings, raw: str) -> str:
         f"anywhere else would need a fresh image fetch and a new calibration. "
         f"Neither is automated here, so I'd rather say so than run Cape Town's "
         f"roof under someone else's address.\n\n"
-        f"Shall I go ahead with the case property? Reply \"yes\", or enter its "
+        f'Shall I go ahead with the case property? Reply "yes", or enter its '
         f"latitude and longitude."
     )
 
@@ -217,9 +217,7 @@ def _consumption_refusal(action: ConversationAction) -> str:
         case "too_large":
             return f"That figure is far larger than any household meter reads. {tail}"
         case "vague_quantity" | "implausible_bare_word" | "multiple_figures":
-            return (
-                "That could be anywhere in quite a range, and I'd rather not guess. " + tail
-            )
+            return "That could be anywhere in quite a range, and I'd rather not guess. " + tail
         case _:
             return f"I couldn't read a consumption figure there. {tail}"
 
@@ -277,9 +275,7 @@ def _handle_location(
     # A written place. Geocoding is out of scope, so there is no way to know
     # whether it is this property - and guessing "yes" is the failure this
     # branch exists to prevent.
-    return _stay(
-        project, location_offer(settings, raw), pending_confirmation="use_case_location"
-    )
+    return _stay(project, location_offer(settings, raw), pending_confirmation="use_case_location")
 
 
 def _accept_location(project: ProjectState, raw: str, settings: Settings) -> StepOutcome:
@@ -576,11 +572,7 @@ def handle_message(
     settings = settings or get_settings()
 
     match action.kind:
-        case (
-            ActionKind.ASK_QUESTION
-            | ActionKind.REQUEST_OPTIONS
-            | ActionKind.REQUEST_EXPLANATION
-        ):
+        case ActionKind.ASK_QUESTION | ActionKind.REQUEST_OPTIONS | ActionKind.REQUEST_EXPLANATION:
             return _answered_outcome(project, answer, settings)
 
         case ActionKind.OFF_TOPIC:

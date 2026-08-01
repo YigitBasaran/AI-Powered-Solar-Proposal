@@ -133,7 +133,7 @@ def test_a_bare_figure_asks_which_value_it_is(client, at_system_size):
 
 
 def test_an_unlabelled_correction_asks_which_value(client, at_system_size):
-    """"Actually make it 10000" used to silently resolve to a system size."""
+    """ "Actually make it 10000" used to silently resolve to a system size."""
     before = _project(client, at_system_size)
     reply = _say(client, at_system_size, "Actually make it 10000")
     after = _project(client, at_system_size)
@@ -195,8 +195,7 @@ def test_an_update_after_analysis_recalculates_the_dependent_figures(client):
     assert _project(client, project_id)["monthlyConsumptionKwh"] == 400.0
     # Production is a property of the roof and the system size, not of usage.
     assert (
-        after["energy"]["totalAnnualProductionKwh"]
-        == before["energy"]["totalAnnualProductionKwh"]
+        after["energy"]["totalAnnualProductionKwh"] == before["energy"]["totalAnnualProductionKwh"]
     )
     # Coverage and savings are properties of usage, so they must move.
     assert after["financial"]["coveragePercent"] != before["financial"]["coveragePercent"]
@@ -227,16 +226,13 @@ def test_a_tariff_change_moves_the_savings_and_leaves_production_alone(client):
     assert float(after["financial"]["electricityPriceEurPerKwh"]) == pytest.approx(0.31)
     assert float(after["financial"]["annualSavingsEur"]) > float(
         before["financial"]["annualSavingsEur"]
-    ), (
-        "a higher tariff makes the same generation worth more"
-    )
+    ), "a higher tariff makes the same generation worth more"
     assert float(after["financial"]["simplePaybackYears"]) < float(
         before["financial"]["simplePaybackYears"]
     )
 
     assert (
-        after["energy"]["totalAnnualProductionKwh"]
-        == before["energy"]["totalAnnualProductionKwh"]
+        after["energy"]["totalAnnualProductionKwh"] == before["energy"]["totalAnnualProductionKwh"]
     ), "the price of electricity moved the modelled production"
     assert after["layout"]["placedPanelCount"] == before["layout"]["placedPanelCount"]
 

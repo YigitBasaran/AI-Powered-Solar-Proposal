@@ -94,9 +94,7 @@ VAGUE_QUANTIFIER = re.compile(
 #: kilowatt-hours. "the one that fits fifteen panels" is not 15 kWh a month.
 #: The trailing boundary matters: without it `months?` swallows the `month` in
 #: "twelve hundred monthly" and a perfectly good answer is thrown away.
-_COUNTS_SOMETHING_ELSE = re.compile(
-    r"^\s*(?:panels?|modules?|kwp|kw|facets?|years?|months?)\b"
-)
+_COUNTS_SOMETHING_ELSE = re.compile(r"^\s*(?:panels?|modules?|kwp|kw|facets?|years?|months?)\b")
 
 #: Below this, a value spelled out in words is far more likely to be a stray
 #: word than a monthly consumption. "around one" is not 1 kWh.
@@ -216,7 +214,7 @@ def parse_word_number(text: str, *, require_plausible: bool = True) -> WordNumbe
 
 
 def parse_count_of(text: str, noun: str) -> int | None:
-    """"fifteen panels" -> 15. A count, so the plausibility floor does not apply.
+    """ "fifteen panels" -> 15. A count, so the plausibility floor does not apply.
 
     Only a run immediately followed by the noun counts, so "the one that fits
     fifteen panels" reads 15 rather than the stray "one" - which is what the

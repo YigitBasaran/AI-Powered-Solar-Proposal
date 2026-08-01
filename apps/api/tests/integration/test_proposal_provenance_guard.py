@@ -36,8 +36,10 @@ def _token(client, project_id: str) -> str:
 
         async with get_sessionmaker()() as session:
             return (
-                await session.execute(select(Proposal).where(Proposal.project_id == project_id))
-            ).scalar_one().share_token
+                (await session.execute(select(Proposal).where(Proposal.project_id == project_id)))
+                .scalar_one()
+                .share_token
+            )
 
     import asyncio
 

@@ -77,9 +77,9 @@ def captured_payload() -> dict:
     filename, so re-tracing the roof re-points this at the matching capture
     instead of failing with a missing file.
     """
-    return load_captures(
-        Path(__file__).resolve().parents[3].parent / "fixtures" / "pvgis"
-    )[round(build_roof_model().facet("facet_n").pvgis_aspect_deg)]
+    return load_captures(Path(__file__).resolve().parents[3].parent / "fixtures" / "pvgis")[
+        round(build_roof_model().facet("facet_n").pvgis_aspect_deg)
+    ]
 
 
 @pytest.fixture
@@ -348,7 +348,6 @@ async def test_the_attempt_count_is_bounded(settings) -> None:
     assert sum(fake.sleeps) <= settings.pvgis_retry_budget_seconds
 
 
-
 @respx.mock
 async def test_the_wall_clock_budget_binds_before_the_attempt_count(settings) -> None:
     """Two bounds, whichever comes first. Here the budget is the tight one."""
@@ -536,8 +535,6 @@ async def test_live_production_scales_linearly_with_installed_power(settings) ->
     )
 
     assert six.annual_kwh == pytest.approx(one.annual_kwh * 6.0, rel=1e-3)
-    assert six.specific_yield_kwh_per_kwp == pytest.approx(
-        one.specific_yield_kwh_per_kwp, rel=1e-3
-    )
+    assert six.specific_yield_kwh_per_kwp == pytest.approx(one.specific_yield_kwh_per_kwp, rel=1e-3)
     for a, b in zip(six.monthly_kwh, one.monthly_kwh, strict=True):
         assert a == pytest.approx(b * 6.0, rel=2e-3)

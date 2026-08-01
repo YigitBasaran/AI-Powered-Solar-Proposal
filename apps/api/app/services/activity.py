@@ -245,9 +245,9 @@ async def list_for_project(
             | ((ActivityEvent.occurred_at == when) & (ActivityEvent.id < identifier))
         )
 
-    statement = statement.order_by(
-        ActivityEvent.occurred_at.desc(), ActivityEvent.id.desc()
-    ).limit(size + 1)
+    statement = statement.order_by(ActivityEvent.occurred_at.desc(), ActivityEvent.id.desc()).limit(
+        size + 1
+    )
 
     rows = list((await session.execute(statement)).scalars().all())
     next_cursor = None
